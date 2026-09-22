@@ -112,8 +112,41 @@ To type check the engine against Windows, including the Windows-only module:
 cargo xwin build -p comfyvault-core --target x86_64-pc-windows-msvc --tests
 ```
 
-That compiles the Windows test binaries as well. They cannot run on Linux, but
-a mistake in them stops the build.
+That compiles the Windows test binaries as well. A mistake in them stops the
+build.
+
+### 3.1 Run the tests on Windows
+
+**A green run on Linux is not enough.** Three real bugs passed every Linux test
+and failed fifteen tests on Windows: paths that carried the `\\?\` prefix, a
+scan that read the machine's real Hugging Face cache, and a database key that
+told `/` and `\` apart. None of them can appear on Linux.
+
+Build the test binary, copy it to a Windows folder, and run it. WSL runs a
+Windows executable directly, so this works from Linux:
+
+```
+cargo xwin test -p comfyvault-core --no-run --target x86_64-pc-windows-msvc
+cp target/x86_64-pc-windows-msvc/debug/deps/comfyvault_core-<hash>.exe \
+   /mnt/c/ComfyVault-Demo/core-tests.exe
+cd /mnt/c/ComfyVault-Demo && ./core-tests.exe
+```
+
+`cargo xwin test --no-run` prints the file name with the hash in it.
+
+To run one test and see its output:
+
+```
+./core-tests.exe <test name> --exact --nocapture
+```
+
+Two things change the result, so check them before you read a failure:
+
+- Developer Mode. With it off, every test that makes a link fails with the
+  engine's `symlinkUnsupported` message. That is correct behavior, not a
+  broken suite.
+- The folder you run in. Use a scratch folder. Never run against a real
+  ComfyUI install.
 
 ---
 
