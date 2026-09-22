@@ -216,7 +216,7 @@ fn output_folders_can_be_switched_off() {
     let i = w.add_install("A");
     w.write_model(&i, "output/loras/saved.safetensors", &weights("saved"));
 
-    let settings = Settings { scan_output_model_dirs: false, min_file_size_bytes: 0, ..Default::default() };
+    let settings = Settings { scan_output_model_dirs: false, ..w.settings.clone() };
     let out = Scanner::new(&w.store, &w.platform, settings)
         .scan("s", &[i], &CancelToken::new(), &NullSink)
         .unwrap();
@@ -376,7 +376,7 @@ fn switching_the_cache_off_forces_a_full_read() {
     w.write_model(&i, "models/loras/a.safetensors", &weights("a"));
     w.scan(&[i.clone()]);
 
-    let settings = Settings { hash_cache_enabled: false, min_file_size_bytes: 0, ..Default::default() };
+    let settings = Settings { hash_cache_enabled: false, ..w.settings.clone() };
     let out = Scanner::new(&w.store, &w.platform, settings)
         .scan("s2", &[i], &CancelToken::new(), &NullSink)
         .unwrap();
@@ -541,4 +541,72 @@ fn the_category_helper_handles_the_shapes_it_meets() {
     assert_eq!(category_from_rel(Path::new("loras/deep/x.safetensors")), "loras");
     assert_eq!(category_from_rel(Path::new("x.safetensors")), "misc");
     assert_eq!(category_from_rel(Path::new("")), "misc");
+}
+
+// --- the Hugging Face cache is a setting, not something read from the air ---
+
+#[test]
+fn the_scan_counts_the_hugging_face_folders_it_was_given() {
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    w.write_model(&i, "models/loras/mine.safetensors", &weights("mine"));
+
+    let cache = w.path().join("fake-hf-cache");
+    std::fs::create_dir_all(cache.join("models--someone--model/blobs")).unwrap();
+    std::fs::write(
+        cache.join("models--someone--model/blobs/abc.safetensors"),
+        weights("cached"),
+    )
+    .unwrap();
+
+    let settings = Settings {
+        huggingface_cache_dirs: Some(vec![cache.clone()]),
+        ..w.settings.clone()
+    };
+    let out = Scanner::new(&w.store, &w.platform, settings)
+        .scan("s", &[i], &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    let cached = entry(&out, "abc.safetensors");
+    assert_eq!(cached.classification, Classification::HuggingFaceCache);
+    assert!(cached.sha256.is_none(), "counted files are measured, never read");
+    assert_eq!(out.record.totals.hf_cache_files, 1);
+    assert_eq!(out.record.totals.hf_cache_bytes, weights("cached").len() as u64);
+    assert_eq!(out.record.totals.movable_files, 1, "the cached model is never movable");
+}
+
+#[test]
+fn an_empty_hugging_face_setting_means_the_scan_looks_nowhere() {
+    // This is what keeps a scan reproducible. Reading the environment deep
+    // inside a scan made the result depend on machine state nobody could see,
+    // and it made every test walk whatever cache the computer really had.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    w.write_model(&i, "models/loras/mine.safetensors", &weights("mine"));
+
+    let cache = w.path().join("fake-hf-cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(cache.join("cached.safetensors"), weights("cached")).unwrap();
+
+    let out = w.scan(&[i]);
+    assert_eq!(out.entries.len(), 1, "found {:?}", paths(&out));
+    assert_eq!(out.record.totals.hf_cache_files, 0);
+}
+
+#[test]
+fn a_hugging_face_folder_that_is_not_there_is_skipped_quietly() {
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    w.write_model(&i, "models/loras/mine.safetensors", &weights("mine"));
+
+    let settings = Settings {
+        huggingface_cache_dirs: Some(vec![w.path().join("never-existed")]),
+        ..w.settings.clone()
+    };
+    let out = Scanner::new(&w.store, &w.platform, settings)
+        .scan("s", &[i], &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    assert_eq!(out.entries.len(), 1);
+    assert!(out.record.errors.is_empty(), "a cache that is not there is not a problem");
 }

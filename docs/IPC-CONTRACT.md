@@ -35,7 +35,7 @@ const info = await invoke<InstallCandidate>('validate_install_path', {
 |---|---|
 | Timestamp | RFC 3339 string in UTC, for example `2026-09-22T14:31:07.482Z` |
 | Byte count | JSON number, always an integer, always bytes |
-| File path | String. On Windows the separator is a backslash. |
+| File path | String. On Windows the separator is a backslash, and no path ever carries the `\\?\` prefix. A path sent to the engine may use either separator. |
 | Identifier | String. Format is UUID v4 unless this document says otherwise. |
 | Hash | 64 hexadecimal characters, uppercase. The algorithm is SHA-256. |
 
@@ -197,8 +197,18 @@ type Settings = {
   minFileSizeBytes: number          // default 1048576
   followExtraModelPaths: boolean    // default true
   scanOutputModelDirs: boolean      // default true
+  huggingFaceCacheDirs: string[] | null   // default null
 }
 ```
+
+`huggingFaceCacheDirs` says where the Hugging Face libraries keep their
+downloaded models. `null` means work it out from the environment, which is what
+a person wants by default. A list covers a cache moved to another drive. An
+empty list means do not look at all.
+
+It is a setting rather than something the engine reads from the environment
+while it scans, because a scan's result must not depend on machine state
+nobody can see.
 
 `update_settings` takes a partial object. Every field is optional. The engine
 applies only the fields that are present.
@@ -394,8 +404,9 @@ The engine walks these roots for every install in the scan:
    search paths at startup.
 4. `<root>/custom_nodes` and every folder under it. These files are counted.
    They are never moved.
-5. The Hugging Face cache. These files are counted. They are never moved. The
-   engine looks at `HF_HOME`, then `HUGGINGFACE_HUB_CACHE`, then
+5. Every folder in `huggingFaceCacheDirs`. These files are counted. They are
+   never moved. When that setting is `null`, the engine works the folders out
+   from `HUGGINGFACE_HUB_CACHE`, then `HF_HOME`, then
    `<home>/.cache/huggingface/hub`.
 
 A file enters the scan when both conditions are true:

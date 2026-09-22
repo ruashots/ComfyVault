@@ -47,6 +47,9 @@ impl Fixture {
         let installs = self.engine.installs().unwrap();
         let mut settings = store.settings().unwrap();
         settings.min_file_size_bytes = 0;
+        // Never the machine's real Hugging Face cache: a test scans only what
+        // the test put on disk.
+        settings.huggingface_cache_dirs = Some(Vec::new());
         store.put_settings(&settings).unwrap();
 
         self.engine
@@ -597,4 +600,120 @@ fn the_real_platform_reports_at_least_one_root() {
 
 fn comfyvault_core_platform_roots(f: &Fixture) -> Vec<PathBuf> {
     f.engine.platform().drive_roots()
+}
+
+// --- no Windows verbatim prefix ever escapes the engine --------------------
+
+/// Every path in a value the interface receives, so one test can sweep them.
+fn every_path_in(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.contains(":\\") || s.starts_with('/') || s.contains(r"\\") {
+                out.push(s.clone());
+            }
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| every_path_in(v, out)),
+        serde_json::Value::Object(o) => o.values().for_each(|v| every_path_in(v, out)),
+        _ => {}
+    }
+}
+
+#[test]
+fn no_path_the_interface_receives_carries_the_windows_verbatim_prefix() {
+    // Canonicalizing on Windows returns \\?\C:\... and that path becomes the
+    // install root, every scan entry, every link and the vault itself. All of
+    // those reach the screen, so without cleaning, the person is shown
+    // \\?\C:\Users\... everywhere a path appears. It also breaks every
+    // comparison that mixes a canonicalized path with a plain one.
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("Production");
+    let b = f.add_install("Normal");
+    f.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    f.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+
+    let record = f.scan();
+    let plan = f.engine.build_plan(&record.scan_id).unwrap();
+    let store = f.engine.store().unwrap();
+    Applier::new(&store, f.engine.platform())
+        .apply("ap-1", &plan, &ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: crate::apply::VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        }, &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    // Only the payloads that really carry absolute paths. A payload with none
+    // would pass this test while proving nothing, so the sweep refuses one.
+    let payloads = vec![
+        ("app_state", serde_json::to_value(f.engine.app_state().unwrap()).unwrap()),
+        ("vault_info", serde_json::to_value(f.engine.vault_info().unwrap()).unwrap()),
+        ("installs", serde_json::to_value(f.engine.installs().unwrap()).unwrap()),
+        ("plan", serde_json::to_value(&plan).unwrap()),
+        ("links", serde_json::to_value(f.engine.links(None, None, None).unwrap()).unwrap()),
+        (
+            "scan_entries",
+            serde_json::to_value(
+                f.engine
+                    .scan_entries(&record.scan_id, 0, 100, &ScanEntryFilter::default())
+                    .unwrap(),
+            )
+            .unwrap(),
+        ),
+        (
+            "model_dirs",
+            serde_json::to_value(f.engine.install_model_dirs(&a.id).unwrap()).unwrap(),
+        ),
+    ];
+
+    let mut checked = 0;
+    for (name, payload) in payloads {
+        let mut paths = Vec::new();
+        every_path_in(&payload, &mut paths);
+        assert!(!paths.is_empty(), "{name} carried no paths, so this test proved nothing");
+        for p in paths {
+            assert!(
+                !p.starts_with(r"\\?\"),
+                "{name} handed the interface a verbatim path: {p}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 20, "only {checked} paths were swept, which is too few to trust");
+}
+
+#[test]
+fn a_path_spelled_the_way_the_interface_sends_it_finds_the_same_link() {
+    // The contract's examples use forward slashes. On Windows that names the
+    // same folder as a backslash, and the engine has to agree with itself.
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("A");
+    f.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+
+    let record = f.scan();
+    let plan = f.engine.build_plan(&record.scan_id).unwrap();
+    let store = f.engine.store().unwrap();
+    Applier::new(&store, f.engine.platform())
+        .apply("ap-1", &plan, &ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: crate::apply::VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        }, &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    let stored = f.engine.links(None, None, None).unwrap();
+    assert_eq!(stored.len(), 1);
+    let as_walked = stored[0].abs_path.clone();
+
+    // The same file, spelled the way a path from the interface arrives.
+    let as_sent = PathBuf::from(
+        crate::paths::display_path(&as_walked).replace('\\', "/"),
+    );
+    assert!(
+        store.link_at_path(&as_sent).unwrap().is_some(),
+        "the link vanished when its path was spelled with forward slashes: {as_sent:?}"
+    );
 }

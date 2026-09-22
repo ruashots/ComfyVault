@@ -36,6 +36,15 @@ impl TestWorld {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault_root = dir.path().join("ComfyVault");
         let store = Store::open(&vault_root, true).expect("open vault");
+        let settings = Settings {
+            min_file_size_bytes: 0,
+            // A test must never walk the machine's real Hugging Face cache.
+            // On the person's computer that folder holds real models, and a
+            // scan would count files no test put there.
+            huggingface_cache_dirs: Some(Vec::new()),
+            ..Default::default()
+        };
+        store.put_settings(&settings).expect("store settings");
         Self {
             vault_root,
             store,
@@ -43,7 +52,7 @@ impl TestWorld {
             // Tests use real files, but small ones. The one megabyte floor has
             // its own test rather than forcing every other test to write a
             // megabyte per file.
-            settings: Settings { min_file_size_bytes: 0, ..Default::default() },
+            settings,
             next_id: std::cell::Cell::new(1),
             dir,
         }

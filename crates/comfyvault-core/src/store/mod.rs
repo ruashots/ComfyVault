@@ -97,7 +97,7 @@ impl Store {
             .with_path(vault_root));
         }
 
-        let vault_root = std::fs::canonicalize(vault_root)
+        let vault_root = crate::paths::canonicalize_clean(vault_root)
             .map_err(|e| VaultError::from_io(&e, vault_root, "opening the vault folder"))?;
 
         let internal = vault_root.join(INTERNAL_DIR);
@@ -551,13 +551,17 @@ impl Store {
 
 /// A path used as a database key.
 ///
-/// Windows compares paths without regard to case, so two spellings of one file
-/// must land on one key. Without this, a rescan after the person renamed a
-/// folder's capitalization would miss every cached hash.
+/// Two spellings of one file must land on one key, or a link the engine
+/// created cannot be found again and a cached hash is recomputed for nothing.
+///
+/// Windows treats `/` and `\` as the same separator and ignores case, so both
+/// are normalized here. A path that arrives from the interface as
+/// `C:/models/loras` and one the engine walked as `C:\models\loras` are the
+/// same folder, and they have to key the same.
 fn path_key(p: &Path) -> String {
     let s = crate::paths::display_path(p);
     if cfg!(windows) {
-        s.to_lowercase()
+        s.replace('/', "\\").to_lowercase()
     } else {
         s
     }
@@ -665,6 +669,35 @@ mod tests {
         custom.metadata_lookups_enabled = false;
         s.put_settings(&custom).unwrap();
         assert!(!s.settings().unwrap().metadata_lookups_enabled);
+    }
+
+    #[test]
+    fn one_path_spelled_two_ways_finds_the_same_link() {
+        // The interface sends paths as text. On Windows a forward slash and a
+        // backslash name the same folder, and so do two capitalizations. A key
+        // that told them apart would lose the link the engine had just made.
+        let (_d, s) = store();
+        s.put_link(&link_record("l1", r"C:\Install\models\loras\x.safetensors", "AA"))
+            .unwrap();
+
+        if cfg!(windows) {
+            assert!(
+                s.link_at_path(Path::new("C:/Install/models/loras/x.safetensors"))
+                    .unwrap()
+                    .is_some(),
+                "a forward-slash spelling must find it"
+            );
+            assert!(
+                s.link_at_path(Path::new(r"c:\install\MODELS\loras\X.safetensors"))
+                    .unwrap()
+                    .is_some(),
+                "a differently cased spelling must find it"
+            );
+        }
+        assert!(s
+            .link_at_path(Path::new(r"C:\Install\models\loras\x.safetensors"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Settings the person can change, and the defaults the engine ships with.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// The default weight extensions a scan takes.
@@ -36,6 +38,18 @@ pub struct Settings {
     pub min_file_size_bytes: u64,
     pub follow_extra_model_paths: bool,
     pub scan_output_model_dirs: bool,
+    /// Where the Hugging Face libraries keep their downloaded models.
+    ///
+    /// `None` means work it out from the environment, which is what a person
+    /// wants by default. An explicit list covers a cache moved to another
+    /// drive, and an empty list means do not look at all.
+    ///
+    /// It is a setting rather than something read from the environment deep
+    /// inside a scan, because a scan's result must not depend on machine state
+    /// nobody can see. Reading the environment mid-scan also meant the tests
+    /// walked whatever cache the machine really had.
+    #[serde(default)]
+    pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
 }
 
 impl Default for Settings {
@@ -48,6 +62,7 @@ impl Default for Settings {
             min_file_size_bytes: DEFAULT_MIN_FILE_SIZE,
             follow_extra_model_paths: true,
             scan_output_model_dirs: true,
+            huggingface_cache_dirs: None,
         }
     }
 }
@@ -102,6 +117,19 @@ impl Settings {
         if let Some(v) = patch.scan_output_model_dirs {
             self.scan_output_model_dirs = v;
         }
+        if let Some(v) = &patch.huggingface_cache_dirs {
+            self.huggingface_cache_dirs = Some(v.clone());
+        }
+    }
+
+    /// The folders to count Hugging Face's cached models in.
+    ///
+    /// Falls back to the usual places only when nothing was set.
+    pub fn resolved_huggingface_dirs(&self) -> Vec<PathBuf> {
+        match &self.huggingface_cache_dirs {
+            Some(dirs) => dirs.iter().filter(|d| d.is_dir()).cloned().collect(),
+            None => crate::scan::huggingface_cache_dirs(),
+        }
     }
 }
 
@@ -133,6 +161,7 @@ pub struct SettingsPatch {
     pub min_file_size_bytes: Option<u64>,
     pub follow_extra_model_paths: Option<bool>,
     pub scan_output_model_dirs: Option<bool>,
+    pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
 }
 
 #[cfg(test)]

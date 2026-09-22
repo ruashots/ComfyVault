@@ -37,6 +37,38 @@ pub fn display_path(path: &Path) -> String {
     s.into_owned()
 }
 
+/// Removes the `\\?\` prefix Windows canonicalization adds.
+///
+/// [`std::fs::canonicalize`] on Windows returns a verbatim path, and that path
+/// then becomes an install's root, a scan entry's location, a link's address
+/// and the vault's own path. All of those reach the interface, so without this
+/// the person is shown `\\?\C:\Users\...` everywhere a path appears.
+///
+/// It also breaks comparisons: `\\?\C:\x` does not start with `C:\x`, so any
+/// check that mixes a canonicalized path with a plain one silently fails.
+/// Cleaning at the point of canonicalization keeps one form everywhere.
+///
+/// Paths longer than 260 characters rely on that prefix, but Rust's standard
+/// library puts it back for the calls that need it, so storing the plain form
+/// is safe and is what the person recognizes.
+pub fn clean(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if !s.starts_with(r"\\?\") {
+        // Never round-trips through a String on a system that cannot have the
+        // prefix, so a file name that is not valid text is left untouched.
+        return path.to_path_buf();
+    }
+    PathBuf::from(display_path(path))
+}
+
+/// Canonicalizes a path and removes the Windows verbatim prefix.
+///
+/// Every place the engine resolves a real location goes through this, so one
+/// form of every path is stored, compared and shown.
+pub fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(|p| clean(&p))
+}
+
 /// Resolves `.` and `..` without touching the disk.
 ///
 /// A leading `..` that would climb above the prefix or the root is dropped,
@@ -111,7 +143,7 @@ fn split_at_existing(path: &Path) -> (PathBuf, Vec<OsString>) {
 /// Canonicalizes the part of `path` that exists and appends the rest verbatim.
 fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
     let (existing, remainder) = split_at_existing(path);
-    let mut real = std::fs::canonicalize(&existing)
+    let mut real = crate::paths::canonicalize_clean(&existing)
         .map_err(|e| VaultError::from_io(&e, &existing, "checking where the folder really is"))?;
     for part in remainder {
         real.push(part);
@@ -121,8 +153,7 @@ fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
 
 /// The canonical form of `root`, which every containment check compares against.
 fn canonical_root(root: &Path) -> Result<PathBuf> {
-    std::fs::canonicalize(root)
-        .map_err(|e| VaultError::from_io(&e, root, "opening the folder"))
+    canonicalize_clean(root).map_err(|e| VaultError::from_io(&e, root, "opening the folder"))
 }
 
 /// Resolves `candidate` and proves it lands inside `root`.

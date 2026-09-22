@@ -307,7 +307,7 @@ pub fn inspect(given: &Path) -> Result<InstallCandidate> {
         return Ok(InstallCandidate::invalid("That is a file, not a folder."));
     }
 
-    let given = std::fs::canonicalize(given)
+    let given = crate::paths::canonicalize_clean(given)
         .map_err(|e| VaultError::from_io(&e, given, "opening the folder"))?;
 
     let roots = find_roots(&given, MAX_SEARCH_DEPTH);

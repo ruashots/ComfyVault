@@ -261,7 +261,7 @@ impl<'a> Links<'a> {
         // Checked again against the real, fully resolved location. The first
         // check compared text; this one follows every link in the chain. If it
         // fails, whatever was just created is removed again.
-        let resolved = std::fs::canonicalize(&candidate)
+        let resolved = crate::paths::canonicalize_clean(&candidate)
             .map_err(|e| VaultError::from_io(&e, &candidate, "opening the folder"))?;
         if !boundaries.iter().any(|b| crate::paths::is_within(b, &resolved)) {
             let _ = crate::apply::fsops::remove_dir_if_empty(&candidate);

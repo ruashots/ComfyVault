@@ -195,7 +195,7 @@ impl<'a> Scanner<'a> {
         // The Hugging Face cache belongs to the computer, not to one install,
         // so it is walked once after the installs.
         if !cancelled && !cancel.is_cancelled() {
-            for dir in huggingface_cache_dirs() {
+            for dir in self.settings.resolved_huggingface_dirs() {
                 self.enumerate_dir(
                     &dir,
                     &dir,
@@ -470,7 +470,7 @@ impl<'a> Scanner<'a> {
         // Anything under custom_nodes is counted, never moved, even when an
         // extra model path points straight into it.
         let custom_nodes = install.custom_nodes_dir();
-        let excluded: Vec<PathBuf> = match std::fs::canonicalize(&custom_nodes) {
+        let excluded: Vec<PathBuf> = match crate::paths::canonicalize_clean(&custom_nodes) {
             Ok(real) if real != custom_nodes => vec![custom_nodes.clone(), real],
             _ => vec![custom_nodes.clone()],
         };
@@ -588,7 +588,8 @@ impl<'a> Scanner<'a> {
             }
 
             // One physical file, counted once, however many routes reach it.
-            let real_path = std::fs::canonicalize(&abs_path).unwrap_or_else(|_| abs_path.clone());
+            let real_path =
+                crate::paths::canonicalize_clean(&abs_path).unwrap_or_else(|_| abs_path.clone());
             if !seen_real.insert(real_path.clone()) {
                 continue;
             }

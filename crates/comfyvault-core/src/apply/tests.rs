@@ -32,11 +32,20 @@ fn run_apply(w: &TestWorld, plan: &ConsolidationPlan) -> ApplyRecord {
         .expect("apply")
 }
 
-/// Counts the bytes of real files, ignoring links. This is the number the
-/// person's drive actually shows.
-fn real_bytes(root: &Path) -> u64 {
+/// Counts the bytes of real model files, ignoring links.
+///
+/// This is the number the person's drive actually shows. The engine's own
+/// folder is skipped: the vault database grows and shrinks as it is written,
+/// and counting it would measure bookkeeping rather than the person's files.
+fn real_bytes(w: &TestWorld) -> u64 {
+    let internal = w.store.internal_dir();
     let mut total = 0;
-    for e in walkdir::WalkDir::new(root).follow_links(false).into_iter().flatten() {
+    for e in walkdir::WalkDir::new(w.path())
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !e.path().starts_with(&internal))
+        .flatten()
+    {
         if e.file_type().is_file() {
             total += e.metadata().map(|m| m.len()).unwrap_or(0);
         }
@@ -95,10 +104,10 @@ fn the_space_actually_comes_back_on_the_disk() {
     }
     let size = weights("shared").len() as u64;
 
-    let before = real_bytes(w.path());
+    let before = real_bytes(&w);
     let plan = w.plan(&[a, b, c]);
     let result = run_apply(&w, &plan);
-    let after = real_bytes(w.path());
+    let after = real_bytes(&w);
 
     assert_eq!(result.bytes_freed, size * 2);
     assert!(
@@ -595,7 +604,7 @@ fn reverting_puts_every_file_back_exactly_as_it_was() {
         .map(|i| w.write_model(i, "models/loras/m.safetensors", &weights("m")))
         .collect();
 
-    let before = real_bytes(w.path());
+    let before = real_bytes(&w);
     let plan = w.plan(&[a, b, c]);
     run_apply(&w, &plan);
 
@@ -608,7 +617,7 @@ fn reverting_puts_every_file_back_exactly_as_it_was() {
         assert_eq!(std::fs::read(p).unwrap(), weights("m"));
     }
     assert!(!w.vault_root.join("loras/m.safetensors").exists());
-    assert_eq!(real_bytes(w.path()), before, "the disk must look exactly as it did");
+    assert_eq!(real_bytes(&w), before, "the disk must look exactly as it did");
 }
 
 #[test]
