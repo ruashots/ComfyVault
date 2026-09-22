@@ -6,6 +6,7 @@ use crate::links::CreateLinkRequest;
 use crate::progress::NullSink;
 use crate::testkit::{weights, weights_hash, TestWorld};
 
+
 fn vault<'a>(w: &'a TestWorld) -> Vault<'a> {
     Vault::new(&w.store, &w.platform)
 }
@@ -471,4 +472,213 @@ fn asking_about_a_model_the_vault_does_not_have_says_so() {
     );
     assert_eq!(vault(&w).remove_alias(&absent, "x").unwrap_err().code, ErrorCode::NotFound);
     assert_eq!(vault(&w).delete_file(&absent, &absent).unwrap_err().code, ErrorCode::NotFound);
+}
+
+// --- the Library's listing -------------------------------------------------
+
+fn contents(w: &TestWorld, filter: VaultFilter, sort: VaultSort) -> ContentPage {
+    vault(w).list_contents(0, 100, &filter, sort, false).unwrap()
+}
+
+#[test]
+fn content_still_out_in_the_installs_is_one_row_counted_once() {
+    // The Library counts a model once, whether it sits in one install or four.
+    let w = TestWorld::new();
+    let installs: Vec<_> = (0..3).map(|n| w.add_install(&format!("I{n}"))).collect();
+    for i in &installs {
+        w.write_model(i, "models/loras/m.safetensors", &weights("m"));
+    }
+    w.scan(&installs);
+
+    let page = contents(&w, VaultFilter::default(), VaultSort::Size);
+    assert_eq!(page.total, 1, "three copies of one content is one row");
+
+    let row = &page.rows[0];
+    assert_eq!(row.sha256, weights_hash("m"));
+    assert_eq!(row.occurrence_count, 3, "and it says where all three are");
+    assert_eq!(row.link_count, 0);
+    assert!(!row.in_vault);
+    assert_eq!(row.install_ids.len(), 3);
+    assert_eq!(row.name, "m.safetensors");
+    assert_eq!(row.category, "loras");
+    assert!(page.scan_id.is_some());
+}
+
+#[test]
+fn consolidated_content_keeps_its_single_row_with_the_links_counted() {
+    let w = TestWorld::new();
+    two_names(&w);
+    w.scan(&w.store.installs().unwrap());
+
+    let page = contents(&w, VaultFilter::default(), VaultSort::Size);
+    assert_eq!(page.total, 1, "consolidating must not split the row in two");
+
+    let row = &page.rows[0];
+    assert!(row.in_vault);
+    assert_eq!(row.link_count, 2);
+    assert_eq!(row.occurrence_count, 2, "the two links are where it reaches");
+    assert_eq!(row.name, "lora1.safetensors");
+    assert_eq!(row.aliases, vec!["my-favourite.safetensors"]);
+}
+
+#[test]
+fn a_content_half_consolidated_is_still_one_row_with_both_sides_added() {
+    // A partial apply, or a copy that arrived after one. The Library must not
+    // show the same model twice.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    Applier::new(&w.store, &w.platform)
+        .apply("ap-1", &plan, &ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        }, &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    // A third install turns up later holding a real copy of the same content.
+    let c = w.add_install("C");
+    w.write_model(&c, "models/loras/m.safetensors", &weights("m"));
+    w.scan(&[a, b, c]);
+
+    let page = contents(&w, VaultFilter::default(), VaultSort::Size);
+    assert_eq!(page.total, 1, "one content is one row, however it is spread");
+
+    let row = &page.rows[0];
+    assert!(row.in_vault);
+    assert_eq!(row.link_count, 2, "two places are links");
+    assert_eq!(row.occurrence_count, 3, "and a third still holds the real file");
+    assert_eq!(row.install_ids.len(), 3);
+}
+
+#[test]
+fn the_listing_filters_by_whether_the_vault_holds_it() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let late = w.add_install("Late");
+    w.write_model(&late, "models/loras/new.safetensors", &weights("new"));
+    w.scan(&w.store.installs().unwrap());
+
+    let all = contents(&w, VaultFilter::default(), VaultSort::Size);
+    assert_eq!(all.total, 2);
+
+    let vaulted = contents(
+        &w,
+        VaultFilter { in_vault: Some(true), ..Default::default() },
+        VaultSort::Size,
+    );
+    assert_eq!(vaulted.total, 1);
+    assert!(vaulted.rows[0].in_vault);
+
+    let not_yet = contents(
+        &w,
+        VaultFilter { in_vault: Some(false), ..Default::default() },
+        VaultSort::Size,
+    );
+    assert_eq!(not_yet.total, 1);
+    assert_eq!(not_yet.rows[0].name, "new.safetensors");
+}
+
+#[test]
+fn the_listing_filters_by_category_and_by_name() {
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    w.write_model(&i, "models/loras/alpha.safetensors", &weights("alpha"));
+    w.write_model(&i, "models/loras/beta.safetensors", &weights("beta"));
+    w.write_model(&i, "models/checkpoints/gamma.safetensors", &weights("gamma"));
+    w.scan(&[i]);
+
+    let loras = contents(
+        &w,
+        VaultFilter { category: Some("loras".into()), ..Default::default() },
+        VaultSort::Name,
+    );
+    assert_eq!(loras.total, 2);
+
+    let named = contents(
+        &w,
+        VaultFilter { name_contains: Some("GAMMA".into()), ..Default::default() },
+        VaultSort::Name,
+    );
+    assert_eq!(named.total, 1, "the search must ignore case");
+    assert_eq!(named.rows[0].name, "gamma.safetensors");
+}
+
+#[test]
+fn unused_means_in_the_vault_with_nothing_reaching_it() {
+    // A model still sitting in an install is used by definition: it is there.
+    // Only a vault file nothing links to is unused.
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    let other = w.add_install("Other");
+    w.write_model(&other, "models/loras/untouched.safetensors", &weights("untouched"));
+    w.scan(&w.store.installs().unwrap());
+
+    assert_eq!(
+        contents(&w, VaultFilter { orphans_only: true, ..Default::default() }, VaultSort::Size).total,
+        0,
+        "nothing is unused while both installs still link to it"
+    );
+
+    for install in [&a, &b] {
+        for e in std::fs::read_dir(install.root.join("models/loras")).unwrap().flatten() {
+            std::fs::remove_file(e.path()).unwrap();
+        }
+    }
+    w.scan(&w.store.installs().unwrap());
+
+    let orphans = contents(&w, VaultFilter { orphans_only: true, ..Default::default() }, VaultSort::Size);
+    assert_eq!(orphans.total, 1);
+    assert_eq!(orphans.rows[0].occurrence_count, 0);
+    assert!(orphans.rows[0].in_vault);
+}
+
+#[test]
+fn the_listing_sorts_and_pages() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    // One content in two places, three more in one each.
+    w.write_model(&a, "models/loras/shared.safetensors", &weights("shared"));
+    w.write_model(&b, "models/loras/shared.safetensors", &weights("shared"));
+    for n in 0..3 {
+        w.write_model(&a, &format!("models/loras/x{n}.safetensors"), &weights(&format!("x{n}")));
+    }
+    w.scan(&[a, b]);
+
+    let by_occurrences =
+        vault(&w).list_contents(0, 100, &VaultFilter::default(), VaultSort::Occurrences, true).unwrap();
+    assert_eq!(by_occurrences.total, 4);
+    assert_eq!(
+        by_occurrences.rows[0].occurrence_count, 2,
+        "the most widespread content belongs at the top"
+    );
+
+    let page = vault(&w).list_contents(2, 2, &VaultFilter::default(), VaultSort::Name, false).unwrap();
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.total, 4, "the total counts everything, not just the page");
+    assert_eq!(page.offset, 2);
+}
+
+#[test]
+fn the_listing_works_before_anything_has_been_scanned() {
+    let w = TestWorld::new();
+    w.add_install("A");
+    let page = contents(&w, VaultFilter::default(), VaultSort::Size);
+    assert_eq!(page.total, 0);
+    assert!(page.scan_id.is_none(), "and it says why there is nothing out there");
+}
+
+#[test]
+fn a_listing_never_returns_more_rows_than_the_page_limit() {
+    let w = TestWorld::new();
+    let page = vault(&w)
+        .list_contents(0, 999_999, &VaultFilter::default(), VaultSort::Name, false)
+        .unwrap();
+    assert!(page.rows.len() <= MAX_PAGE);
 }

@@ -176,7 +176,17 @@ Errors: `ioError`, `permissionDenied`, `storeError`, `invalidArgument`.
 The engine refuses a vault path that sits inside a registered install. That
 refusal uses `conflict`.
 
-### 2.4 `get_settings` and `update_settings`
+### 2.4 `get_vault_info`
+
+Returns the open vault's facts, above all how much room its drive has left.
+That number is the most-read one in the application, so reading it does not
+mean opening the vault again.
+
+Arguments: none. Returns `VaultInfo`, the same shape `select_vault` returns.
+
+Errors: `notInitialized` when no vault is open.
+
+### 2.5 `get_settings` and `update_settings`
 
 ```ts
 type Settings = {
@@ -581,9 +591,16 @@ Returns a `ConsolidationPlan`.
 
 Errors: `notFound`, `notInitialized`, `symlinkUnsupported`.
 
-`build_plan` still succeeds when symbolic links are not supported. It marks
-every row as blocked with the reason `symlinkUnsupported`, so the person can
-read the plan before they turn Developer Mode on.
+`build_plan` still succeeds when symbolic links are not supported, and it still
+builds the groups. The person reads what they would gain, and that is what
+sends them to turn Developer Mode on. A plan with no groups would tell them
+nothing, in exactly the state where it matters most.
+
+In that case `symlinksSupported` is `false` and `blocked` carries **one** row
+with the reason `symlinkUnsupported`, whose path is the vault root. One row,
+not one per group: the reason is a fact about the computer, not about any file.
+`start_apply` refuses separately, so nothing can act on a plan that only looks
+applicable.
 
 ### 5.2 `ConsolidationPlan`
 
@@ -593,6 +610,7 @@ type ConsolidationPlan = {
   scanId: string
   createdAt: string
   vaultRoot: string
+  symlinksSupported: boolean   // false: the groups are real, Apply is refused
   groups: PlanGroup[]
   blocked: BlockedRow[]
   totals: PlanTotals
@@ -606,8 +624,8 @@ type PlanGroup = {
   vaultRelPath: string           // for example 'loras/lora1.safetensors'
   vaultNameAdjusted: boolean
   clashesWith: string | null     // the SHA-256 that already owns the plain name
-  source: PlanSource
-  links: PlanLink[]
+  source: PlanSource             // which copy becomes the vault file
+  links: PlanLink[]              // every place that gets a link. Always `occurrences` long.
   occurrences: number
   bytesFreed: number
   singleCopy: boolean
@@ -630,6 +648,7 @@ type PlanLink = {
   relPath: string
   linkName: string               // the name the link keeps
   nameDiffersFromVault: boolean
+  isSource: boolean              // this copy's bytes become the vault file
 }
 
 type PlanTotals = {
@@ -665,6 +684,15 @@ first group keeps the plain name. The second group takes
 `<stem>__<first 8 of SHA-256><extension>`, for example
 `lora1__3F9A2C17.safetensors`. Both survive. `vaultNameAdjusted` is `true` on
 the second group.
+
+**Every copy gets a link, including the one that moves.** `links` holds one
+entry per place that held the file, so `links.length` always equals
+`occurrences`. The copy whose bytes become the vault file is in there too, with
+`isSource` set to `true`: its old place gets a link like every other, and
+nothing is deleted there because the file moved. The same copy is also named in
+`source`, which is where the reason it was chosen lives.
+
+Read `links.length` as "this many places get a link". Do not subtract one.
 
 **The link keeps its own name.** A link is always created with the name the
 file had in that install. The vault file name can differ. When it differs,
@@ -1015,7 +1043,66 @@ content was ever known by.
 
 `canonicalName` is the real file. `aliases` are the in-vault links.
 
-### 8.3 `list_name_groups`
+### 8.3 `list_contents`
+
+One row per unique content, across the vault **and** the installs. This is the
+Library's own listing: a model is counted once, whether its bytes are already
+in the vault or still sitting in four installs.
+
+Without this, the Library has to be stitched from `build_plan` groups plus
+`list_vault_files`, which means paging two lists to draw one screen.
+
+Arguments are the same shape as `list_vault_files` in section 8.1, with one
+extra filter.
+
+```ts
+{
+  offset: number
+  limit: number                  // maximum 1000
+  filter?: VaultFilter & {
+    inVault?: boolean            // true: already in the vault. false: still out
+                                 // in the installs. Absent: both.
+  }
+  sort?: 'name' | 'size' | 'addedAt' | 'linkCount' | 'occurrences'
+  descending?: boolean
+}
+```
+
+Returns:
+
+```ts
+type ContentPage = {
+  total: number
+  offset: number
+  rows: ContentRow[]
+  scanId: string | null    // where the out-of-vault rows came from. null means
+                           // nothing has been scanned, so only the vault shows.
+}
+
+type ContentRow = {
+  sha256: string
+  name: string             // the vault's name for it, or the name on disk
+  category: string
+  sizeBytes: number
+  aliases: string[]
+  occurrenceCount: number  // places on disk that hold this content right now
+  linkCount: number        // how many of those places are links into the vault
+  inVault: boolean
+  installIds: string[]
+  addedAt: string | null   // when the vault took it. null while it is still out.
+  metadata: ModelMetadata | null
+}
+```
+
+A content that is half consolidated, with some copies linked and one still a
+real file, is **one** row. `occurrenceCount` counts every place and
+`linkCount` counts the linked ones, so `occurrenceCount - linkCount` is how
+many real copies are left.
+
+`orphansOnly` here means a content the vault holds that nothing on disk reaches
+any more. A model still sitting in an install is not an orphan: it is there.
+
+### 8.4 `list_name_groups`
 
 Lists contents that carry more than one name.
 
@@ -1041,7 +1128,7 @@ type NameGroup = {
 
 Returns `NameGroup[]`.
 
-### 8.4 `set_canonical_name`
+### 8.5 `set_canonical_name`
 
 The person picks the name the vault keeps as the real file.
 
@@ -1054,7 +1141,7 @@ into an in-vault link. It then repoints every install link to the new real
 path, so no link resolves through a second link. Every step is journaled and
 revertible.
 
-### 8.5 `remove_alias`
+### 8.6 `remove_alias`
 
 Removes one in-vault name. This is a separate action, on purpose. Names stay by
 default, so saved workflows keep working.
@@ -1067,7 +1154,7 @@ The engine rejects with `conflict` if the name is the canonical name. It
 rejects with `conflict` if any install link resolves through that name, and
 `detail` lists the links.
 
-### 8.6 `list_orphans`
+### 8.7 `list_orphans`
 
 Lists vault files that no install links to.
 
@@ -1076,7 +1163,7 @@ Arguments: none. Returns `VaultFile[]` where `linkCount` is `0`.
 The engine verifies each recorded link on disk before it answers. A link that
 disappeared no longer counts.
 
-### 8.7 `delete_vault_file`
+### 8.8 `delete_vault_file`
 
 Deletes a vault file and every name it carries. **This action cannot be
 reverted.** The bytes are gone.
@@ -1095,7 +1182,7 @@ Remove the links first.
 The user interface must ask the person to confirm, and must say that the action
 cannot be undone.
 
-### 8.8 `check_vault_health`
+### 8.9 `check_vault_health`
 
 Arguments: none.
 
@@ -1374,8 +1461,8 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `get_platform_report` | 2.1 |
 | `get_app_state` | 2.2 |
 | `select_vault` | 2.3 |
-| `get_settings` | 2.4 |
-| `update_settings` | 2.4 |
+| `get_settings` | 2.5 |
+| `update_settings` | 2.5 |
 | `validate_install_path` | 3.1 |
 | `register_install` | 3.2 |
 | `list_installs` | 3.3 |
@@ -1401,12 +1488,12 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `create_model_folder` | 7.3 |
 | `list_links` | 7.4 |
 | `list_vault_files` | 8.1 |
-| `list_name_groups` | 8.3 |
-| `set_canonical_name` | 8.4 |
-| `remove_alias` | 8.5 |
-| `list_orphans` | 8.6 |
-| `delete_vault_file` | 8.7 |
-| `check_vault_health` | 8.8 |
+| `list_name_groups` | 8.4 |
+| `set_canonical_name` | 8.5 |
+| `remove_alias` | 8.6 |
+| `list_orphans` | 8.7 |
+| `delete_vault_file` | 8.8 |
+| `check_vault_health` | 8.9 |
 | `check_model_usage` | 9.1 |
 | `get_metadata` | 10.1 |
 | `fetch_metadata_batch` | 10.2 |
@@ -1414,7 +1501,9 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `get_running_comfy` | 11.1 |
 | `check_locked_files` | 11.2 |
 | `close_vault` | 2.3 |
-| `remove_dangling_links` | 8.8 |
+| `get_vault_info` | 2.4 |
+| `list_contents` | 8.3 |
+| `remove_dangling_links` | 8.9 |
 | `list_directory` | 15.1 |
 | `create_directory` | 15.2 |
 
@@ -1434,8 +1523,16 @@ only ever chooses a folder. Hidden folders are left out.
 Arguments:
 
 ```ts
-{ path?: string }      // absent or empty means the drive root
+{ path?: string }      // absent or empty means EVERY drive
 ```
+
+**With no path, the answer is every drive the computer has, not the contents of
+`C:`.** The returned listing has an empty `path`, a `parent` of `null`, and one
+entry per drive root. A person whose models live on `D:` has to be able to
+reach them, and a picker that starts inside one drive can never leave it.
+
+Going back up from a drive root returns `parent: ""`, which is the drive list
+again.
 
 Returns:
 

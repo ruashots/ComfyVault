@@ -245,14 +245,23 @@ impl Engine {
             }
         }
 
-        let info = self.vault_info(&store)?;
+        let info = self.vault_info_of(&store)?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
         AppConfig { vault_root: Some(PathBuf::from(&info.root)) }.save(&self.config_path)?;
         Ok(info)
     }
 
-    fn vault_info(&self, store: &Store) -> Result<VaultInfo> {
+    /// Facts about the open vault, without reopening it.
+    ///
+    /// The drive's free space is the most-read number in the application, and
+    /// asking for it should not mean opening the vault again.
+    pub fn vault_info(&self) -> Result<VaultInfo> {
+        let store = self.store()?;
+        self.vault_info_of(&store)
+    }
+
+    fn vault_info_of(&self, store: &Store) -> Result<VaultInfo> {
         let files = store.vault_files()?;
         let space = self.platform.disk_space(store.vault_root()).ok();
         Ok(VaultInfo {
@@ -699,6 +708,19 @@ impl Engine {
     ) -> Result<VaultPage> {
         let store = self.store()?;
         Vault::new(&store, self.platform.as_ref()).list(offset, limit, filter, sort, descending)
+    }
+
+    /// One row per unique content, across the vault and the installs.
+    pub fn contents(
+        &self,
+        offset: u64,
+        limit: u64,
+        filter: &VaultFilter,
+        sort: VaultSort,
+        descending: bool,
+    ) -> Result<crate::vault::ContentPage> {
+        let store = self.store()?;
+        Vault::new(&store, self.platform.as_ref()).list_contents(offset, limit, filter, sort, descending)
     }
 
     pub fn name_groups(&self) -> Result<Vec<NameGroup>> {

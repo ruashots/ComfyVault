@@ -35,7 +35,7 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, GetVolumePathNameW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
+    CreateFileW, GetLogicalDrives, GetVolumePathNameW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::Registry::{
     RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
@@ -231,6 +231,23 @@ pub(super) fn is_elevated() -> bool {
     ok != 0 && elevation.TokenIsElevated != 0
 }
 
+/// Every drive letter the computer currently has.
+///
+/// A folder picker has to start here, not inside `C:\`. Models often live on a
+/// second drive, and that is exactly the case this product exists for.
+pub(super) fn drive_roots() -> Vec<PathBuf> {
+    let mask = unsafe { GetLogicalDrives() };
+    if mask == 0 {
+        // The call failed. `C:` is a better answer than nothing at all.
+        return vec![PathBuf::from("C:\\")];
+    }
+    (0..26u32)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| PathBuf::from(format!("{}:\\", (b'A' + i as u8) as char)))
+        .filter(|p| std::fs::metadata(p).is_ok())
+        .collect()
+}
+
 /// `ERROR_NOT_SAME_DEVICE` is 17. It is the one rename failure the caller
 /// recovers from, by copying instead.
 pub(super) fn is_cross_volume_error(e: &std::io::Error) -> bool {
@@ -299,6 +316,16 @@ mod tests {
         // and it must not be a crash.
         let _ = developer_mode_enabled();
         let _ = long_paths_enabled();
+    }
+
+    #[test]
+    fn the_drive_list_has_the_system_drive_in_it() {
+        let roots = drive_roots();
+        assert!(!roots.is_empty(), "a computer always has at least one drive");
+        for r in &roots {
+            let s = r.to_string_lossy();
+            assert!(s.len() == 3 && s.ends_with(":\\"), "expected a drive root, got {s}");
+        }
     }
 
     #[test]

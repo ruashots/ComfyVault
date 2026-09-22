@@ -54,7 +54,11 @@ fn two_copies_become_one_vault_file_and_one_link() {
     let g = group_for(&plan, "lora1");
 
     assert_eq!(g.occurrences, 2);
-    assert_eq!(g.links.len(), 1);
+    assert_eq!(
+        g.links.len(), 2,
+        "a link takes the place of every file that was there, the moved one included"
+    );
+    assert_eq!(g.links.iter().filter(|l| l.is_source).count(), 1);
     assert!(!g.single_copy);
     assert_eq!(g.bytes_freed, weights("lora1").len() as u64);
     assert_eq!(
@@ -78,7 +82,8 @@ fn a_single_copy_still_moves_and_frees_nothing() {
     assert!(g.single_copy);
     assert_eq!(g.bytes_freed, 0);
     assert_eq!(g.occurrences, 1);
-    assert!(g.links.is_empty());
+    assert_eq!(g.links.len(), 1, "the one copy still gets a link where it was");
+    assert!(g.links[0].is_source);
     assert_eq!(g.source.chosen_because, SourceChoice::OnlyCopy);
 
     assert_eq!(plan.totals.single_copy_groups, 1);
@@ -97,14 +102,16 @@ fn a_link_keeps_the_name_it_had_even_when_the_vault_name_differs() {
 
     let plan = w.plan(&[a, b]);
     let g = group_for(&plan, "same");
-    assert_eq!(g.links.len(), 1);
-    let link = &g.links[0];
-    assert_eq!(
-        link.link_name,
-        name_of(&link.abs_path),
-        "a link always keeps the name the file had in that install"
-    );
-    assert!(link.name_differs_from_vault);
+    assert_eq!(g.links.len(), 2);
+    for link in &g.links {
+        assert_eq!(
+            link.link_name,
+            name_of(&link.abs_path),
+            "a link always keeps the name the file had in that install"
+        );
+    }
+    let renamed = g.links.iter().find(|l| l.link_name == "my-favourite.safetensors").unwrap();
+    assert!(renamed.name_differs_from_vault);
 }
 
 #[test]
@@ -202,7 +209,7 @@ fn a_clash_still_lets_each_install_keep_its_own_link_name() {
     let plan = w.plan(&installs);
     let rare = group_for(&plan, "rare");
     assert!(rare.vault_name_adjusted);
-    assert_eq!(rare.links.len(), 1);
+    assert_eq!(rare.links.len(), 2, "both copies of the rarer content get a link");
     assert_eq!(
         rare.links[0].link_name, "lora1.safetensors",
         "the install keeps the name it always had, whatever the vault calls the file"
@@ -305,18 +312,52 @@ fn a_file_deleted_after_the_scan_is_blocked() {
 }
 
 #[test]
-fn without_symlink_support_the_plan_still_builds_and_blocks_every_row() {
-    // The person has to be able to read the plan before they decide whether to
-    // turn Developer Mode on.
+fn without_symlink_support_the_plan_is_still_readable() {
+    // The person reads what they would gain, and that is what sends them to
+    // turn Developer Mode on. A blank screen tells them nothing, in exactly the
+    // state where it matters most.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    w.platform.set_symlinks_unsupported(true);
+
+    let plan = w.plan(&[a, b]);
+
+    assert_eq!(plan.groups.len(), 1, "the plan must still say what it would do");
+    assert_eq!(plan.totals.bytes_freed, weights("m").len() as u64);
+    assert!(!plan.symlinks_supported);
+
+    // One row says the computer cannot make links. Not one per group: the
+    // reason is a fact about the computer, not about any file.
+    assert_eq!(plan.blocked.len(), 1);
+    assert_eq!(plan.blocked[0].reason, BlockReason::SymlinkUnsupported);
+    assert_eq!(plan.blocked[0].abs_path, w.vault_root);
+}
+
+#[test]
+fn a_computer_that_can_make_links_gets_no_platform_row() {
     let w = TestWorld::new();
     let a = w.add_install("A");
     w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+
+    let plan = w.plan(&[a]);
+    assert!(plan.symlinks_supported);
+    assert!(plan.blocked.iter().all(|b| b.reason != BlockReason::SymlinkUnsupported));
+}
+
+#[test]
+fn an_empty_plan_on_a_computer_without_links_reports_nothing_to_block() {
+    // Nothing to consolidate means nothing is blocked, whatever the computer
+    // can or cannot do.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
     w.platform.set_symlinks_unsupported(true);
 
     let plan = w.plan(&[a]);
     assert!(plan.groups.is_empty());
-    assert_eq!(blocked_for(&plan, "m.safetensors").reason, BlockReason::SymlinkUnsupported);
-    assert_eq!(plan.totals.blocked_rows, 1);
+    assert!(plan.blocked.is_empty());
 }
 
 #[test]
@@ -483,7 +524,10 @@ fn the_totals_agree_with_the_groups() {
     assert_eq!(plan.totals.single_copy_groups, 1);
     assert_eq!(plan.totals.bytes_freed, size * 2);
     assert_eq!(plan.totals.files_moved, 2, "one file moves per group");
-    assert_eq!(plan.totals.links_created, 2, "two duplicates become two links");
+    assert_eq!(
+        plan.totals.links_created, 4,
+        "three copies of one content plus one lone file is four places that get a link"
+    );
 
     let summed: u64 = plan.groups.iter().map(|g| g.bytes_freed).sum();
     assert_eq!(summed, plan.totals.bytes_freed);
@@ -581,4 +625,45 @@ fn an_adjusted_name_keeps_the_extension_and_is_stable() {
     assert_eq!(adjusted_name("noext", &sha), "noext__3F9A2C17");
     // A dotfile has no stem, so the whole name is kept and the tag appended.
     assert_eq!(adjusted_name(".hidden", &sha), ".hidden__3F9A2C17");
+}
+
+#[test]
+fn every_copy_in_a_group_gets_a_link_and_exactly_one_of_them_is_the_source() {
+    // The count the person reads is "N links go back where they were", so it
+    // has to equal the number of places that held the file. Leaving the moved
+    // copy out would report one short on every row.
+    let w = TestWorld::new();
+    let installs: Vec<_> = (0..4).map(|n| w.add_install(&format!("I{n}"))).collect();
+    for i in &installs {
+        w.write_model(i, "models/loras/m.safetensors", &weights("m"));
+    }
+    w.write_model(&installs[0], "models/loras/alone.safetensors", &weights("alone"));
+
+    let plan = w.plan(&installs);
+    for g in &plan.groups {
+        assert_eq!(
+            g.links.len() as u64,
+            g.occurrences,
+            "group {} has {} links for {} copies",
+            g.vault_rel_path.display(),
+            g.links.len(),
+            g.occurrences
+        );
+        assert_eq!(
+            g.links.iter().filter(|l| l.is_source).count(),
+            1,
+            "exactly one copy becomes the vault file"
+        );
+        let source = g.links.iter().find(|l| l.is_source).unwrap();
+        assert_eq!(source.abs_path, g.source.abs_path, "and it is the one named in source");
+    }
+
+    let shared = group_for(&plan, "m");
+    assert_eq!(shared.occurrences, 4);
+    assert_eq!(shared.links.len(), 4);
+    assert_eq!(
+        shared.bytes_freed,
+        weights("m").len() as u64 * 3,
+        "four copies frees three copies' worth: the fourth moves"
+    );
 }

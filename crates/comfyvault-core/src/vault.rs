@@ -95,6 +95,10 @@ pub struct VaultFilter {
     pub orphans_only: bool,
     #[serde(default)]
     pub with_aliases_only: bool,
+    /// `Some(true)` for content already in the vault, `Some(false)` for
+    /// content still out in the installs, `None` for both.
+    #[serde(default)]
+    pub in_vault: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +108,46 @@ pub enum VaultSort {
     Size,
     AddedAt,
     LinkCount,
+    /// How many places on disk hold this content.
+    Occurrences,
+}
+
+/// One unique content, wherever it currently lives.
+///
+/// This is the Library's row. It exists because the Library counts a model
+/// once, whether its bytes are already in the vault or still sitting in three
+/// installs, and stitching that from a plan plus a vault listing means paging
+/// two lists to draw one screen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentRow {
+    pub sha256: String,
+    /// The vault's name for it, or the name it carries on disk if it is not in
+    /// the vault yet.
+    pub name: String,
+    pub category: String,
+    pub size_bytes: u64,
+    pub aliases: Vec<String>,
+    /// How many places on disk hold this content right now.
+    pub occurrence_count: u64,
+    /// How many of those places are links into the vault.
+    pub link_count: u64,
+    pub in_vault: bool,
+    pub install_ids: Vec<String>,
+    pub added_at: Option<crate::time_util::Timestamp>,
+    pub metadata: Option<crate::metadata::ModelMetadata>,
+}
+
+/// A page of the Library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentPage {
+    pub total: u64,
+    pub offset: u64,
+    pub rows: Vec<ContentRow>,
+    /// The scan the out-of-vault rows came from. `None` means nothing has been
+    /// scanned yet, so the page shows only what the vault already holds.
+    pub scan_id: Option<String>,
 }
 
 /// The largest page a listing returns.
@@ -224,6 +268,7 @@ impl<'a> Vault<'a> {
             VaultSort::Size => a.size_bytes.cmp(&b.size_bytes),
             VaultSort::AddedAt => a.added_at.cmp(&b.added_at),
             VaultSort::LinkCount => a.link_count.cmp(&b.link_count),
+            VaultSort::Occurrences => a.link_count.cmp(&b.link_count),
         });
         if descending {
             files.reverse();
@@ -233,6 +278,151 @@ impl<'a> Vault<'a> {
         let limit = (limit as usize).min(MAX_PAGE);
         let page: Vec<VaultFile> = files.into_iter().skip(offset as usize).take(limit).collect();
         Ok(VaultPage { total, offset, files: page })
+    }
+
+    /// One row per unique content, across the vault and the installs.
+    ///
+    /// The vault supplies what it already holds. The last scan supplies what is
+    /// still out in the installs. A content in both places is one row, with the
+    /// two occurrence counts added, which is what makes this the Library's view
+    /// rather than a second copy of the vault listing.
+    pub fn list_contents(
+        &self,
+        offset: u64,
+        limit: u64,
+        filter: &VaultFilter,
+        sort: VaultSort,
+        descending: bool,
+    ) -> Result<ContentPage> {
+        let mut by_hash: BTreeMap<String, ContentRow> = BTreeMap::new();
+
+        for record in self.store.vault_files()? {
+            let links = self.live_links(&record.sha256)?;
+            let mut install_ids: Vec<String> =
+                links.iter().map(|l| l.install_id.clone()).collect();
+            install_ids.sort();
+            install_ids.dedup();
+
+            by_hash.insert(
+                record.sha256.clone(),
+                ContentRow {
+                    name: record.canonical_name.clone(),
+                    category: record.category.clone(),
+                    size_bytes: record.size_bytes,
+                    aliases: record.aliases.clone(),
+                    occurrence_count: links.len() as u64,
+                    link_count: links.len() as u64,
+                    in_vault: true,
+                    install_ids,
+                    added_at: Some(record.added_at),
+                    metadata: self.store.metadata(&record.sha256)?,
+                    sha256: record.sha256,
+                },
+            );
+        }
+
+        // Anything the last scan found that is still a real file out in an
+        // install. A copy that is already a link was classified as such by the
+        // scan, so nothing is counted twice.
+        let scan_id = self.store.last_scan_id()?;
+        if let Some(id) = &scan_id {
+            for e in self.store.scan_entries(id)? {
+                if !e.classification.is_movable() {
+                    continue;
+                }
+                let Some(sha) = e.sha256.clone() else { continue };
+                let name = e
+                    .abs_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                match by_hash.get_mut(&sha) {
+                    Some(row) => {
+                        row.occurrence_count += 1;
+                        if !row.install_ids.contains(&e.install_id) {
+                            row.install_ids.push(e.install_id.clone());
+                            row.install_ids.sort();
+                        }
+                    }
+                    None => {
+                        by_hash.insert(
+                            sha.clone(),
+                            ContentRow {
+                                name,
+                                category: e.category.clone(),
+                                size_bytes: e.size_bytes,
+                                aliases: Vec::new(),
+                                occurrence_count: 1,
+                                link_count: 0,
+                                in_vault: false,
+                                install_ids: vec![e.install_id.clone()],
+                                added_at: None,
+                                metadata: self.store.metadata(&sha)?,
+                                sha256: sha,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut rows: Vec<ContentRow> = by_hash.into_values().collect();
+
+        rows.retain(|r| {
+            if let Some(c) = &filter.category {
+                if &r.category != c {
+                    return false;
+                }
+            }
+            if let Some(n) = &filter.name_contains {
+                let needle = n.to_lowercase();
+                let hit = r.name.to_lowercase().contains(&needle)
+                    || r.aliases.iter().any(|a| a.to_lowercase().contains(&needle));
+                if !hit {
+                    return false;
+                }
+            }
+            if let Some(m) = filter.min_size_bytes {
+                if r.size_bytes < m {
+                    return false;
+                }
+            }
+            // "Unused" in the Library means nothing on disk reaches it any
+            // more, which is only possible once it is in the vault.
+            if filter.orphans_only && !(r.in_vault && r.occurrence_count == 0) {
+                return false;
+            }
+            if filter.with_aliases_only && r.aliases.is_empty() {
+                return false;
+            }
+            if let Some(want) = filter.in_vault {
+                if r.in_vault != want {
+                    return false;
+                }
+            }
+            true
+        });
+
+        rows.sort_by(|a, b| match sort {
+            VaultSort::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            VaultSort::Size => a.size_bytes.cmp(&b.size_bytes),
+            VaultSort::AddedAt => a.added_at.cmp(&b.added_at),
+            VaultSort::LinkCount => a.link_count.cmp(&b.link_count),
+            VaultSort::Occurrences => a.occurrence_count.cmp(&b.occurrence_count),
+        });
+        if descending {
+            rows.reverse();
+        }
+
+        let total = rows.len() as u64;
+        let limit = (limit as usize).min(MAX_PAGE);
+        Ok(ContentPage {
+            total,
+            offset,
+            rows: rows.into_iter().skip(offset as usize).take(limit).collect(),
+            scan_id,
+        })
     }
 
     /// Contents that carry more than one name.

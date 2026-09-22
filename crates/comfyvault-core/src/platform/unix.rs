@@ -75,6 +75,11 @@ pub(super) fn long_paths_enabled() -> Option<bool> {
     None
 }
 
+/// Unix has one root, so a picker starts at `/`.
+pub(super) fn drive_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/")]
+}
+
 /// `EXDEV` is 18 on Linux and on macOS. It is the one rename failure the caller
 /// recovers from, by copying instead.
 pub(super) fn is_cross_volume_error(e: &std::io::Error) -> bool {

@@ -102,7 +102,12 @@ pub struct PlanSource {
     pub mtime_nanos: i128,
 }
 
-/// A copy that becomes a link.
+/// A place that ends up holding a link.
+///
+/// **Every** copy in the group is here, including the one that becomes the
+/// vault file, because the product's promise is that a link takes the place of
+/// every file that was there. So `links.len()` always equals `occurrences`.
+/// `is_source` marks the one whose bytes move into the vault.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanLink {
@@ -113,6 +118,9 @@ pub struct PlanLink {
     /// The name the link keeps, which is the name the file had here.
     pub link_name: String,
     pub name_differs_from_vault: bool,
+    /// This copy's bytes become the vault file. Its old place gets a link like
+    /// every other, but nothing is deleted here: the file moved.
+    pub is_source: bool,
     pub size_bytes: u64,
     pub mtime_nanos: i128,
 }
@@ -133,7 +141,10 @@ pub struct PlanGroup {
     /// Other names this content is known by, each becoming a link beside the
     /// vault file. This is what the cleanup screen later works on.
     pub vault_aliases: Vec<String>,
+    /// Which copy becomes the vault file. It also appears in `links`, flagged.
     pub source: PlanSource,
+    /// Every place that ends up holding a link, the source included. Always
+    /// `occurrences` long.
     pub links: Vec<PlanLink>,
     pub occurrences: u64,
     pub bytes_freed: u64,
@@ -180,6 +191,12 @@ pub struct ConsolidationPlan {
     pub scan_id: String,
     pub created_at: Timestamp,
     pub vault_root: PathBuf,
+    /// Can this computer create the links the plan needs?
+    ///
+    /// When `false` the groups are still built, so the person can read what
+    /// they would gain before deciding to turn Developer Mode on. Apply refuses
+    /// while it is `false`.
+    pub symlinks_supported: bool,
     pub groups: Vec<PlanGroup>,
     pub blocked: Vec<BlockedRow>,
     pub totals: PlanTotals,
@@ -274,10 +291,6 @@ impl<'a> Planner<'a> {
                 blocked.push(row(e, label, BlockReason::ReadError));
                 continue;
             };
-            if !symlinks_ok {
-                blocked.push(row(e, label, BlockReason::SymlinkUnsupported));
-                continue;
-            }
             // Re-check the file now, because a plan is built after a scan and
             // the person may have moved on with their day in between.
             if let Some(reason) = self.recheck(&e.abs_path, e.size_bytes, e.mtime_nanos) {
@@ -363,11 +376,13 @@ impl<'a> Planner<'a> {
                 mtime_nanos: source_entry.mtime_nanos,
             };
 
+            // Every copy, the source included: a link takes the place of each
+            // file that was there, so the count the person reads is the count
+            // of places that change.
             let links: Vec<PlanLink> = members
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| *i != source_idx)
-                .map(|(_, m)| {
+                .map(|(i, m)| {
                     let name = file_name_of(&m.abs_path);
                     PlanLink {
                         install_id: m.install_id.clone(),
@@ -376,6 +391,7 @@ impl<'a> Planner<'a> {
                         rel_path: m.rel_path.clone(),
                         name_differs_from_vault: !name.eq_ignore_ascii_case(&vault_name),
                         link_name: name,
+                        is_source: i == source_idx,
                         size_bytes: m.size_bytes,
                         mtime_nanos: m.mtime_nanos,
                     }
@@ -439,6 +455,25 @@ impl<'a> Planner<'a> {
             }
         }
 
+        // A computer that cannot make links still gets a full plan. The person
+        // reads what they would gain, and that is what makes them go and turn
+        // Developer Mode on. A blank screen tells them nothing.
+        //
+        // One row says so, not one per group: the reason is a fact about the
+        // computer, not about any file. Apply refuses separately, so nothing
+        // can act on a plan that only looks applicable.
+        if !symlinks_ok && !groups.is_empty() {
+            blocked.push(BlockedRow {
+                abs_path: vault_root.clone(),
+                install_id: None,
+                install_label: None,
+                size_bytes: 0,
+                sha256: None,
+                reason: BlockReason::SymlinkUnsupported,
+                detail: BlockReason::SymlinkUnsupported.message().to_string(),
+            });
+        }
+
         groups.sort_by(|a, b| b.bytes_freed.cmp(&a.bytes_freed).then(a.sha256.cmp(&b.sha256)));
         blocked.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
 
@@ -447,6 +482,7 @@ impl<'a> Planner<'a> {
             plan_id: plan_id.to_string(),
             scan_id: scan_id.to_string(),
             created_at: Timestamp::now(),
+            symlinks_supported: symlinks_ok,
             vault_root,
             groups,
             blocked,

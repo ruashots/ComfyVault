@@ -523,3 +523,78 @@ fn locked_file_answers_carry_whether_the_answer_means_anything() {
     assert!(v.get("checkable").is_some());
     assert!(v.get("locked").is_some());
 }
+
+// --- the drive the vault sits on -------------------------------------------
+
+#[test]
+fn vault_facts_can_be_read_without_reopening_the_vault() {
+    // The free space is the most-read number in the application. Asking for it
+    // must not mean opening the vault again.
+    let f = Fixture::new();
+    let opened = f.open_vault();
+    let again = f.engine.vault_info().unwrap();
+
+    assert_eq!(again.root, opened.root);
+    assert_eq!(again.created_at, opened.created_at);
+    assert!(again.total_bytes > 0, "the drive has a size");
+    assert!(again.free_bytes <= again.total_bytes);
+    assert_eq!(again.file_count, 0);
+}
+
+#[test]
+fn vault_facts_follow_what_the_vault_holds() {
+    let f = Fixture::new();
+    f.open_vault();
+    let i = f.add_install("A");
+    f.write_model(&i, "models/loras/m.safetensors", &weights("m"));
+
+    let record = f.scan();
+    let plan = f.engine.build_plan(&record.scan_id).unwrap();
+    let store = f.engine.store().unwrap();
+    Applier::new(&store, f.engine.platform())
+        .apply("ap-1", &plan, &ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: crate::apply::VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        }, &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    let info = f.engine.vault_info().unwrap();
+    assert_eq!(info.file_count, 1);
+    assert_eq!(info.total_stored_bytes, weights("m").len() as u64);
+}
+
+#[test]
+fn asking_for_vault_facts_before_a_vault_is_chosen_says_so() {
+    let f = Fixture::new();
+    assert_eq!(f.engine.vault_info().unwrap_err().code, ErrorCode::NotInitialized);
+}
+
+#[test]
+fn a_folder_picker_starts_at_every_drive_not_inside_one() {
+    // On Windows the person's models can be on D:. A picker that starts inside
+    // C: can never reach them, and they could not register anything there.
+    let platform = FakePlatform::new();
+    platform.set_drive_roots(vec![PathBuf::from("C:\\"), PathBuf::from("D:\\")]);
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::with_platform(dir.path().join("config.json"), Arc::new(platform));
+
+    let roots = engine.platform().drive_roots();
+    assert_eq!(roots.len(), 2);
+    assert!(roots.contains(&PathBuf::from("D:\\")), "the second drive must be reachable");
+}
+
+#[test]
+fn the_real_platform_reports_at_least_one_root() {
+    let f = Fixture::new();
+    let roots = comfyvault_core_platform_roots(&f);
+    assert!(!roots.is_empty(), "a computer always has somewhere to start browsing");
+    for r in &roots {
+        assert!(r.is_absolute(), "a starting point must be an absolute path: {r:?}");
+    }
+}
+
+fn comfyvault_core_platform_roots(f: &Fixture) -> Vec<PathBuf> {
+    f.engine.platform().drive_roots()
+}

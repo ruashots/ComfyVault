@@ -25,7 +25,9 @@ use comfyvault_core::scan::ScanProgress;
 use comfyvault_core::settings::{Settings, SettingsPatch};
 use comfyvault_core::store::{ApplyRecord, LinkRecord, LinkState, ScanRecord};
 use comfyvault_core::usage::UsageResult;
-use comfyvault_core::vault::{NameGroup, VaultFile, VaultFilter, VaultHealth, VaultPage, VaultSort};
+use comfyvault_core::vault::{
+    ContentPage, NameGroup, VaultFile, VaultFilter, VaultHealth, VaultPage, VaultSort,
+};
 use comfyvault_core::{ErrorCode, VaultError};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -552,6 +554,36 @@ pub async fn list_vault_files(
     .await
 }
 
+/// One row per unique content, across the vault and the installs.
+///
+/// This is the Library's own listing. Stitching it from a plan plus a vault
+/// listing means paging two lists to draw one screen, which is fine at a
+/// hundred models and is not fine at ten thousand.
+#[tauri::command]
+pub async fn list_contents(
+    state: State<'_, AppEngine>,
+    args: ListVaultArgs,
+) -> Reply<ContentPage> {
+    let e = engine(&state);
+    blocking(move || {
+        e.contents(
+            args.offset,
+            args.limit,
+            &args.filter.unwrap_or_default(),
+            args.sort.unwrap_or(VaultSort::Size),
+            args.descending,
+        )
+    })
+    .await
+}
+
+/// The open vault's facts, above all how much room its drive has left.
+#[tauri::command]
+pub async fn get_vault_info(state: State<'_, AppEngine>) -> Reply<VaultInfo> {
+    let e = engine(&state);
+    blocking(move || e.vault_info()).await
+}
+
 #[tauri::command]
 pub async fn list_name_groups(state: State<'_, AppEngine>) -> Reply<Vec<NameGroup>> {
     let e = engine(&state);
@@ -780,15 +812,36 @@ pub struct DirectoryListing {
 /// Only folders come back, because the picker only ever chooses a folder.
 /// A folder that cannot be read is reported as an error with the path in it,
 /// rather than being silently shown as empty.
+///
+/// With no path, the answer is **every drive**, not the contents of `C:`. A
+/// person whose models live on `D:` has to be able to reach them, and a picker
+/// that starts inside one drive can never leave it.
 #[tauri::command]
-pub async fn list_directory(args: ListDirectoryArgs) -> Reply<DirectoryListing> {
+pub async fn list_directory(
+    state: State<'_, AppEngine>,
+    args: ListDirectoryArgs,
+) -> Reply<DirectoryListing> {
+    let e = engine(&state);
     blocking(move || {
         let raw = args.path.unwrap_or_default();
-        let path = if raw.trim().is_empty() {
-            root_listing_path()
-        } else {
-            PathBuf::from(raw)
-        };
+        if raw.trim().is_empty() {
+            return Ok(DirectoryListing {
+                path: String::new(),
+                parent: None,
+                entries: e
+                    .platform()
+                    .drive_roots()
+                    .into_iter()
+                    .map(|p| DirEntryInfo {
+                        name: comfyvault_core::paths::display_path(&p),
+                        path: comfyvault_core::paths::display_path(&p),
+                        is_directory: true,
+                        is_symlink: false,
+                    })
+                    .collect(),
+            });
+        }
+        let path = PathBuf::from(raw);
 
         let read = std::fs::read_dir(&path)
             .map_err(|e| VaultError::from_io(&e, &path, "opening the folder"))?;
@@ -816,21 +869,20 @@ pub async fn list_directory(args: ListDirectoryArgs) -> Reply<DirectoryListing> 
         }
         entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+        // A drive root's parent is the drive list, which is the empty path.
+        // Without this, the picker cannot go back up and pick another drive.
+        let parent = match path.parent() {
+            Some(p) => Some(comfyvault_core::paths::display_path(p)),
+            None => Some(String::new()),
+        };
+
         Ok(DirectoryListing {
-            parent: path.parent().map(comfyvault_core::paths::display_path),
+            parent,
             path: comfyvault_core::paths::display_path(&path),
             entries,
         })
     })
     .await
-}
-
-fn root_listing_path() -> PathBuf {
-    if cfg!(windows) {
-        PathBuf::from("C:\\")
-    } else {
-        PathBuf::from("/")
-    }
 }
 
 #[derive(Deserialize)]

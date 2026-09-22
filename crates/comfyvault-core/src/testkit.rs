@@ -134,11 +134,15 @@ impl TestWorld {
     }
 
     /// Runs a scan and stores the result, the way the command layer does.
+    ///
+    /// Each scan gets its own identifier, as the engine gives it, so a test
+    /// that scans twice is really looking at two scans.
     pub fn scan(&self, installs: &[Install]) -> crate::scan::ScanOutcome {
+        let id = format!("scan-{}", uuid::Uuid::new_v4().simple());
         let out = self
             .scanner()
             .scan(
-                "scan-test",
+                &id,
                 installs,
                 &crate::progress::CancelToken::new(),
                 &crate::progress::NullSink,

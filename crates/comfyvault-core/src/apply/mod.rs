@@ -291,18 +291,12 @@ impl<'a> Applier<'a> {
         // --- check everything before touching anything --------------------
         // A group that cannot complete must not start, or the person is left
         // with a half-consolidated model.
-        let checks: Vec<(&Path, u64, i128)> = std::iter::once((
-            group.source.abs_path.as_path(),
-            group.source.size_bytes,
-            group.source.mtime_nanos,
-        ))
-        .chain(
-            group
-                .links
-                .iter()
-                .map(|l| (l.abs_path.as_path(), l.size_bytes, l.mtime_nanos)),
-        )
-        .collect();
+        // `links` already covers every copy, the source included.
+        let checks: Vec<(&Path, u64, i128)> = group
+            .links
+            .iter()
+            .map(|l| (l.abs_path.as_path(), l.size_bytes, l.mtime_nanos))
+            .collect();
 
         for (path, size, mtime) in &checks {
             cancel.check()?;
@@ -357,17 +351,22 @@ impl<'a> Applier<'a> {
             run.files_moved += 1;
             run.bytes_moved += group.size_bytes;
 
-            // 2. A link takes its place, so nothing notices it moved.
-            self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
-                Some(group), ApplyStep::Linking, Some(&group.source.abs_path), false);
-            done.push(self.create_link_step(run, group, &group.source.abs_path, &vault_path)?);
-            run.links_created += 1;
-
-            // 3. Every duplicate: rename aside, link, then remove.
+            // 2. Every copy's old place gets a link.
+            //
+            //    The source's place is already empty, because its bytes just
+            //    moved into the vault, so it only needs the link. Every other
+            //    copy is renamed aside first and removed last, so an
+            //    interruption leaves its bytes under one name or the other.
             for link in &group.links {
                 cancel.check()?;
                 self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
                     Some(group), ApplyStep::Linking, Some(&link.abs_path), false);
+
+                if link.is_source {
+                    done.push(self.create_link_step(run, group, &link.abs_path, &vault_path)?);
+                    run.links_created += 1;
+                    continue;
+                }
 
                 let entry = self.step(run, group, JournalStep::StashOriginal {
                     path: link.abs_path.clone(),
@@ -469,13 +468,7 @@ impl<'a> Applier<'a> {
             })
         };
 
-        let source_name = group
-            .source
-            .abs_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        record_link(&group.source.install_id, &group.source.abs_path, &source_name)?;
+        // `links` already covers every place, the source included.
         for l in &group.links {
             record_link(&l.install_id, &l.abs_path, &l.link_name)?;
         }

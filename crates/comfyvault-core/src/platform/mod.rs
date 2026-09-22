@@ -193,6 +193,13 @@ pub trait Platform: Send + Sync {
     /// Windows only. `None` elsewhere.
     fn long_paths_enabled(&self) -> Option<bool>;
 
+    /// Every place a folder picker can start from.
+    ///
+    /// On Windows that is every drive the computer has, not just `C:`. A person
+    /// whose models live on `D:` must be able to reach them, and a picker that
+    /// starts inside `C:\` can never get there.
+    fn drive_roots(&self) -> Vec<PathBuf>;
+
     /// Renames a file, and reports whether the operating system refused because
     /// the two paths sit on different volumes.
     ///
@@ -278,6 +285,10 @@ impl Platform for NativePlatform {
 
     fn long_paths_enabled(&self) -> Option<bool> {
         sys::long_paths_enabled()
+    }
+
+    fn drive_roots(&self) -> Vec<PathBuf> {
+        sys::drive_roots()
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), RenameError> {
@@ -521,6 +532,8 @@ struct FakeState {
     free_bytes_override: Option<u64>,
     /// Paths where a rename fails outright, with the error kind to raise.
     rename_failures: HashMap<PathBuf, std::io::ErrorKind>,
+    /// Stands in for a computer with several drives.
+    drive_roots: Option<Vec<PathBuf>>,
 }
 
 impl FakePlatform {
@@ -578,6 +591,11 @@ impl FakePlatform {
 
     pub fn set_processes(&self, procs: Vec<ProcessInfo>) -> &Self {
         self.state.lock().unwrap().processes = Some(procs);
+        self
+    }
+
+    pub fn set_drive_roots(&self, roots: Vec<PathBuf>) -> &Self {
+        self.state.lock().unwrap().drive_roots = Some(roots);
         self
     }
 
@@ -669,6 +687,13 @@ impl Platform for FakePlatform {
 
     fn long_paths_enabled(&self) -> Option<bool> {
         self.inner.long_paths_enabled()
+    }
+
+    fn drive_roots(&self) -> Vec<PathBuf> {
+        if let Some(r) = self.state.lock().unwrap().drive_roots.clone() {
+            return r;
+        }
+        self.inner.drive_roots()
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), RenameError> {

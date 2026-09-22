@@ -455,10 +455,23 @@ impl Store {
     }
 
     /// Stores the individual files a scan found, in one transaction.
+    ///
+    /// Anything already stored under this identifier is removed first. Writing
+    /// a shorter result over a longer one would otherwise leave the tail of the
+    /// old one behind, and the reader would see files that are no longer there.
     pub fn put_scan_entries(&self, scan_id: &str, entries: &[ScanEntryRecord]) -> Result<()> {
+        let prefix = format!("{scan_id}{SEP}");
         let tx = self.db.begin_write()?;
         {
             let mut t = tx.open_table(SCAN_ENTRIES)?;
+            let stale: Vec<String> = t
+                .range(prefix.as_str()..)?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .take_while(|k| k.starts_with(&prefix))
+                .collect();
+            for k in stale {
+                t.remove(k.as_str())?;
+            }
             for (i, e) in entries.iter().enumerate() {
                 let bytes = serde_json::to_vec(e)?;
                 t.insert(seq_key(scan_id, i as u64).as_str(), bytes.as_slice())?;
@@ -832,6 +845,57 @@ mod tests {
         assert_eq!(back.len(), 25);
         assert_eq!(back[0].size_bytes, 0);
         assert_eq!(back[24].size_bytes, 24);
+    }
+
+    #[test]
+    fn rewriting_a_scans_entries_leaves_none_of_the_old_ones() {
+        // A shorter result written over a longer one must not leave the tail of
+        // the old one behind, or the reader sees files that are no longer
+        // there and counts them.
+        let (_d, s) = store();
+        let entry = |n: u64| ScanEntryRecord {
+            abs_path: PathBuf::from(format!("/m/{n}.safetensors")),
+            rel_path: PathBuf::from(format!("{n}.safetensors")),
+            install_id: "inst".into(),
+            category: "loras".into(),
+            size_bytes: n,
+            sha256: Some(format!("{n:064X}")),
+            mtime_nanos: 0,
+            classification: Classification::Movable,
+            link_target: None,
+        };
+
+        let many: Vec<ScanEntryRecord> = (0..10).map(entry).collect();
+        s.put_scan_entries("scan1", &many).unwrap();
+        assert_eq!(s.scan_entries("scan1").unwrap().len(), 10);
+
+        s.put_scan_entries("scan1", &[entry(0)]).unwrap();
+        assert_eq!(s.scan_entries("scan1").unwrap().len(), 1, "the old tail survived");
+
+        s.put_scan_entries("scan1", &[]).unwrap();
+        assert!(s.scan_entries("scan1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn rewriting_one_scan_leaves_another_alone() {
+        let (_d, s) = store();
+        let entry = ScanEntryRecord {
+            abs_path: PathBuf::from("/m/a.safetensors"),
+            rel_path: PathBuf::from("a.safetensors"),
+            install_id: "inst".into(),
+            category: "loras".into(),
+            size_bytes: 1,
+            sha256: None,
+            mtime_nanos: 0,
+            classification: Classification::Movable,
+            link_target: None,
+        };
+        s.put_scan_entries("scan1", &[entry.clone(), entry.clone()]).unwrap();
+        s.put_scan_entries("scan2", &[entry.clone()]).unwrap();
+
+        s.put_scan_entries("scan1", &[]).unwrap();
+        assert!(s.scan_entries("scan1").unwrap().is_empty());
+        assert_eq!(s.scan_entries("scan2").unwrap().len(), 1, "a different scan must be untouched");
     }
 
     #[test]

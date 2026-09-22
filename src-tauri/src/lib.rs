@@ -87,6 +87,8 @@ pub fn run() {
             commands::create_model_folder,
             commands::list_links,
             commands::list_vault_files,
+            commands::list_contents,
+            commands::get_vault_info,
             commands::list_name_groups,
             commands::set_canonical_name,
             commands::remove_alias,
