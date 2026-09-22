@@ -223,7 +223,7 @@ type InstallCandidate = {
   contentCheckPassed: boolean
   otherCandidates: string[]      // other roots found under the given folder
   version: string | null
-  versionSource: 'comfyui_version.py' | 'pyproject.toml' | 'git' | null
+  versionSource: 'comfyui_version.py' | 'pyproject.toml' | null
   modelsDir: string | null
   modelsDirExists: boolean
   extraPathsFile: string | null
@@ -249,9 +249,14 @@ for a folder that passes. It returns the shallowest match in `root`. It returns
 every other match in `otherCandidates`. This handles a launcher layout, for
 example `C:\Something\ComfyUI-Easy-Install\ComfyUI\`.
 
-`version` comes from `comfyui_version.py`, then from `pyproject.toml`, then
-from git metadata. A missing version is normal. A missing version never makes
-`valid` false.
+`version` comes from `comfyui_version.py`, then from `pyproject.toml`. ComfyUI
+added both files in version 0.3.11. An older install records its version
+nowhere on disk, so `version` is `null` and `versionSource` is `null`. A
+missing version is normal. A missing version never makes `valid` false.
+
+The interface must show "unknown" for a missing version. It must not show
+"not affected" for the thumbnail change in section 12.2, because the engine
+cannot check that without a version.
 
 ```ts
 type ExtraPath = {

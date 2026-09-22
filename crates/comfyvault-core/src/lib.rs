@@ -30,6 +30,7 @@
 #![warn(clippy::all)]
 
 pub mod error;
+pub mod install;
 pub mod paths;
 pub mod platform;
 pub mod progress;

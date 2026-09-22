@@ -274,14 +274,23 @@ impl Platform for NativePlatform {
 /// while a policy still blocks the privilege, and an elevated process can create
 /// links with Developer Mode off.
 pub fn probe_symlink_capability(platform: &dyn Platform) -> SymlinkCapability {
+    probe_symlink_capability_in(platform, &std::env::temp_dir())
+}
+
+/// The probe, with the folder to test in supplied by the caller.
+///
+/// The public entry point uses the system temporary folder. Tests pass their
+/// own, so they can prove the probe cleans up after itself without racing other
+/// tests that probe at the same time.
+pub fn probe_symlink_capability_in(platform: &dyn Platform, parent: &Path) -> SymlinkCapability {
     let developer_mode = sys::developer_mode_enabled();
     let elevated = sys::is_elevated();
 
     let probe = (|| -> Result<()> {
         let dir = tempfile::Builder::new()
             .prefix("comfyvault-linkprobe-")
-            .tempdir()
-            .map_err(|e| VaultError::from_io(&e, Path::new("."), "making a temporary folder"))?;
+            .tempdir_in(parent)
+            .map_err(|e| VaultError::from_io(&e, parent, "making a temporary folder"))?;
         let target = dir.path().join("target.bin");
         let link = dir.path().join("link.bin");
         std::fs::write(&target, b"probe")
@@ -682,21 +691,29 @@ mod tests {
 
     #[test]
     fn the_probe_leaves_nothing_behind() {
-        let before = std::env::temp_dir();
-        let count_probes = || {
-            std::fs::read_dir(&before)
-                .map(|d| {
-                    d.filter_map(|e| e.ok())
-                        .filter(|e| e.file_name().to_string_lossy().starts_with("comfyvault-linkprobe-"))
-                        .count()
-                })
-                .unwrap_or(0)
-        };
-        let start = count_probes();
+        // The probe runs on every application start and on every health check.
+        // A leak would fill the person's temporary folder with dead links.
+        let own = tempfile::tempdir().unwrap();
         let p = NativePlatform::new();
-        let _ = p.symlink_capability();
-        let _ = p.symlink_capability();
-        assert_eq!(count_probes(), start, "the probe left a temporary folder behind");
+        for _ in 0..5 {
+            let cap = probe_symlink_capability_in(&p, own.path());
+            if cfg!(unix) {
+                assert!(cap.supported);
+            }
+        }
+        let leftovers = std::fs::read_dir(own.path()).unwrap().count();
+        assert_eq!(leftovers, 0, "the probe left a temporary folder behind");
+    }
+
+    #[test]
+    fn the_probe_reports_failure_when_the_folder_cannot_be_used() {
+        // A probe that cannot even create its test folder must answer "not
+        // supported" with a reason, never panic and never claim success.
+        let p = NativePlatform::new();
+        let cap = probe_symlink_capability_in(&p, Path::new("/definitely/not/a/real/folder"));
+        assert!(!cap.supported);
+        assert!(cap.probe_error.is_some());
+        assert!(cap.guidance.is_some());
     }
 
     #[test]
