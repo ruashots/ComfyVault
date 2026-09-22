@@ -1,10 +1,10 @@
 /**
  * The one place the interface keeps what it knows.
  *
- * Everything the screens print is either raw engine data held here, or a memo
- * derived from it. Nothing is stored twice: the plan, the selection totals and
- * the Apply gate are all computed from the scan, the machine and the set of
- * models the person unticked.
+ * Everything the screens print is either something the engine returned, held
+ * here as it came, or a memo derived from it. Nothing is stored twice: the
+ * groups, the totals and the Apply gate all come from the plan, the platform
+ * report and the set of groups the person unticked.
  */
 
 import {
@@ -18,23 +18,39 @@ import {
 } from "solid-js";
 import { createStore, produce, type SetStoreFunction } from "solid-js/store";
 
-import { derivePlan, type Plan } from "~/domain/plan";
+import {
+  buildInstallViews,
+  buildLibrary,
+  buildPlanView,
+  type ContentRow,
+  type InstallView,
+  type PlanView,
+} from "~/domain/view";
 import {
   applyGate,
   selectionFor,
-  EMPTY_SELECTION,
   type ApplyGate,
+  type MachineFacts,
   type Selection,
 } from "~/domain/selection";
+import { isVaultError } from "~/ipc/contract";
 import type {
   ApplyProgress,
   ApplyResult,
+  AppState,
+  ConsolidationPlan,
+  DirectoryEntry,
   Engine,
-  FolderCheck,
-  MachineState,
-  PickerPurpose,
+  Install,
+  InstallCandidate,
+  InterruptedApply,
+  NameGroup,
+  RunningComfy,
   ScanProgress,
   ScanResult,
+  UsageResult,
+  VaultFile,
+  VaultInfo,
 } from "~/ipc/contract";
 
 export type Screen =
@@ -49,7 +65,7 @@ export type LibrarySort = "name" | "size" | "links";
 
 export interface LibraryView {
   query: string;
-  folder: string;
+  category: string;
   unusedOnly: boolean;
   sort: LibrarySort;
   selected: string | null;
@@ -61,17 +77,10 @@ export interface Toast {
   tone: "ok" | "bad";
 }
 
-export interface TreeNode {
-  path: string;
-  name: string;
-  kind: "drive" | "folder";
+export interface TreeNode extends DirectoryEntry {
   depth: number;
-  looksLikeInstall: boolean | null;
-  readable: boolean;
   /** The person created it in this picker a moment ago. */
   isNew: boolean;
-  /** Null until the engine has been asked what is inside. */
-  hasChildren: boolean | null;
 }
 
 export interface NewFolderDraft {
@@ -81,6 +90,8 @@ export interface NewFolderDraft {
   saving: boolean;
 }
 
+export type PickerPurpose = "install" | "vault" | "link";
+
 export interface PickerModal {
   kind: "picker";
   purpose: PickerPurpose;
@@ -88,53 +99,67 @@ export interface PickerModal {
   expanded: string[];
   loading: string[];
   picked: string | null;
-  check: FolderCheck | null;
+  /** What the engine said about the picked folder, when it was asked. */
+  candidate: InstallCandidate | null;
   checking: boolean;
   newFolder: NewFolderDraft | null;
-  /** Which model a link is being placed for, when the purpose is "link". */
-  modelId: string | null;
+  /** Which content a link is being placed for. */
+  sha256: string | null;
   /** Which install is being re-pointed, when the person pressed Edit. */
   replacing: string | null;
 }
 
+export type ConfirmLine = ReadonlyArray<{ text: string; emph?: boolean }>;
+
 export interface ConfirmModal {
   kind: "confirm";
   title: string;
-  /** Each entry is a paragraph. Parts marked emphasised are the nouns at stake. */
   body: ConfirmLine[];
   cta: string;
   action: () => Promise<void> | void;
   running: boolean;
+  error: string | null;
 }
-
-export type ConfirmLine = ReadonlyArray<{ text: string; emph?: boolean }>;
 
 export type Modal = PickerModal | ConfirmModal;
 
-export interface AppState {
+export interface AppStore {
   readonly engine: Engine;
 
+  readonly appState: Accessor<AppState | null>;
+  readonly vault: Accessor<VaultInfo | null>;
+  readonly installs: Accessor<readonly Install[]>;
   readonly scan: Accessor<ScanResult | null>;
-  readonly machine: Accessor<MachineState | null>;
-  readonly screen: Accessor<Screen>;
+  readonly plan: Accessor<ConsolidationPlan | null>;
+  readonly vaultFiles: Accessor<readonly VaultFile[]>;
+  readonly nameGroups: Accessor<readonly NameGroup[]>;
+  readonly orphans: Accessor<readonly VaultFile[]>;
+  readonly running: Accessor<readonly RunningComfy[]>;
+  readonly interrupted: Accessor<readonly InterruptedApply[]>;
+  readonly lastApply: Accessor<ApplyResult | null>;
+  readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
+  readonly usageMethod: Accessor<string | null>;
+
   readonly scanProgress: Accessor<ScanProgress | null>;
   readonly applyProgress: Accessor<ApplyProgress | null>;
-  readonly lastRun: Accessor<ApplyResult | null>;
-  readonly toast: Accessor<Toast | null>;
   readonly ready: Accessor<boolean>;
+  readonly failure: Accessor<string | null>;
 
-  readonly plan: Accessor<Plan | null>;
+  readonly planView: Accessor<PlanView | null>;
+  readonly library: Accessor<readonly ContentRow[]>;
+  readonly installViews: Accessor<readonly InstallView[]>;
   readonly selection: Accessor<Selection>;
   readonly gate: Accessor<ApplyGate>;
-  readonly hasInstances: Accessor<boolean>;
-  /** What the run would return if every running ComfyUI were closed first. */
-  readonly reclaimIfClosed: Accessor<number>;
+  readonly hasInstalls: Accessor<boolean>;
+  readonly unusedCount: Accessor<number>;
 
+  readonly screen: Accessor<Screen>;
+  readonly toast: Accessor<Toast | null>;
   readonly unticked: Accessor<ReadonlySet<string>>;
   readonly showAllDuplicates: Accessor<boolean>;
   readonly showSingles: Accessor<boolean>;
-  readonly folderMenuOpen: Accessor<boolean>;
-  readonly renaming: Accessor<{ modelId: string; value: string } | null>;
+  readonly categoryMenuOpen: Accessor<boolean>;
+  readonly renaming: Accessor<{ sha256: string; value: string } | null>;
 
   readonly lib: LibraryView;
   readonly setLib: SetStoreFunction<LibraryView>;
@@ -148,46 +173,70 @@ export interface AppState {
 export interface Actions {
   go(screen: Screen): void;
   showToast(message: string, tone?: "ok" | "bad"): void;
-  dismissToast(): void;
   refresh(): Promise<void>;
-  toggleModel(id: string): void;
+  /** Run an engine call and turn any refusal into a message the person can read. */
+  run(what: () => Promise<unknown>, onOk?: string): Promise<boolean>;
+  toggleGroup(groupId: string): void;
   setShowAllDuplicates(on: boolean): void;
   setShowSingles(on: boolean): void;
-  setFolderMenuOpen(on: boolean): void;
-  startRename(modelId: string, value: string): void;
+  setCategoryMenuOpen(on: boolean): void;
+  startRename(sha256: string, value: string): void;
   setRenameValue(value: string): void;
   cancelRename(): void;
 }
 
-const AppContext = createContext<AppState>();
+const StoreContext = createContext<AppStore>();
 
-export function useApp(): AppState {
-  const app = useContext(AppContext);
+export function useApp(): AppStore {
+  const app = useContext(StoreContext);
   if (!app) throw new Error("useApp was called outside the app");
   return app;
 }
 
-export const AppProvider = AppContext.Provider;
+export const AppProvider = StoreContext.Provider;
 
-export function createAppState(engine: Engine): AppState {
+/** Turn whatever an engine call rejected with into one readable sentence. */
+export function messageOf(error: unknown): string {
+  if (isVaultError(error)) return error.message;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+export function createAppStore(engine: Engine): AppStore {
+  const [appState, setAppState] = createSignal<AppState | null>(null);
+  const [vault, setVault] = createSignal<VaultInfo | null>(null);
+  const [installs, setInstalls] = createSignal<readonly Install[]>([]);
   const [scan, setScan] = createSignal<ScanResult | null>(null);
-  const [machine, setMachine] = createSignal<MachineState | null>(null);
-  const [screen, setScreen] = createSignal<Screen>("home");
+  const [plan, setPlan] = createSignal<ConsolidationPlan | null>(null);
+  const [vaultFiles, setVaultFiles] = createSignal<readonly VaultFile[]>([]);
+  const [nameGroups, setNameGroups] = createSignal<readonly NameGroup[]>([]);
+  const [orphans, setOrphans] = createSignal<readonly VaultFile[]>([]);
+  const [running, setRunning] = createSignal<readonly RunningComfy[]>([]);
+  const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
+  const [lastApply, setLastApply] = createSignal<ApplyResult | null>(null);
+  const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
+
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
-  const [lastRun, setLastRun] = createSignal<ApplyResult | null>(null);
-  const [toast, setToast] = createSignal<Toast | null>(null);
   const [ready, setReady] = createSignal(false);
+  const [failure, setFailure] = createSignal<string | null>(null);
+
+  const [screen, setScreen] = createSignal<Screen>("home");
+  const [toast, setToast] = createSignal<Toast | null>(null);
   const [unticked, setUnticked] = createSignal<ReadonlySet<string>>(new Set<string>());
   const [showAllDuplicates, setShowAllDuplicates] = createSignal(false);
   const [showSingles, setShowSingles] = createSignal(false);
-  const [folderMenuOpen, setFolderMenuOpen] = createSignal(false);
-  const [renaming, setRenaming] = createSignal<{ modelId: string; value: string } | null>(null);
-  const [modal, setModalSignal] = createStore<{ current: Modal | null }>({ current: null });
+  const [categoryMenuOpen, setCategoryMenuOpen] = createSignal(false);
+  const [renaming, setRenaming] = createSignal<{ sha256: string; value: string } | null>(
+    null,
+  );
+  const [modal, setModalStore] = createStore<{ current: Modal | null }>({
+    current: null,
+  });
 
   const [lib, setLib] = createStore<LibraryView>({
     query: "",
-    folder: "all",
+    category: "all",
     unusedOnly: false,
     sort: "size",
     selected: null,
@@ -198,80 +247,177 @@ export function createAppState(engine: Engine): AppState {
   const showToast = (message: string, tone: "ok" | "bad" = "ok") => {
     if (toastTimer) clearTimeout(toastTimer);
     setToast({ message, tone });
-    toastTimer = setTimeout(() => setToast(null), 3400);
-  };
-  const dismissToast = () => {
-    if (toastTimer) clearTimeout(toastTimer);
-    setToast(null);
+    toastTimer = setTimeout(() => setToast(null), 3600);
   };
 
-  const plan = createMemo<Plan | null>(() => {
-    const s = scan();
-    const m = machine();
-    if (!s || !m) return null;
-    return derivePlan(s, m);
+  // ── derived ───────────────────────────────────────────────────────────────
+
+  const planView = createMemo<PlanView | null>(() => {
+    const current = plan();
+    if (!current) return null;
+    return buildPlanView(current, scan()?.totals ?? null);
   });
 
-  const reclaimIfClosed = createMemo(() => {
-    const s = scan();
-    const m = machine();
-    if (!s || !m) return 0;
-    if (m.running.length === 0) return plan()?.totals.reclaimBytes ?? 0;
-    return derivePlan(s, m, { ignoreOpenFiles: true }).totals.reclaimBytes;
+  const library = createMemo<readonly ContentRow[]>(() =>
+    buildLibrary(plan(), vaultFiles()),
+  );
+
+  const runningInstallIds = createMemo(
+    () => new Set(running().flatMap((p) => p.matchedInstallIds)),
+  );
+
+  const installViews = createMemo<readonly InstallView[]>(() =>
+    buildInstallViews(installs(), plan(), runningInstallIds()),
+  );
+
+  const selection = createMemo<Selection>(() => selectionFor(plan(), unticked()));
+
+  const machineFacts = createMemo<MachineFacts>(() => ({
+    platform: appState()?.platform ?? null,
+    running: running(),
+    interrupted: interrupted(),
+  }));
+
+  const gate = createMemo<ApplyGate>(() =>
+    applyGate(machineFacts(), selection(), appState()?.busy ?? null),
+  );
+
+  const hasInstalls = createMemo(() => installs().length > 0);
+
+  const unusedCount = createMemo(() => {
+    const answers = usage();
+    if (answers.size === 0) return 0;
+    return library().filter((row) => answers.get(row.name)?.used === false).length;
   });
 
-  const selection = createMemo<Selection>(() => {
-    const p = plan();
-    if (!p) return EMPTY_SELECTION;
-    return selectionFor(p, unticked());
+  const usageMethod = createMemo(() => {
+    for (const answer of usage().values()) return answer.method;
+    return null;
   });
 
-  const gate = createMemo<ApplyGate>(() => {
-    const m = machine();
-    if (!m) return { can: false, reason: "nothing_ticked" };
-    return applyGate(m, selection());
-  });
+  // ── loading ───────────────────────────────────────────────────────────────
 
-  const hasInstances = createMemo(() => (scan()?.instances.length ?? 0) > 0);
+  const loadUsage = async (rows: readonly ContentRow[]) => {
+    const names = [...new Set(rows.flatMap((row) => row.allNames))];
+    if (names.length === 0) {
+      setUsage(new Map());
+      return;
+    }
+    try {
+      const answers = await engine.checkModelUsage(names);
+      setUsage(new Map(answers.map((a) => [a.name, a])));
+    } catch {
+      // Whether a model is named in a workflow is useful, not essential. The
+      // screen says when the answer is missing rather than pretending.
+      setUsage(new Map());
+    }
+  };
 
   const refresh = async () => {
-    const [nextScan, nextMachine, run] = await Promise.all([
-      engine.loadScan(),
-      engine.readMachine(),
-      engine.lastRun(),
-    ]);
-    batch(() => {
-      setScan(nextScan);
-      setMachine(nextMachine);
-      setLastRun(run);
-      setReady(true);
-    });
+    try {
+      const state = await engine.getAppState();
+      const [installList, lastScan, interruptedList, applies, runningList] =
+        await Promise.all([
+          engine.listInstalls(),
+          engine.getLastScan(),
+          engine.getInterruptedApplies(),
+          engine.listApplies(),
+          engine.getRunningComfy(),
+        ]);
+
+      const vaultInfo = state.vaultRoot
+        ? await engine.selectVault(state.vaultRoot, false)
+        : null;
+
+      const nextPlan =
+        lastScan && !lastScan.cancelled
+          ? await engine.buildPlan(lastScan.scanId)
+          : null;
+
+      const [files, groups, orphanList] = state.vaultInitialized
+        ? await Promise.all([
+            engine.listVaultFiles({ offset: 0, limit: 1000 }),
+            engine.listNameGroups(),
+            engine.listOrphans(),
+          ])
+        : [{ total: 0, offset: 0, files: [] as VaultFile[] }, [], []];
+
+      batch(() => {
+        setAppState(state);
+        setVault(vaultInfo);
+        setInstalls(installList);
+        setScan(lastScan);
+        setPlan(nextPlan);
+        setVaultFiles(files.files);
+        setNameGroups(groups);
+        setOrphans(orphanList);
+        setRunning(runningList);
+        setInterrupted(interruptedList);
+        setLastApply(applies.find((a) => a.state !== "reverted") ?? null);
+        setFailure(null);
+        setReady(true);
+      });
+
+      await loadUsage(buildLibrary(nextPlan, files.files));
+    } catch (error) {
+      batch(() => {
+        setFailure(messageOf(error));
+        setReady(true);
+      });
+    }
   };
 
-  // The engine drives these. Every screen reads the same progress object.
+  const run = async (what: () => Promise<unknown>, onOk?: string) => {
+    try {
+      await what();
+      await refresh();
+      if (onOk) showToast(onOk);
+      return true;
+    } catch (error) {
+      showToast(messageOf(error), "bad");
+      return false;
+    }
+  };
+
+  // ── the engine drives these ───────────────────────────────────────────────
+
   const stops = [
     engine.onScanProgress((p) => setScanProgress(p)),
-    engine.onScanFinished((result) => {
+    engine.onScanDone((result) => {
       batch(() => {
         setScanProgress(null);
-        setScan(result);
         setUnticked(new Set<string>());
         setShowAllDuplicates(false);
       });
-      void engine.readMachine().then(setMachine);
+      if (result.cancelled) showToast("Scan cancelled · nothing was changed");
+      void refresh();
     }),
-    engine.onScanCancelled(() => {
+    engine.onScanError((error) => {
       setScanProgress(null);
-      showToast("Scan cancelled · nothing was changed");
+      showToast(error.message, "bad");
     }),
     engine.onApplyProgress((p) => setApplyProgress(p)),
-    engine.onApplyFinished((result) => {
+    engine.onApplyDone((result) => {
       batch(() => {
         setApplyProgress(null);
-        setLastRun(result);
+        setLastApply(result);
       });
       void refresh();
     }),
+    engine.onApplyError((error) => {
+      setApplyProgress(null);
+      showToast(error.message, "bad");
+    }),
+    engine.onRevertProgress((p) => setApplyProgress(p)),
+    engine.onRevertDone(() => {
+      batch(() => {
+        setApplyProgress(null);
+        setLastApply(null);
+      });
+      showToast("Run undone · every file is back where it was");
+      void refresh();
+    }),
+    engine.onRevertError((error) => showToast(error.message, "bad")),
   ];
   onCleanup(() => {
     for (const stop of stops) stop();
@@ -284,25 +430,25 @@ export function createAppState(engine: Engine): AppState {
     go(next) {
       batch(() => {
         setScreen(next);
-        setFolderMenuOpen(false);
+        setCategoryMenuOpen(false);
       });
     },
     showToast,
-    dismissToast,
     refresh,
-    toggleModel(id) {
+    run,
+    toggleGroup(groupId) {
       setUnticked((current: ReadonlySet<string>): ReadonlySet<string> => {
         const next = new Set<string>(current);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
+        if (next.has(groupId)) next.delete(groupId);
+        else next.add(groupId);
         return next;
       });
     },
     setShowAllDuplicates,
     setShowSingles,
-    setFolderMenuOpen,
-    startRename(modelId, value) {
-      setRenaming({ modelId, value });
+    setCategoryMenuOpen,
+    startRename(sha256, value) {
+      setRenaming({ sha256, value });
     },
     setRenameValue(value) {
       setRenaming((current) => (current ? { ...current, value } : null));
@@ -314,30 +460,43 @@ export function createAppState(engine: Engine): AppState {
 
   return {
     engine,
+    appState,
+    vault,
+    installs,
     scan,
-    machine,
-    screen,
+    plan,
+    vaultFiles,
+    nameGroups,
+    orphans,
+    running,
+    interrupted,
+    lastApply,
+    usage,
+    usageMethod,
     scanProgress,
     applyProgress,
-    lastRun,
-    toast,
     ready,
-    plan,
+    failure,
+    planView,
+    library,
+    installViews,
     selection,
     gate,
-    hasInstances,
-    reclaimIfClosed,
+    hasInstalls,
+    unusedCount,
+    screen,
+    toast,
     unticked,
     showAllDuplicates,
     showSingles,
-    folderMenuOpen,
+    categoryMenuOpen,
     renaming,
     lib,
     setLib,
     modal: () => modal.current,
-    setModal: (next) => setModalSignal("current", next),
+    setModal: (next) => setModalStore("current", next),
     patchModal: (fn) =>
-      setModalSignal(
+      setModalStore(
         "current",
         produce((current) => {
           if (current) fn(current);

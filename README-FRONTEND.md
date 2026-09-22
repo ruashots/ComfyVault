@@ -1,0 +1,65 @@
+# The ComfyVault interface
+
+Solid and TypeScript, built by Vite, drawn into the Tauri window.
+
+## Run it
+
+Node 22 or newer is required. Node 20 cannot install this dependency set.
+
+```
+npm install
+npm run dev        # http://localhost:1420
+npm test           # the whole suite
+npm run build      # type check, then dist/
+```
+
+`npm run dev` opens the interface in a browser against the development engine
+in `src/ipc/fixture/`. That engine follows the rules in `docs/IPC-CONTRACT.md`
+and returns the same shapes the Rust engine returns. It reads nothing from disk
+and never sees a real ComfyUI install.
+
+Two things only Windows can really do, so the browser build exposes them on the
+console:
+
+```js
+comfyVaultDev.symlinks(true)      // Developer Mode on, so links can be made
+comfyVaultDev.comfyRunning(false) // close ComfyUI
+comfyVaultDev.reset(false)        // start over; pass true for a first run
+```
+
+`http://localhost:1420/?first-run` opens it with nothing registered.
+
+Inside the Tauri window the same interface talks to the Rust engine. Nothing in
+the fixture is loaded there: `src/ipc/client.ts` picks one or the other, and
+each is its own chunk.
+
+## What the pieces are
+
+```
+src/ipc/contract.ts      every shape the engine speaks, from docs/IPC-CONTRACT.md
+src/ipc/tauri.ts         the real engine: one method per command
+src/ipc/fixture/         the development engine, and the world it answers from
+src/domain/              pure functions: the view model, the totals, the wording
+src/state/store.ts       what the interface knows, and the memos over it
+src/screens/             one file per screen
+src/modals/              the folder picker and the confirmations
+src/styles/app.css       the design system, from design/mock/comfyvault.html
+```
+
+No screen talks to Tauri. Every screen reads the port in `src/ipc/contract.ts`.
+
+## What the Rust side has to provide
+
+Beyond the commands in `docs/IPC-CONTRACT.md`:
+
+- `tauri-plugin-opener`, with `opener:allow-open-url` and
+  `opener:allow-reveal-item-in-dir`. Used to open the Windows Developer Mode
+  settings page and to show the vault folder in Explorer.
+- `tauri-plugin-fs`, with permission to read directories and create one. The
+  folder picker walks the disk itself, because the person never types a path and
+  the contract has no command for listing folders yet. If comfyvault-core would
+  rather own it, `listDirectory` and `createDirectory` in
+  `src/ipc/contract.ts` are the two methods to repoint, and `src/ipc/tauri.ts`
+  is the only file that changes.
+- A window of 1000 x 660 with `decorations: false`. The interface draws its own
+  title bar, and the drag region is already marked.

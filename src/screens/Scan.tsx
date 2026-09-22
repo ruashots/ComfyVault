@@ -4,42 +4,28 @@ import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import { fmt, minutesLeft } from "~/domain/format";
 import { useApp } from "~/state/store";
-import type { ScanProgress, ScanStepId } from "~/ipc/contract";
+import type { ScanProgress } from "~/ipc/contract";
 
-/** The five things a scan does, in the order it does them. */
-const STEPS: ReadonlyArray<{
-  id: ScanStepId;
+/** The three things a scan does, in the order it does them. */
+const PHASES: ReadonlyArray<{
+  id: ScanProgress["phase"];
   title: string;
   result: (p: ScanProgress) => string;
 }> = [
   {
-    id: "read_folders",
-    title: "Read the registered folders",
-    result: (p) => `${p.instancesRead ?? 0} instances`,
-  },
-  {
-    id: "read_yaml",
-    title: "Read extra_model_paths.yaml",
-    result: (p) => {
-      const folders = p.extraFolders ?? [];
-      if (folders.length === 0) return "no extra folders";
-      return `${folders.length} extra ${folders.length === 1 ? "folder" : "folders"} · ${folders.join(", ")}`;
-    },
-  },
-  {
-    id: "list_files",
+    id: "enumerating",
     title: "List every model file",
-    result: (p) => `${p.filesListed ?? 0} files · ${fmt(p.bytesListed ?? 0)}`,
+    result: (p) => `${p.filesSeen} files found`,
   },
   {
-    id: "hash_files",
+    id: "hashing",
     title: "Read each file to find the identical ones",
     result: (p) => `${p.filesHashed} of ${p.filesToHash}`,
   },
   {
-    id: "civitai",
-    title: "Ask Civitai about each one",
-    result: (p) => `${p.civitaiMatched ?? 0} matched`,
+    id: "finalizing",
+    title: "Work out what is a duplicate of what",
+    result: () => "almost there",
   },
 ];
 
@@ -47,12 +33,20 @@ export function ScanScreen() {
   const app = useApp();
   const progress = () => app.scanProgress()!;
 
-  const stepStates = createMemo(() => {
+  const overall = createMemo(() => {
     const p = progress();
-    const current = STEPS.findIndex((s) => s.id === p.currentStep);
-    return STEPS.map((step, i) => ({
-      step,
-      state: i < current ? "done" : i === current ? "now" : "wait",
+    if (p.phase === "enumerating") {
+      return p.filesToHash > 0 ? Math.min(0.2, (p.filesSeen / p.filesToHash) * 0.2) : 0;
+    }
+    if (p.phase === "finalizing") return 1;
+    return 0.2 + (p.bytesToHash > 0 ? (p.bytesHashed / p.bytesToHash) * 0.75 : 0);
+  });
+
+  const phaseStates = createMemo(() => {
+    const at = PHASES.findIndex((s) => s.id === progress().phase);
+    return PHASES.map((phase, i) => ({
+      phase,
+      state: i < at ? "done" : i === at ? "now" : "wait",
     }));
   });
 
@@ -60,9 +54,14 @@ export function ScanScreen() {
     <>
       <Header
         title="Scanning"
-        sub={`${progress().instancesRead ?? app.scan()?.instances.length ?? 0} instances · ${minutesLeft(progress().etaSeconds)}`}
+        sub={`${app.installs().length} instances · ${minutesLeft(
+          progress().etaMs === null ? null : Math.round(progress().etaMs! / 1000),
+        )}`}
       >
-        <button class="btn dng" onClick={() => void app.engine.cancelScan()}>
+        <button
+          class="btn dng"
+          onClick={() => void app.engine.cancelScan(progress().scanId)}
+        >
           <Icon name="x" size={13} />
           Cancel
         </button>
@@ -72,23 +71,28 @@ export function ScanScreen() {
           <div class="barhead">
             <span class="lbl">Reading files</span>
             <span class="sp" />
-            <span class="pct">{Math.round(progress().overall * 100)}%</span>
+            <span class="pct">{Math.round(overall() * 100)}%</span>
           </div>
           <div class="bar">
-            <i style={{ width: `${progress().overall * 100}%` }} />
+            <i style={{ width: `${overall() * 100}%` }} />
           </div>
           <div class="note up">
             {fmt(progress().bytesHashed)} of {fmt(progress().bytesToHash)} &middot;{" "}
             {progress().filesHashed} of {progress().filesToHash} files
+            <Show when={progress().bytesFromCache > 0}>
+              {" "}
+              &middot; {fmt(progress().bytesFromCache)} already known, not read
+              again
+            </Show>
           </div>
 
-          <Show when={progress().current}>
-            {(current) => (
+          <Show when={progress().currentPath}>
+            {(path) => (
               <div class="readout up">
                 <div>
-                  reading &nbsp;<b>{current().name}</b>
+                  reading &nbsp;<b>{fileNameOf(path())}</b>
                 </div>
-                <div class="d">{current().path}</div>
+                <div class="d">{path()}</div>
               </div>
             )}
           </Show>
@@ -97,7 +101,7 @@ export function ScanScreen() {
             <span class="t">Steps</span>
           </div>
           <div class="steps">
-            <For each={stepStates()}>
+            <For each={phaseStates()}>
               {(entry) => (
                 <div class="step" classList={{ [entry.state]: true }}>
                   <span class="ic">
@@ -112,11 +116,11 @@ export function ScanScreen() {
                       size={12}
                     />
                   </span>
-                  <span class="s">{entry.step.title}</span>
+                  <span class="s">{entry.phase.title}</span>
                   <span class="r">
                     {entry.state === "wait"
                       ? "waiting"
-                      : entry.step.result(progress())}
+                      : entry.phase.result(progress())}
                   </span>
                 </div>
               )}
@@ -124,50 +128,41 @@ export function ScanScreen() {
           </div>
 
           <div class="sec secgap">
-            <span class="t">Found so far</span>
+            <span class="t">Where it is now</span>
           </div>
           <Show
-            when={progress().found}
+            when={progress().installLabel}
             fallback={
               <div class="note">
-                Nothing yet. ComfyVault has to read each file before it can tell
-                two of them apart.
+                ComfyVault has to read each file before it can tell two of them
+                apart. Nothing is moved and nothing is changed while it reads.
               </div>
             }
           >
-            {(found) => (
+            {(label) => (
               <>
                 <div class="kv">
-                  <span class="k">Unique models</span>
+                  <span class="k">Install</span>
                   <span class="v">
-                    <b>{found().models}</b>
+                    <b>{label()}</b>
                   </span>
                 </div>
                 <div class="kv">
-                  <span class="k">Duplicate copies</span>
+                  <span class="k">Files found</span>
                   <span class="v">
-                    <b>{found().duplicateCopies}</b>
+                    <b>{progress().filesSeen}</b>
                   </span>
                 </div>
                 <div class="kv">
-                  <span class="k">Reclaimable</span>
+                  <span class="k">Read so far</span>
                   <span class="v">
-                    <b>{fmt(found().reclaimableBytes)}</b>
+                    <b>{fmt(progress().bytesHashed)}</b>
                   </span>
                 </div>
-                <For each={app.scan()?.countedNeverMoved ?? []}>
-                  {(entry) => (
-                    <div class="kv">
-                      <span class="k">
-                        In {entry.kind === "custom_nodes" ? "custom_nodes" : "HF cache"}
-                      </span>
-                      <span class="v">
-                        {fmt(entry.bytes)}{" "}
-                        <span class="faint">counted, never moved</span>
-                      </span>
-                    </div>
-                  )}
-                </For>
+                <div class="note up">
+                  Nothing moves during a scan. Cancelling leaves the disk exactly
+                  as it is, and the files already read stay read.
+                </div>
               </>
             )}
           </Show>
@@ -175,4 +170,9 @@ export function ScanScreen() {
       </div>
     </>
   );
+}
+
+function fileNameOf(path: string): string {
+  const at = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return at < 0 ? path : path.slice(at + 1);
 }

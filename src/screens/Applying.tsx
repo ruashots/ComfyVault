@@ -1,53 +1,35 @@
-import { For, Show } from "solid-js";
+import { Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
-import { clockTime, driveOf, fmt, secondsLeft } from "~/domain/format";
+import { fmt, secondsLeft } from "~/domain/format";
+import { fileNameOf } from "~/domain/view";
 import { useApp } from "~/state/store";
-import type { MoveLogLine } from "~/ipc/contract";
 
-/** The last lines the engine wrote to moves.log. */
-export function MovesLog(props: { lines: readonly MoveLogLine[]; limit: number }) {
-  const tail = () => props.lines.slice(-props.limit);
-  return (
-    <div class="log">
-      <For each={tail()}>
-        {(line) => (
-          <div class="l">
-            <span class="t">{clockTime(line.at)}</span>
-            <span
-              class="v"
-              classList={{
-                mv: line.verb === "move",
-                ln: line.verb === "link",
-                sk: line.verb === "skip",
-              }}
-            >
-              {line.verb}
-            </span>
-            <span class="p">{line.detail}</span>
-          </div>
-        )}
-      </For>
-    </div>
-  );
-}
+const STEP_WORDS: Record<string, string> = {
+  verifying: "checking the file has not changed",
+  moving: "moving it into the vault",
+  linking: "putting a link where it was",
+  cleaning: "tidying up",
+};
 
 export function ApplyRunning() {
   const app = useApp();
   const progress = () => app.applyProgress()!;
-  const vaultDrive = () => driveOf(app.machine()!.vaultPath);
+  const volume = () => app.vault()?.volume ?? "C:";
+  const overall = () =>
+    progress().groupTotal > 0 ? progress().groupIndex / progress().groupTotal : 0;
 
-  const installsOnVaultDrive = () =>
-    (app.scan()?.instances ?? []).every((i) => driveOf(i.path) === vaultDrive());
+  const sameDrive = () =>
+    (app.plan()?.totals.crossVolumeGroups ?? 0) === 0;
 
   return (
     <>
       <Header
         title="Applying"
         sub={
-          progress().stopping
-            ? "stopping after this file"
+          progress().phase === "preflight"
+            ? "checking every file before it touches one"
             : "do not close this window"
         }
       />
@@ -56,37 +38,35 @@ export function ApplyRunning() {
           <div class="barhead">
             <span class="lbl">Moving and linking</span>
             <span class="sp" />
-            <span class="pct">{Math.round(progress().overall * 100)}%</span>
+            <span class="pct">{Math.round(overall() * 100)}%</span>
           </div>
           <div class="bar">
-            <i style={{ width: `${progress().overall * 100}%` }} />
+            <i style={{ width: `${overall() * 100}%` }} />
           </div>
           <div class="note up">
-            {fmt(progress().bytesMoved)} of {fmt(progress().bytesTotal)} &middot;{" "}
-            {progress().filesMoved} of {progress().filesTotal} files &middot;{" "}
-            {secondsLeft(progress().etaSeconds, progress().overall)}
+            {fmt(progress().bytesMoved)} of {fmt(progress().bytesToMove)} &middot;{" "}
+            {progress().groupIndex} of {progress().groupTotal} files &middot;{" "}
+            {secondsLeft(
+              progress().etaMs === null ? null : Math.round(progress().etaMs! / 1000),
+              overall(),
+            )}
           </div>
-          <Show when={installsOnVaultDrive()}>
+          <Show when={sameDrive()}>
             <div class="note" style={{ "margin-top": "4px", color: "var(--t-faint)" }}>
-              The vault and every install sit on drive {vaultDrive()}, so each file
-              is renamed rather than copied. That is why this takes seconds and not
+              The vault and every install sit on drive {volume()}, so each file is
+              renamed rather than copied. That is why this takes seconds and not
               hours.
             </div>
           </Show>
 
-          <Show when={progress().current}>
-            {(current) => (
+          <Show when={progress().currentPath}>
+            {(path) => (
               <div class="readout up">
                 <div>
-                  moving &nbsp;<b>{current().name}</b>
+                  <b>{fileNameOf(path())}</b>
                 </div>
-                <div class="d">
-                  from &nbsp;{current().fromInstance} &middot; {current().fromPath}
-                </div>
-                <div class="d">to &nbsp;&nbsp;&nbsp;{current().toPath}</div>
-                <div class="d">
-                  link &nbsp;{current().linkInstance} &middot; {current().linkPath}
-                </div>
+                <div class="d">{path()}</div>
+                <div class="d">{STEP_WORDS[progress().step] ?? progress().step}</div>
               </div>
             )}
           </Show>
@@ -108,44 +88,45 @@ export function ApplyRunning() {
             <span class="s">Links put back where files were</span>
             <span class="r">{progress().linksCreated} places</span>
           </div>
-          <Show when={progress().skipped.length > 0}>
+          <div class="step done">
+            <span class="ic">
+              <Icon name="vault" size={12} />
+            </span>
+            <span class="s">Space returned</span>
+            <span class="r">{fmt(progress().bytesFreed)}</span>
+          </div>
+          <Show when={progress().failures > 0}>
             <div class="step bad">
               <span class="ic">
                 <Icon name="warn" size={12} />
               </span>
-              <span class="s">Skipped, the file changed since the report</span>
+              <span class="s">Stopped on a file, and left it alone</span>
               <span class="r">
-                {progress().skipped.length}{" "}
-                {progress().skipped.length === 1 ? "file" : "files"}
+                {progress().failures}{" "}
+                {progress().failures === 1 ? "file" : "files"}
               </span>
             </div>
           </Show>
           <div class="note up">
-            Every move is written to{" "}
-            <span class="emph">{app.machine()!.vaultPath}\moves.log</span> as it
-            happens, so this run can be undone even if the power goes.
+            Every step is written down before it happens, so if the power goes this
+            run can be finished or undone rather than left half done. A file is
+            never deleted before its link is in place.
           </div>
-
-          <div class="sec secgap plain">
-            <span class="t">moves.log</span>
-            <span class="n">written as it happens</span>
-          </div>
-          <MovesLog lines={progress().log} limit={7} />
 
           <div style={{ "margin-top": "14px" }}>
-            <Show
-              when={!progress().stopping}
-              fallback={
-                <span class="note">
-                  Finishing the file in progress, then stopping.
-                </span>
+            <button
+              class="btn dng"
+              onClick={() =>
+                void app.engine.cancelApply(progress().applyId).then(() =>
+                  app.actions.showToast(
+                    "Stopping after this file · everything already done stays done",
+                  ),
+                )
               }
             >
-              <button class="btn dng" onClick={() => void app.engine.stopApply()}>
-                <Icon name="stop" size={13} />
-                Stop after this file
-              </button>
-            </Show>
+              <Icon name="stop" size={13} />
+              Stop after this file
+            </button>
           </div>
         </div>
       </div>

@@ -2,16 +2,26 @@ import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
+import { blockedWhy } from "~/domain/blocked";
 import { fmt, fmtN, fmtU, usedPercent } from "~/domain/format";
+import { fileNameOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
-import { MovesLog } from "~/screens/Applying";
+import type { ApplyState } from "~/ipc/contract";
+
+const HOW_IT_ENDED: Record<ApplyState, string> = {
+  completed: "finished",
+  completedWithErrors: "finished, with some files left alone",
+  cancelled: "stopped when you asked",
+  interrupted: "stopped part way",
+  reverted: "undone",
+};
 
 export function ApplyDone() {
   const app = useApp();
-  const run = () => app.lastRun()!;
-  const drive = () => app.machine()!.vaultDrive;
-  const freeBefore = () => drive().freeBytes - run().bytesFreed;
+  const run = () => app.lastApply()!;
+  const drive = () => app.vault();
+  const freeBefore = () => (drive()?.freeBytes ?? 0) - run().bytesFreed;
 
   const revert = () => {
     openConfirm(app, {
@@ -22,16 +32,19 @@ export function ApplyDone() {
           {
             text: "Every file this run moved goes back to the path it came from, and the link left in its place is removed. Drive ",
           },
-          { text: drive().letter },
+          { text: drive()?.volume ?? "C:" },
           { text: " returns to " },
           { text: fmt(freeBefore()), emph: true },
           { text: " free. Nothing else in the vault is touched." },
         ],
+        [
+          {
+            text: "Putting the files back needs room on the drive they came from. ComfyVault checks that first and refuses rather than half-doing it.",
+          },
+        ],
       ],
       action: async () => {
-        await app.engine.revert(run().runId);
-        await app.actions.refresh();
-        app.actions.showToast("Run undone · every file is back where it was");
+        await app.engine.revertApply(run().applyId);
       },
     });
   };
@@ -40,11 +53,13 @@ export function ApplyDone() {
     <>
       <Header
         title="Consolidate"
-        sub={`finished · ${fmt(run().bytesFreed)} returned`}
+        sub={`${HOW_IT_ENDED[run().state]} · ${fmt(run().bytesFreed)} returned`}
       >
         <button
           class="btn"
-          onClick={() => void app.engine.openInExplorer(app.machine()!.vaultPath)}
+          onClick={() =>
+            void app.engine.revealInFileManager(app.vault()?.root ?? "")
+          }
         >
           <Icon name="folder" size={13} />
           Open the vault folder
@@ -59,13 +74,14 @@ export function ApplyDone() {
             </div>
             <div class="txt">
               <div class="l1">
-                Back on drive {drive().letter}. {run().linksCreated} copies stopped
+                Back on drive {drive()?.volume}. {run().linksCreated} copies stopped
                 taking room.
               </div>
               <div class="l2">
-                {fmt(freeBefore())} free before, {fmt(drive().freeBytes)} free now.{" "}
-                {usedPercent(drive().totalBytes, drive().freeBytes)}% of the drive
-                used.
+                {fmt(freeBefore())} free before, {fmt(drive()?.freeBytes ?? 0)} free
+                now.{" "}
+                {usedPercent(drive()?.totalBytes ?? 0, drive()?.freeBytes ?? 0)}% of
+                the drive used.
               </div>
             </div>
             <Icon name="check" size={26} />
@@ -88,52 +104,62 @@ export function ApplyDone() {
             </span>
           </div>
           <div class="kv">
-            <span class="k w150">Renamed in the vault</span>
+            <span class="k w150">Groups asked for</span>
             <span class="v">
-              {run().renamedInVault} files, to keep same-named files apart
+              {run().groupsApplied} of {run().groupsRequested} done
+              <Show when={run().groupsFailed > 0}>
+                <span class="red"> &middot; {run().groupsFailed} left alone</span>
+              </Show>
             </span>
           </div>
-          <div class="kv">
-            <span class="k w150">Left alone</span>
-            <span class="v">
-              {run().leftAlone.files} files &middot; {fmt(run().leftAlone.bytes)}{" "}
-              <span class="dim">&middot; the reasons are still in the report</span>
-            </span>
-          </div>
-
-          <Show when={run().skipped.length > 0}>
-            <div class="sec secgap">
-              <span class="t">
-                {run().skipped.length === 1
-                  ? "One file was skipped"
-                  : `${run().skipped.length} files were skipped`}
+          <Show when={(app.planView()?.blocked.length ?? 0) > 0}>
+            <div class="kv">
+              <span class="k w150">Still cannot move</span>
+              <span class="v">
+                {app.planView()!.blocked.length}{" "}
+                {app.planView()!.blocked.length === 1 ? "file" : "files"} &middot;{" "}
+                {fmt(app.plan()?.totals.blockedBytes ?? 0)}{" "}
+                <span class="dim">&middot; the reasons are still in the report</span>
               </span>
             </div>
-            <For each={run().skipped}>
-              {(skipped) => (
+          </Show>
+
+          <Show when={run().failures.length > 0}>
+            <div class="sec secgap">
+              <span class="t">
+                {run().failures.length === 1
+                  ? "One file was left alone"
+                  : `${run().failures.length} files were left alone`}
+              </span>
+            </div>
+            <For each={run().failures}>
+              {(failure) => (
                 <div class="grp dead">
                   <div class="grp-h static">
                     <span class="cb dead">
                       <Icon name="x" size={9} />
                     </span>
-                    <span class="grp-n">{skipped.filename}</span>
-                    <span class="grp-s">{fmt(skipped.bytes)}</span>
+                    <span class="grp-n">{fileNameOf(failure.absPath)}</span>
                   </div>
                   <div class="grp-why wide">
-                    <Show
-                      when={skipped.reason.kind === "changed_since_report"}
-                      fallback={<>This copy could not be moved, so nothing was done to it.</>}
-                    >
-                      This file was written to after the report was made, so its
-                      contents no longer match what the report checked. ComfyVault
-                      stopped on it and did nothing to it. Both copies are still
-                      where they were.
-                    </Show>
+                    {blockedWhy({
+                      absPath: failure.absPath,
+                      installId: null,
+                      installLabel: null,
+                      sizeBytes: 0,
+                      sha256: null,
+                      reason: failure.reason,
+                      detail: failure.detail,
+                    })}{" "}
+                    Nothing was done to it, and both copies are still where they
+                    were.
                   </div>
                   <div class="grp-fix up">
                     <button
                       class="btn sm pri"
-                      onClick={() => void app.engine.startScan()}
+                      onClick={() =>
+                        void app.actions.run(() => app.engine.startScan())
+                      }
                     >
                       Run the dry run again
                     </button>
@@ -146,27 +172,48 @@ export function ApplyDone() {
           <div class="sec secgap">
             <span class="t">Undo</span>
           </div>
-          <div class="note">
-            Every move in this run is listed in{" "}
-            <span class="emph">{run().logPath}</span>. Reverting puts each file back
-            at the path it came from and removes the link. Files that were already
-            links stay as they are.
-          </div>
-          <MovesLog lines={run().log} limit={9} />
-          <div style={{ display: "flex", gap: "8px", "margin-top": "11px" }}>
-            <button
-              class="btn"
-              onClick={() => void app.engine.openInExplorer(run().logPath)}
-            >
-              <Icon name="file" size={13} />
-              Open moves.log
-            </button>
-            <Show when={run().revertable}>
+          <Show
+            when={run().revertible}
+            fallback={
+              <div class="note">
+                This run can no longer be undone. A later run depends on it, or its
+                record is gone.
+              </div>
+            }
+          >
+            <div class="note">
+              Every step of this run was written down as it happened. Undoing puts
+              each file back at the path it came from and removes the link. Files
+              that were already links stay as they are.
+            </div>
+            <div style={{ display: "flex", gap: "8px", "margin-top": "11px" }}>
               <button class="btn dng" onClick={revert}>
                 <Icon name="refresh" size={13} />
                 Undo this run
               </button>
-            </Show>
+            </div>
+          </Show>
+
+          <div class="sec secgap plain">
+            <span class="t">What to do next</span>
+          </div>
+          <div class="note">
+            Open ComfyUI and load a workflow that uses one of these models. It will
+            load from the same path it always did, through the link. If anything
+            looks wrong, undo the run above and nothing is lost.
+          </div>
+          <div style={{ display: "flex", gap: "8px", "margin-top": "11px" }}>
+            <button
+              class="btn"
+              onClick={() => void app.actions.run(() => app.engine.startScan())}
+            >
+              <Icon name="scan" size={13} />
+              Scan again
+            </button>
+            <button class="btn" onClick={() => app.actions.go("library")}>
+              <Icon name="library" size={13} />
+              Look at the library
+            </button>
           </div>
         </div>
       </div>

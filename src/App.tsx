@@ -1,5 +1,6 @@
 import { Match, Show, Switch, onCleanup, onMount } from "solid-js";
 
+import { Icon } from "~/components/Icon";
 import { Rail, Titlebar, Toaster } from "~/components/Shell";
 import { ConfirmModalView } from "~/modals/confirm";
 import { PickerModalView } from "~/modals/picker";
@@ -17,23 +18,18 @@ export function App() {
   /** Esc closes whatever is on top: a modal, a menu, the drawer, a rename. */
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
-    if (app.modal()) {
-      app.setModal(null);
-    } else if (app.folderMenuOpen()) {
-      app.actions.setFolderMenuOpen(false);
-    } else if (app.lib.drawerOpen && app.screen() === "library") {
+    if (app.modal()) app.setModal(null);
+    else if (app.categoryMenuOpen()) app.actions.setCategoryMenuOpen(false);
+    else if (app.lib.drawerOpen && app.screen() === "library") {
       app.setLib("drawerOpen", false);
-    } else if (app.renaming()) {
-      app.actions.cancelRename();
-    }
+    } else if (app.renaming()) app.actions.cancelRename();
   };
 
   /** A click anywhere else closes the folder menu. */
   const onPointerDown = (event: MouseEvent) => {
-    if (!app.folderMenuOpen()) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest(".menu-wrap")) return;
-    app.actions.setFolderMenuOpen(false);
+    if (!app.categoryMenuOpen()) return;
+    if ((event.target as HTMLElement | null)?.closest(".menu-wrap")) return;
+    app.actions.setCategoryMenuOpen(false);
   };
 
   onMount(() => {
@@ -52,26 +48,28 @@ export function App() {
         <Rail />
         <div class="main">
           <Show when={app.ready()} fallback={<Starting />}>
-            <Switch fallback={<HomeScreen />}>
-              <Match when={app.screen() === "home"}>
-                <HomeScreen />
-              </Match>
-              <Match when={app.screen() === "library"}>
-                <LibraryScreen />
-              </Match>
-              <Match when={app.screen() === "consolidate"}>
-                <ConsolidateScreen />
-              </Match>
-              <Match when={app.screen() === "cleanup"}>
-                <CleanupScreen />
-              </Match>
-              <Match when={app.screen() === "download"}>
-                <DownloadScreen />
-              </Match>
-              <Match when={app.screen() === "settings"}>
-                <SettingsScreen />
-              </Match>
-            </Switch>
+            <Show when={!app.failure()} fallback={<Unreachable />}>
+              <Switch fallback={<HomeScreen />}>
+                <Match when={app.screen() === "home"}>
+                  <HomeScreen />
+                </Match>
+                <Match when={app.screen() === "library"}>
+                  <LibraryScreen />
+                </Match>
+                <Match when={app.screen() === "consolidate"}>
+                  <ConsolidateScreen />
+                </Match>
+                <Match when={app.screen() === "cleanup"}>
+                  <CleanupScreen />
+                </Match>
+                <Match when={app.screen() === "download"}>
+                  <DownloadScreen />
+                </Match>
+                <Match when={app.screen() === "settings"}>
+                  <SettingsScreen />
+                </Match>
+              </Switch>
+            </Show>
           </Show>
         </div>
       </div>
@@ -88,6 +86,32 @@ function Starting() {
     <div class="screen">
       <div class="empty">
         <div class="lbl">Reading the vault</div>
+      </div>
+    </div>
+  );
+}
+
+/** The engine did not answer, and the window says so rather than sitting blank. */
+function Unreachable() {
+  const app = useApp();
+  return (
+    <div class="screen">
+      <div class="empty">
+        <span class="gl">
+          <Icon name="warn" size={28} />
+        </span>
+        <h2>ComfyVault could not read the vault</h2>
+        <p>
+          The part of ComfyVault that reads your drive answered with a problem.
+          Nothing has been changed. This is what it said.
+        </p>
+        <div class="readout">{app.failure()}</div>
+        <div class="acts">
+          <button class="btn pri" onClick={() => void app.actions.refresh()}>
+            <Icon name="refresh" size={13} />
+            Try again
+          </button>
+        </div>
       </div>
     </div>
   );

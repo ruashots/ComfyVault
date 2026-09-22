@@ -31,7 +31,7 @@ export async function createEngine(): Promise<Engine> {
   // Mode and whether ComfyUI is running, which only Windows can do for real.
   // It lives on this path only, so it cannot reach the desktop window.
   (window as unknown as { comfyVaultDev?: unknown }).comfyVaultDev = {
-    developerMode: (on: boolean) => engine.devSetDeveloperMode(on),
+    symlinks: (on: boolean) => engine.devSetSymlinksSupported(on),
     comfyRunning: (on: boolean) => engine.devSetComfyRunning(on),
     reset: (empty = false) => engine.devReset(empty),
   };

@@ -2,7 +2,7 @@ import { For, Show, createMemo, type JSX } from "solid-js";
 
 import { Icon, Mark, type IconName } from "~/components/Icon";
 import { fmt, usedPercent } from "~/domain/format";
-import { applyBlockers } from "~/domain/selection";
+import { gateBlockers } from "~/domain/selection";
 import { useApp, type Screen } from "~/state/store";
 
 /** The window's own title bar. The window has no system frame. */
@@ -15,7 +15,7 @@ export function Titlebar() {
         Comfy<i>Vault</i>
       </span>
       <span class="tb-sep" data-tauri-drag-region />
-      <span class="tb-path">{app.machine()?.vaultPath ?? ""}</span>
+      <span class="tb-path">{app.vault()?.root ?? ""}</span>
       <button
         class="tb-btn"
         title="Minimize"
@@ -56,38 +56,17 @@ const NAV: ReadonlyArray<{ key: Screen; icon: IconName; title: string }> = [
 export function Rail() {
   const app = useApp();
 
-  /** The line under the drive meter: what is still to gain, or what was gained. */
-  const railNote = (gain: number) => {
-    if (!app.hasInstances()) {
-      return <div class="rail-sub">nothing registered yet</div>;
-    }
-    if (app.applyProgress()) {
-      return <div class="rail-sub amb">{fmt(gain)} still to come</div>;
-    }
-    const run = app.lastRun();
-    if (run) {
-      return <div class="rail-sub grn">{fmt(run.bytesFreed)} freed just now</div>;
-    }
-    if (gain > 0) {
-      return <div class="rail-sub amb">{fmt(gain)} can be freed</div>;
-    }
-    return <div class="rail-sub">every model is held once already</div>;
-  };
-
   const badgeFor = (key: Screen): number | null => {
-    const plan = app.plan();
-    if (!plan || !app.hasInstances()) return null;
+    if (!app.hasInstalls()) return null;
     if (key === "consolidate") {
-      if (app.lastRun()) return null;
-      return plan.duplicates.length || null;
+      if (app.lastApply()) return null;
+      return app.planView()?.duplicates.length || null;
     }
     if (key === "cleanup") {
-      return plan.aliases.length + plan.orphans.length || null;
+      return app.nameGroups().length + app.orphans().length || null;
     }
     return null;
   };
-
-  const drive = createMemo(() => app.machine()?.vaultDrive ?? null);
 
   /**
    * The meter shows the drive as it is, and the amber band is the part of it
@@ -95,15 +74,14 @@ export function Rail() {
    * it, so the meter and the progress bar tell the same story.
    */
   const meter = createMemo(() => {
-    const d = drive();
-    const plan = app.plan();
-    if (!d) return null;
-    const total = d.totalBytes;
-    const inFlight = app.applyProgress()?.bytesMoved ?? 0;
-    const free = d.freeBytes + inFlight;
-    const models = plan ? plan.totals.onDiskBytes - inFlight : 0;
-    const gain = plan ? Math.max(plan.totals.reclaimBytes - inFlight, 0) : 0;
-    const other = Math.max(total - d.freeBytes - (plan?.totals.onDiskBytes ?? 0), 0);
+    const drive = app.vault();
+    if (!drive) return null;
+    const total = drive.totalBytes;
+    const inFlight = app.applyProgress()?.bytesFreed ?? 0;
+    const free = drive.freeBytes;
+    const models = app.scan()?.totals.movableBytes ?? 0;
+    const gain = Math.max((app.plan()?.totals.bytesFreed ?? 0) - inFlight, 0);
+    const other = Math.max(total - free - models, 0);
     const pct = (v: number) => `${((Math.max(v, 0) / total) * 100).toFixed(3)}%`;
     return {
       other: pct(other),
@@ -113,8 +91,27 @@ export function Rail() {
       free,
       usedPct: usedPercent(total, free),
       total,
+      volume: drive.volume,
     };
   });
+
+  /** The line under the drive meter: what is still to gain, or what was gained. */
+  const railNote = (gain: number) => {
+    if (!app.hasInstalls()) {
+      return <div class="rail-sub">nothing registered yet</div>;
+    }
+    if (app.applyProgress()) {
+      return <div class="rail-sub amb">{fmt(gain)} still to come</div>;
+    }
+    const run = app.lastApply();
+    if (run) {
+      return <div class="rail-sub grn">{fmt(run.bytesFreed)} freed just now</div>;
+    }
+    if (gain > 0) {
+      return <div class="rail-sub amb">{fmt(gain)} can be freed</div>;
+    }
+    return <div class="rail-sub">every model is held once already</div>;
+  };
 
   return (
     <div class="rail">
@@ -141,21 +138,19 @@ export function Rail() {
       </nav>
       <div class="rail-fill" />
 
-      <Show when={app.hasInstances()}>
+      <Show when={app.hasInstalls()}>
         <div class="rail-inst">
           <div class="lbl">Installs</div>
-          <For each={app.scan()?.instances ?? []}>
-            {(instance) => (
+          <For each={app.installViews()}>
+            {(view) => (
               <button
                 class="r"
-                title={instance.path}
+                title={view.install.root}
                 onClick={() => app.actions.go("settings")}
               >
-                <span class="led" classList={{ up: instance.running, idle: !instance.running }} />
-                <span class="nm">{instance.name}</span>
-                <span class="sz">
-                  {fmt(app.plan()?.totals.perInstance.get(instance.id)?.bytes ?? 0)}
-                </span>
+                <span class="led" classList={{ up: view.running, idle: !view.running }} />
+                <span class="nm">{view.install.label}</span>
+                <span class="sz">{fmt(view.bytes)}</span>
               </button>
             )}
           </For>
@@ -165,7 +160,7 @@ export function Rail() {
       <Show when={meter()}>
         {(m) => (
           <div class="rail-foot">
-            <div class="lbl">Drive {drive()?.letter}</div>
+            <div class="lbl">Drive {m().volume}</div>
             <div class="meter">
               <i class="m-other" style={{ width: m().other }} />
               <i class="m-keep" style={{ width: m().keep }} />
@@ -205,28 +200,32 @@ export function Header(props: {
 }
 
 /**
- * The strip that says Apply is held back. It is shown on every screen except
- * the one that explains the reasons, which is Consolidate.
+ * The strip that says Apply is held back. It names the first thing to fix and
+ * sends the person to the screen that explains all of them.
  */
 export function Warnbar() {
   const app = useApp();
-  const blockers = createMemo(() => {
-    const m = app.machine();
-    return m ? applyBlockers(m) : [];
-  });
+  const blockers = () => gateBlockers(app.gate());
 
   const message = createMemo(() => {
     const list = blockers();
-    if (list.length === 2) return "2 things block Apply";
+    if (list.length > 1) return `${list.length} things block Apply`;
     const first = list[0];
     if (!first) return "";
-    return first.kind === "developer_mode_off"
-      ? "Symlinks are off in Windows"
-      : "ComfyUI is running";
+    switch (first.kind) {
+      case "interrupted_apply":
+        return "A run stopped part way through";
+      case "symlinks_unsupported":
+        return "Windows will not let this app create links";
+      case "comfy_running":
+        return first.processes.length === 1
+          ? "ComfyUI is running"
+          : `${first.processes.length} ComfyUI processes are running`;
+    }
   });
 
   return (
-    <Show when={app.hasInstances() && blockers().length > 0}>
+    <Show when={app.hasInstalls() && blockers().length > 0}>
       <div class="warnbar" role="status">
         <Icon name="warn" size={13} />
         <span>{message()}</span>
@@ -246,7 +245,12 @@ export function Toaster() {
   return (
     <Show when={app.toast()}>
       {(toast) => (
-        <div class="toast" classList={{ bad: toast().tone === "bad" }} role="status" aria-live="polite">
+        <div
+          class="toast"
+          classList={{ bad: toast().tone === "bad" }}
+          role="status"
+          aria-live="polite"
+        >
           <Icon name={toast().tone === "bad" ? "warn" : "check"} size={12} />
           <span>{toast().message}</span>
         </div>

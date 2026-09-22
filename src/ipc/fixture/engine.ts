@@ -1,66 +1,74 @@
 /**
  * The development engine.
  *
- * It implements the same Engine interface the Tauri client implements, so every
- * screen runs against it exactly as it runs against the real thing: the same
- * progress events, the same refusals, the same result shapes. It reads nothing
- * from disk. It never sees a real ComfyUI install.
+ * It implements the same port the Tauri client implements and follows the same
+ * rules docs/IPC-CONTRACT.md sets out, so a screen cannot pass against it and
+ * fail against the real engine. It reads nothing from disk and never sees a
+ * real ComfyUI install.
  */
 
-import { derivePlan } from "~/domain/plan";
-import type { PlannedModel } from "~/domain/plan";
+import { fileNameOf } from "~/domain/view";
 import { joinPath, leafOf } from "~/domain/format";
 import type {
   ApplyProgress,
   ApplyResult,
-  CreateFolderResult,
+  AppState,
+  ConsolidationPlan,
+  DirectoryEntry,
   Engine,
-  FolderCheck,
-  FolderEntry,
-  InstanceId,
-  MachineState,
-  Model,
-  MoveLogLine,
-  PickerPurpose,
-  Placement,
+  Install,
+  InstallCandidate,
+  InterruptedApply,
+  Link,
+  LockState,
+  ModelDirNode,
+  ModelMetadata,
+  NameGroup,
+  PlanGroup,
+  PlatformReport,
+  RunningComfy,
+  ScanEntryPage,
   ScanProgress,
   ScanResult,
-  ScanStepId,
-  SkippedFile,
+  Settings,
   Unsubscribe,
+  UsageResult,
+  VaultError,
+  VaultFile,
+  VaultFilePage,
+  VaultHealth,
+  VaultInfo,
 } from "~/ipc/contract";
 import {
-  FIXTURE_COMFY_PROCESS,
-  FIXTURE_MODELS,
-  fixtureMachine,
-  fixtureScan,
-} from "~/ipc/fixture/dataset";
+  COUNTED_NEVER_MOVED,
+  VAULT_ROOT,
+  VAULT_TOTAL_BYTES,
+  VAULT_VOLUME,
+  buildWorld,
+  nameGroupsOf,
+  planOf,
+  scanEntriesOf,
+  scanResultOf,
+  vaultFilesOf,
+  type World,
+} from "~/ipc/fixture/world";
 
 const MB = 1024 * 1024;
+const SCAN_MS = 16_000;
+const APPLY_MS = 10_000;
+const TICK_MS = 100;
 
-/** How long a fake scan and a fake run take, in milliseconds. */
-const SCAN_MS = 18_000;
-const APPLY_MS = 11_000;
-const TICK_MS = 90;
+const SYMLINK_GUIDANCE =
+  "Windows needs Developer Mode to create the links this app uses. Open " +
+  "Settings, go to System, then For developers, and turn Developer Mode on. " +
+  "You do not need to restart.";
 
-/** Where each scan step ends, as a fraction of the whole scan. */
-const SCAN_STEPS: ReadonlyArray<{ id: ScanStepId; end: number }> = [
-  { id: "read_folders", end: 0.048 },
-  { id: "read_yaml", end: 0.104 },
-  { id: "list_files", end: 0.208 },
-  { id: "hash_files", end: 0.872 },
-  { id: "civitai", end: 1 },
-];
+const USAGE_METHOD =
+  "The file name was searched for as plain text inside saved workflow files.";
 
 // ── the fake disk the folder picker walks ───────────────────────────────────
 
-interface FakeFolder {
-  readonly path: string;
-  readonly children: readonly string[];
-  readonly readable?: boolean;
-}
-
-const MODEL_SUBFOLDERS = [
+const MODEL_DIRS = [
   "checkpoints",
   "clip_vision",
   "controlnet",
@@ -71,23 +79,23 @@ const MODEL_SUBFOLDERS = [
   "vae",
 ];
 
-function installFolders(root: string): FakeFolder[] {
+interface FakeFolder {
+  path: string;
+  children: string[];
+  readable?: boolean;
+}
+
+function installTree(root: string): FakeFolder[] {
   return [
     { path: root, children: [`${root}\\models`, `${root}\\custom_nodes`, `${root}\\output`] },
-    {
-      path: `${root}\\models`,
-      children: MODEL_SUBFOLDERS.map((f) => `${root}\\models\\${f}`),
-    },
-    ...MODEL_SUBFOLDERS.map((f) => ({
-      path: `${root}\\models\\${f}`,
-      children: [],
-    })),
-    { path: `${root}\\custom_nodes`, children: [] },
-    { path: `${root}\\output`, children: [] },
+    { path: `${root}\\models`, children: MODEL_DIRS.map((d) => `${root}\\models\\${d}`) },
+    ...MODEL_DIRS.map((d) => ({ path: `${root}\\models\\${d}`, children: [] as string[] })),
+    { path: `${root}\\custom_nodes`, children: [] as string[] },
+    { path: `${root}\\output`, children: [] as string[] },
   ];
 }
 
-const FAKE_DISK: FakeFolder[] = [
+const DISK: FakeFolder[] = [
   {
     path: "C:\\",
     children: [
@@ -99,50 +107,37 @@ const FAKE_DISK: FakeFolder[] = [
       "C:\\Users",
     ],
   },
-  ...installFolders("C:\\ComfyUI-Alpha"),
-  ...installFolders("C:\\ComfyUI-Beta"),
-  ...installFolders("C:\\ComfyUI-Portable"),
-  {
-    path: "C:\\ComfyVault",
-    children: MODEL_SUBFOLDERS.map((f) => `C:\\ComfyVault\\${f}`),
-  },
-  ...MODEL_SUBFOLDERS.map((f) => ({ path: `C:\\ComfyVault\\${f}`, children: [] })),
-  { path: "C:\\Program Files", children: ["C:\\Program Files\\NVIDIA Corporation"], readable: false },
-  { path: "C:\\Program Files\\NVIDIA Corporation", children: [] },
+  ...installTree("C:\\ComfyUI-Alpha"),
+  ...installTree("C:\\ComfyUI-Beta"),
+  ...installTree("C:\\ComfyUI-Portable"),
+  { path: "C:\\ComfyVault", children: MODEL_DIRS.map((d) => `C:\\ComfyVault\\${d}`) },
+  ...MODEL_DIRS.map((d) => ({ path: `C:\\ComfyVault\\${d}`, children: [] as string[] })),
+  { path: "C:\\Program Files", children: [], readable: false },
   { path: "C:\\Users", children: ["C:\\Users\\alex"] },
-  {
-    path: "C:\\Users\\alex",
-    children: ["C:\\Users\\alex\\Downloads", "C:\\Users\\alex\\Documents"],
-  },
+  { path: "C:\\Users\\alex", children: ["C:\\Users\\alex\\Downloads", "C:\\Users\\alex\\Documents"] },
   { path: "C:\\Users\\alex\\Downloads", children: [] },
   { path: "C:\\Users\\alex\\Documents", children: [] },
   { path: "D:\\", children: ["D:\\ai-models", "D:\\ComfyUI-Backup"] },
   { path: "D:\\ai-models", children: ["D:\\ai-models\\ltx"] },
   { path: "D:\\ai-models\\ltx", children: [] },
-  ...installFolders("D:\\ComfyUI-Backup"),
+  ...installTree("D:\\ComfyUI-Backup"),
 ];
 
 /** What a peek into a folder that is not registered turns up. */
-const PEEK: Record<string, { folders: number; files: number; bytes: number; yaml: boolean }> = {
-  "C:\\ComfyUI-Portable": { folders: 6, files: 31, bytes: 118000 * MB, yaml: false },
-  "D:\\ComfyUI-Backup": { folders: 5, files: 22, bytes: 96000 * MB, yaml: false },
+const PEEK: Record<string, { files: number; bytes: number }> = {
+  "C:\\ComfyUI-Portable": { files: 31, bytes: 118000 * MB },
+  "D:\\ComfyUI-Backup": { files: 22, bytes: 96000 * MB },
 };
-const PEEK_DEFAULT = { folders: 8, files: 147, bytes: 1044000 * MB, yaml: false };
 
-// ── the engine ──────────────────────────────────────────────────────────────
+/** The paths a running ComfyUI holds open. */
+const LOCKED_PATHS = new Set(
+  buildWorld()
+    .contents.flatMap((c) => c.copies)
+    .filter((c) => c.blocked === "fileLocked")
+    .map((c) => c.absPath),
+);
 
-/** Every copy a running ComfyUI was holding becomes movable again. */
-function clearOpenBlocks(scan: ScanResult): ScanResult {
-  return {
-    ...scan,
-    models: scan.models.map((m) => ({
-      ...m,
-      placements: m.placements.map((p) =>
-        p.blocked?.kind === "file_open" ? { ...p, blocked: null } : p,
-      ),
-    })),
-  };
-}
+// ── events ──────────────────────────────────────────────────────────────────
 
 type Listener<T> = (value: T) => void;
 
@@ -157,141 +152,349 @@ class Emitter<T> {
   }
 }
 
+// ── the engine ──────────────────────────────────────────────────────────────
+
 export class FixtureEngine implements Engine {
-  private scan: ScanResult | null;
-  private machine: MachineState;
-  private disk: FakeFolder[] = FAKE_DISK.map((f) => ({ ...f, children: [...f.children] }));
-  private run: ApplyResult | null = null;
-  /** The scan as it was before the last run, so a revert has something to go back to. */
-  private beforeRun: ScanResult | null = null;
-  private freeBeforeRun = 0;
+  private world: World = buildWorld();
+  private disk: FakeFolder[] = DISK.map((f) => ({ ...f, children: [...f.children] }));
+  private vaultOpen = true;
+  private lastScan: ScanResult | null = null;
+  private plans = new Map<string, ConsolidationPlan>();
+  private applies: ApplyResult[] = [];
+  private worldBeforeApply: World | null = null;
+  private busy: AppState["busy"] = null;
 
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private applyTimer: ReturnType<typeof setInterval> | null = null;
-  private applyStopping = false;
+  private applyCancelling = false;
 
-  private scanProgress = new Emitter<ScanProgress>();
-  private scanFinished = new Emitter<ScanResult>();
-  private scanCancelled = new Emitter<void>();
-  private applyProgress = new Emitter<ApplyProgress>();
-  private applyFinished = new Emitter<ApplyResult>();
+  private scanProgressEvent = new Emitter<ScanProgress>();
+  private scanDoneEvent = new Emitter<ScanResult>();
+  private scanErrorEvent = new Emitter<VaultError>();
+  private applyProgressEvent = new Emitter<ApplyProgress>();
+  private applyDoneEvent = new Emitter<ApplyResult>();
+  private applyErrorEvent = new Emitter<VaultError>();
+  private revertProgressEvent = new Emitter<ApplyProgress>();
+  private revertDoneEvent = new Emitter<ApplyResult>();
+  private revertErrorEvent = new Emitter<VaultError>();
 
   constructor(options: { empty?: boolean } = {}) {
-    this.scan = options.empty === true ? null : fixtureScan();
-    this.machine = fixtureMachine();
-    if (options.empty === true) {
-      this.scan = null;
-      this.machine = fixtureMachine({ running: [] });
+    if (options.empty === true) this.emptyWorld();
+    else this.recordScan("scan-1");
+  }
+
+  private emptyWorld(): void {
+    this.world.installs = [];
+    this.world.contents = [];
+    this.world.vault.clear();
+    this.world.running = [];
+    this.lastScan = null;
+  }
+
+  private recordScan(scanId: string): ScanResult {
+    const result = scanResultOf(this.world, scanId);
+    this.lastScan = result;
+    this.world.installs = this.world.installs.map((install) => ({
+      ...install,
+      lastScanAt: result.finishedAt,
+      lastScanTotals:
+        result.perInstall.find((p) => p.installId === install.id) ?? null,
+    }));
+    return result;
+  }
+
+  // ── platform and state ────────────────────────────────────────────────────
+
+  async getPlatformReport(): Promise<PlatformReport> {
+    const supported = this.world.symlinksSupported;
+    return {
+      os: "windows",
+      symlinks: {
+        supported,
+        probeError: supported
+          ? null
+          : "A required privilege is not held by the client. (os error 1314)",
+        developerMode: supported,
+        elevated: false,
+        guidance: supported ? null : SYMLINK_GUIDANCE,
+      },
+      longPathsEnabled: true,
+    };
+  }
+
+  async getAppState(): Promise<AppState> {
+    return {
+      vaultRoot: this.vaultOpen ? VAULT_ROOT : null,
+      vaultInitialized: this.vaultOpen,
+      installCount: this.world.installs.length,
+      platform: await this.getPlatformReport(),
+      settings: await this.getSettings(),
+      lastScanId: this.lastScan?.scanId ?? null,
+      lastPlanId: [...this.plans.keys()].at(-1) ?? null,
+      interruptedApplies: this.applies
+        .filter((a) => a.state === "interrupted")
+        .map((a) => a.applyId),
+      busy: this.busy,
+    };
+  }
+
+  async selectVault(path: string): Promise<VaultInfo> {
+    this.vaultOpen = true;
+    const stored = [...this.world.vault.keys()].reduce(
+      (sum, sha) =>
+        sum + (this.world.contents.find((c) => c.sha256 === sha)?.bytes ?? 0),
+      0,
+    );
+    return {
+      root: path,
+      createdAt: "2026-09-11T10:06:00.000Z",
+      volume: VAULT_VOLUME,
+      freeBytes: this.world.freeBytes,
+      totalBytes: VAULT_TOTAL_BYTES,
+      fileCount: this.world.vault.size,
+      totalStoredBytes: stored,
+      schemaVersion: 1,
+    };
+  }
+
+  async getSettings(): Promise<Settings> {
+    return {
+      metadataLookupsEnabled: this.world.metadataLookupsEnabled,
+      civitaiApiKey: null,
+      hashCacheEnabled: true,
+      scanExtensions: [
+        ".safetensors", ".ckpt", ".pt", ".pth", ".bin",
+        ".gguf", ".onnx", ".pt2", ".sft", ".pkl",
+      ],
+      minFileSizeBytes: 1048576,
+      followExtraModelPaths: true,
+      scanOutputModelDirs: true,
+    };
+  }
+
+  async updateSettings(patch: Partial<Settings>): Promise<Settings> {
+    if (patch.metadataLookupsEnabled !== undefined) {
+      this.world.metadataLookupsEnabled = patch.metadataLookupsEnabled;
     }
+    return this.getSettings();
   }
 
-  async loadScan(): Promise<ScanResult | null> {
-    return this.scan;
+  // ── installs ──────────────────────────────────────────────────────────────
+
+  async validateInstallPath(path: string): Promise<InstallCandidate> {
+    const folder = this.disk.find((f) => f.path === path);
+    if (!folder || folder.readable === false) {
+      return invalidCandidate("ComfyVault could not read that folder.");
+    }
+    if (!folder.children.some((c) => leafOf(c).toLowerCase() === "models")) {
+      return invalidCandidate("No models folder was found inside that folder.");
+    }
+    return {
+      valid: true,
+      root: path,
+      nestedDepth: 0,
+      markersFound: [
+        "main.py", "nodes.py", "folder_paths.py", "execution.py",
+        "server.py", "comfy/", "comfy_extras/",
+      ],
+      markersMissing: [],
+      contentCheckPassed: true,
+      otherCandidates: [],
+      version: "0.29.1",
+      versionSource: "comfyui_version.py",
+      modelsDir: `${path}\\models`,
+      modelsDirExists: true,
+      extraPathsFile: null,
+      extraPaths: [],
+      extraPathsError: null,
+      outputModelDirs: [],
+      reason: null,
+    };
   }
 
-  async readMachine(): Promise<MachineState> {
-    return this.machine;
+  /** What the picker shows about a folder it has not registered yet. */
+  peekAt(path: string): { files: number; bytes: number } {
+    return PEEK[path] ?? { files: 147, bytes: 1044000 * MB };
+  }
+
+  async registerInstall(path: string, label?: string): Promise<Install> {
+    const candidate = await this.validateInstallPath(path);
+    if (!candidate.valid) {
+      throw error("notAComfyInstall", candidate.reason ?? "Not a ComfyUI install.");
+    }
+    if (this.world.installs.some((i) => i.root.toLowerCase() === path.toLowerCase())) {
+      throw error("alreadyRegistered", "This install is registered already.");
+    }
+    const install: Install = {
+      id: leafOf(path).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      label: label ?? (leafOf(path).replace(/^ComfyUI-?/i, "") || leafOf(path)),
+      registeredPath: path,
+      root: path,
+      modelsDir: `${path}\\models`,
+      version: candidate.version,
+      versionSource: candidate.versionSource,
+      extraPaths: candidate.extraPaths,
+      outputModelDirs: candidate.outputModelDirs,
+      addedAt: new Date().toISOString(),
+      lastScanAt: null,
+      lastScanTotals: null,
+    };
+    this.world.installs = [...this.world.installs, install];
+    return install;
+  }
+
+  async listInstalls(): Promise<Install[]> {
+    return this.world.installs;
+  }
+
+  async refreshInstall(id: string): Promise<Install> {
+    const install = this.world.installs.find((i) => i.id === id);
+    if (!install) throw error("notFound", "That install is not registered.");
+    return install;
+  }
+
+  async updateInstall(id: string, label: string): Promise<Install> {
+    this.world.installs = this.world.installs.map((i) =>
+      i.id === id ? { ...i, label } : i,
+    );
+    return this.refreshInstall(id);
+  }
+
+  async unregisterInstall(
+    id: string,
+  ): Promise<{ removed: true; linksLeftInPlace: number }> {
+    const linksLeftInPlace = this.world.links.filter((l) => l.installId === id).length;
+    this.world.installs = this.world.installs.filter((i) => i.id !== id);
+    this.world.contents = this.world.contents.map((c) => ({
+      ...c,
+      copies: c.copies.filter((copy) => copy.installId !== id),
+    }));
+    this.world.links = this.world.links.filter((l) => l.installId !== id);
+    this.recordScan(this.lastScan?.scanId ?? "scan-1");
+    return { removed: true, linksLeftInPlace };
+  }
+
+  async listInstallModelDirs(id: string): Promise<ModelDirNode[]> {
+    const install = this.world.installs.find((i) => i.id === id);
+    if (!install) throw error("notFound", "That install is not registered.");
+    return [
+      {
+        relPath: "models",
+        absPath: install.modelsDir,
+        category: "",
+        origin: "modelsDir",
+        fileCount: 0,
+        children: MODEL_DIRS.map((d) => ({
+          relPath: `models/${d}`,
+          absPath: `${install.modelsDir}\\${d}`,
+          category: d,
+          origin: "modelsDir" as const,
+          fileCount: 0,
+          children: [],
+        })),
+      },
+    ];
+  }
+
+  // ── directories, for the folder picker ────────────────────────────────────
+
+  async listDirectory(path: string | null): Promise<DirectoryEntry[]> {
+    if (path === null) {
+      return this.disk
+        .filter((f) => /^[A-Za-z]:\\$/.test(f.path))
+        .map((f) => ({
+          path: f.path,
+          name: f.path,
+          isDrive: true,
+          readable: true,
+          hasChildren: f.children.length > 0,
+        }));
+    }
+    const folder = this.disk.find((f) => f.path === path);
+    if (!folder || folder.readable === false) return [];
+    return folder.children.map((child) => {
+      const node = this.disk.find((f) => f.path === child);
+      return {
+        path: child,
+        name: leafOf(child),
+        isDrive: false,
+        readable: node?.readable !== false,
+        hasChildren: (node?.children.length ?? 0) > 0,
+      };
+    });
+  }
+
+  async createDirectory(parent: string, name: string): Promise<{ path: string }> {
+    const folder = this.disk.find((f) => f.path === parent);
+    if (!folder) throw error("notFound", "That folder is not there any more.");
+    if (folder.readable === false) {
+      throw error("permissionDenied", "Windows refused to write there.");
+    }
+    const path = joinPath(parent, name);
+    if (this.disk.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
+      throw error("conflict", `There is already a folder called ${name} here.`);
+    }
+    folder.children.push(path);
+    this.disk.push({ path, children: [] });
+    return { path };
   }
 
   // ── scan ──────────────────────────────────────────────────────────────────
 
-  async startScan(): Promise<void> {
-    this.stopScanTimer();
-    const models = this.scan?.models ?? FIXTURE_MODELS;
-    const filesToHash = models.reduce((s, m) => s + m.placements.length, 0);
-    const bytesToHash = models.reduce(
-      (s, m) => s + m.bytes * Math.max(m.placements.length, 1),
-      0,
-    );
+  async startScan(): Promise<{ scanId: string }> {
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
+    const scanId = `scan-${Date.now()}`;
+    this.busy = { kind: "scan", id: scanId };
+    const entries = scanEntriesOf(this.world);
+    const filesToHash = entries.length;
+    const bytesToHash = entries.reduce((s, e) => s + e.sizeBytes, 0);
     const started = Date.now();
 
     this.scanTimer = setInterval(() => {
       const elapsed = Date.now() - started;
       const overall = Math.min(1, elapsed / SCAN_MS);
-      this.scanProgress.emit(
-        this.buildScanProgress(overall, models, filesToHash, bytesToHash),
-      );
+      const phase: ScanProgress["phase"] =
+        overall < 0.2 ? "enumerating" : overall < 0.95 ? "hashing" : "finalizing";
+      const hashed = Math.max(0, Math.min(1, (overall - 0.2) / 0.75));
+      const at = Math.min(entries.length - 1, Math.floor(hashed * entries.length));
+      const entry = entries[at];
+
+      this.scanProgressEvent.emit({
+        scanId,
+        phase,
+        installId: entry?.installId ?? null,
+        installLabel:
+          this.world.installs.find((i) => i.id === entry?.installId)?.label ?? null,
+        filesSeen:
+          phase === "enumerating"
+            ? Math.round(filesToHash * (overall / 0.2))
+            : filesToHash + COUNTED_NEVER_MOVED.customNodeFiles +
+              COUNTED_NEVER_MOVED.hfCacheFiles,
+        filesToHash,
+        filesHashed: Math.round(filesToHash * hashed),
+        bytesToHash,
+        bytesHashed: Math.round(bytesToHash * hashed),
+        bytesFromCache: 0,
+        currentPath: phase === "hashing" ? (entry?.absPath ?? null) : null,
+        elapsedMs: elapsed,
+        etaMs: Math.max(0, SCAN_MS - elapsed),
+      });
+
       if (overall >= 1) {
         this.stopScanTimer();
-        const result = fixtureScan(models);
-        this.scan = result;
-        this.scanFinished.emit(result);
+        this.busy = null;
+        this.scanDoneEvent.emit(this.recordScan(scanId));
       }
     }, TICK_MS);
+
+    return { scanId };
   }
 
-  private buildScanProgress(
-    overall: number,
-    models: readonly Model[],
-    filesToHash: number,
-    bytesToHash: number,
-  ): ScanProgress {
-    const step = SCAN_STEPS.find((s) => overall < s.end) ?? SCAN_STEPS[SCAN_STEPS.length - 1]!;
-    const hashStart = SCAN_STEPS[2]!.end;
-    const hashEnd = SCAN_STEPS[3]!.end;
-    const hashed = Math.max(
-      0,
-      Math.min(1, (overall - hashStart) / (hashEnd - hashStart)),
-    );
-    const done = (id: ScanStepId) =>
-      overall >= (SCAN_STEPS.find((s) => s.id === id)?.end ?? 1);
-
-    const index = Math.min(
-      models.length - 1,
-      Math.floor(hashed * models.length),
-    );
-    const model = models[index];
-    const placement = model?.placements[0];
-
-    const duplicateCopies = models.reduce(
-      (s, m) => s + m.placements.filter((p) => p.blocked === null).length - (m.placements.some((p) => p.blocked === null) ? 1 : 0),
-      0,
-    );
-    const reclaim = models.reduce((s, m) => {
-      const live = m.placements.filter((p) => p.blocked === null).length;
-      return s + Math.max(0, live - 1) * m.bytes;
-    }, 0);
-
-    return {
-      currentStep: step.id,
-      overall,
-      etaSeconds: Math.max(0, Math.round((SCAN_MS * (1 - overall)) / 1000)),
-      instancesRead: done("read_folders") ? this.instanceCount() : null,
-      extraFolders: done("read_yaml")
-        ? (this.scan?.instances.flatMap((i) => i.extraModelPaths ?? []) ?? [])
-        : null,
-      filesListed: done("list_files") ? filesToHash : null,
-      bytesListed: done("list_files") ? bytesToHash : null,
-      filesHashed: Math.round(filesToHash * hashed),
-      filesToHash,
-      bytesHashed: Math.round(bytesToHash * hashed),
-      bytesToHash,
-      civitaiMatched: done("civitai")
-        ? models.filter((m) => m.civitai !== null).length
-        : null,
-      current:
-        model && hashed > 0 && hashed < 1
-          ? { name: model.filename, path: placement?.fullPath ?? model.filename }
-          : null,
-      found:
-        hashed > 0
-          ? {
-              models: Math.round(models.length * hashed),
-              duplicateCopies: Math.round(duplicateCopies * hashed),
-              reclaimableBytes: Math.round(reclaim * hashed),
-            }
-          : null,
-    };
-  }
-
-  private instanceCount(): number {
-    return this.scan?.instances.length ?? 0;
-  }
-
-  async cancelScan(): Promise<void> {
-    if (!this.scanTimer) return;
+  async cancelScan(scanId: string): Promise<{ cancelled: true }> {
     this.stopScanTimer();
-    this.scanCancelled.emit();
+    this.busy = null;
+    this.scanDoneEvent.emit(scanResultOf(this.world, scanId, true));
+    return { cancelled: true };
   }
 
   private stopScanTimer(): void {
@@ -299,190 +502,187 @@ export class FixtureEngine implements Engine {
     this.scanTimer = null;
   }
 
+  async getLastScan(): Promise<ScanResult | null> {
+    return this.lastScan;
+  }
+
+  async getScanEntries(args: {
+    scanId: string;
+    offset: number;
+    limit: number;
+  }): Promise<ScanEntryPage> {
+    const all = scanEntriesOf(this.world);
+    return {
+      total: all.length,
+      offset: args.offset,
+      entries: all.slice(args.offset, args.offset + Math.min(args.limit, 1000)),
+    };
+  }
+
   onScanProgress(fn: (p: ScanProgress) => void): Unsubscribe {
-    return this.scanProgress.on(fn);
+    return this.scanProgressEvent.on(fn);
   }
-  onScanFinished(fn: (r: ScanResult) => void): Unsubscribe {
-    return this.scanFinished.on(fn);
+  onScanDone(fn: (r: ScanResult) => void): Unsubscribe {
+    return this.scanDoneEvent.on(fn);
   }
-  onScanCancelled(fn: () => void): Unsubscribe {
-    return this.scanCancelled.on(() => fn());
+  onScanError(fn: (e: VaultError) => void): Unsubscribe {
+    return this.scanErrorEvent.on(fn);
+  }
+
+  // ── plan ──────────────────────────────────────────────────────────────────
+
+  async buildPlan(scanId: string): Promise<ConsolidationPlan> {
+    const planId = `plan-${scanId}-${this.world.symlinksSupported ? "links" : "nolinks"}-${this.world.vault.size}`;
+    const plan = planOf(this.world, planId, scanId);
+    this.plans.set(planId, plan);
+    return plan;
+  }
+
+  async getPlan(planId: string): Promise<ConsolidationPlan> {
+    const plan = this.plans.get(planId);
+    if (!plan) throw error("notFound", "That plan is gone. Run the scan again.");
+    return plan;
   }
 
   // ── apply ─────────────────────────────────────────────────────────────────
 
-  async startApply(modelIds: string[]): Promise<void> {
-    const scan = this.scan;
-    if (!scan) return;
-    this.stopApplyTimer();
-    this.applyStopping = false;
-    this.beforeRun = structuredClone(scan);
-    this.freeBeforeRun = this.machine.vaultDrive.freeBytes;
+  async startApply(args: {
+    planId: string;
+    groupIds: string[];
+  }): Promise<{ applyId: string }> {
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
+    const plan = await this.getPlan(args.planId);
+    const groups = plan.groups.filter((g) => args.groupIds.includes(g.groupId));
+    const applyId = `apply-${Date.now()}`;
+    this.busy = { kind: "apply", id: applyId };
+    this.applyCancelling = false;
+    this.worldBeforeApply = cloneWorld(this.world);
+    const freeBefore = this.world.freeBytes;
 
-    const plan = derivePlan(scan, this.machine);
-    const picked = modelIds
-      .map((id) => plan.byId.get(id))
-      .filter((m): m is NonNullable<typeof m> => m != null && m.live.length > 0);
-
-    const filesTotal = picked.length;
-    const linksTotal = picked.reduce((s, m) => s + m.live.length, 0);
-    const bytesTotal = picked.reduce((s, m) => s + m.reclaimBytes, 0);
-    // The engine stops on a file that changed since the report was made.
-    const skipAt = picked.length > 7 ? 6 : -1;
-
+    const bytesToMove = groups.reduce((s, g) => s + g.sizeBytes, 0);
     const started = Date.now();
-    const log: MoveLogLine[] = [];
-    const skipped: SkippedFile[] = [];
-    let emitted = 0;
+    // One file is written to between the report and the run, as really happens.
+    const changesAt = groups.length > 7 ? 6 : -1;
+    let reached = 0;
 
     this.applyTimer = setInterval(() => {
       const elapsed = Date.now() - started;
-      const target = this.applyStopping
-        ? Math.min(1, (elapsed + APPLY_MS * 0.06) / APPLY_MS)
-        : Math.min(1, elapsed / APPLY_MS);
-      const overall = this.applyStopping
-        ? Math.min(1, elapsed / (APPLY_MS * 0.5))
-        : target;
-      const upto = Math.min(picked.length, Math.floor(overall * picked.length));
+      const span = this.applyCancelling ? APPLY_MS * 0.35 : APPLY_MS;
+      const overall = Math.min(1, elapsed / span);
+      const upto = Math.min(groups.length, Math.floor(overall * groups.length));
 
-      while (emitted < upto) {
-        const model = picked[emitted]!;
-        const at = new Date(started + emitted * 900).toISOString();
-        if (emitted === skipAt) {
-          skipped.push({
-            modelId: model.id,
-            filename: model.filename,
-            bytes: model.bytes,
-            reason: { kind: "changed_since_report" },
-          });
-          log.push({
-            at,
-            verb: "skip",
-            detail: `${model.filename}  \u00b7  changed since the report`,
-          });
-        } else {
-          const keeper = model.keeper!;
-          log.push({
-            at,
-            verb: "move",
-            detail: `${this.instanceName(keeper.instanceId)}\\${keeper.folder}${keeper.filename}  \u2192  vault\\${model.folder}\\${model.vaultName}`,
-          });
-          for (const p of model.live) {
-            log.push({
-              at,
-              verb: "link",
-              detail: `${this.instanceName(p.instanceId)}\\${p.folder}${p.filename}`,
-            });
-          }
-          for (const p of model.blocked) {
-            log.push({
-              at,
-              verb: "skip",
-              detail: `${this.instanceName(p.instanceId)}\\${p.folder}${p.filename}  \u00b7  ${p.blocked?.kind ?? "blocked"}`,
-            });
-          }
-        }
-        emitted += 1;
+      while (reached < upto) {
+        const group = groups[reached]!;
+        if (reached !== changesAt) this.commitGroup(group);
+        reached += 1;
       }
 
-      const movedModels = picked.slice(0, emitted).filter((_, i) => i !== skipAt);
-      const progress: ApplyProgress = {
-        overall,
-        etaSeconds: Math.max(0, Math.round((APPLY_MS * (1 - overall)) / 1000)),
-        filesMoved: movedModels.length,
-        filesTotal,
-        linksCreated: movedModels.reduce((s, m) => s + m.live.length, 0),
-        linksTotal,
-        bytesMoved: movedModels.reduce((s, m) => s + m.reclaimBytes, 0),
-        bytesTotal,
-        current: this.currentMove(picked, overall),
-        skipped: [...skipped],
-        log: [...log],
-        stopping: this.applyStopping,
-      };
-      this.applyProgress.emit(progress);
+      const done = groups.slice(0, reached).filter((_, i) => i !== changesAt);
+      const current = groups[Math.min(groups.length - 1, reached)];
+      this.applyProgressEvent.emit({
+        applyId,
+        phase: overall < 0.02 ? "preflight" : overall >= 1 ? "finalizing" : "applying",
+        groupIndex: reached,
+        groupTotal: groups.length,
+        currentGroupId: current?.groupId ?? null,
+        currentPath: current?.source.absPath ?? null,
+        step: "moving",
+        bytesMoved: done.reduce((s, g) => s + g.sizeBytes, 0),
+        bytesToMove,
+        bytesFreed: done.reduce((s, g) => s + g.bytesFreed, 0),
+        filesMoved: done.length,
+        linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
+        failures: changesAt >= 0 && reached > changesAt ? 1 : 0,
+        elapsedMs: elapsed,
+        etaMs: Math.max(0, span - elapsed),
+      });
 
       if (overall >= 1) {
         this.stopApplyTimer();
-        this.finishApply(picked, log, skipped, progress);
+        this.busy = null;
+        const failed = changesAt >= 0 ? groups[changesAt] : undefined;
+        const result: ApplyResult = {
+          applyId,
+          planId: args.planId,
+          state: this.applyCancelling
+            ? "cancelled"
+            : failed
+              ? "completedWithErrors"
+              : "completed",
+          startedAt: new Date(started).toISOString(),
+          finishedAt: new Date().toISOString(),
+          groupsRequested: groups.length,
+          groupsApplied: done.length,
+          groupsFailed: failed ? 1 : 0,
+          bytesFreed: this.world.freeBytes - freeBefore,
+          filesMoved: done.length,
+          linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
+          failures: failed
+            ? [
+                {
+                  groupId: failed.groupId,
+                  absPath: failed.source.absPath,
+                  reason: "fileChanged",
+                  detail:
+                    "The size or modification time no longer matches what the scan recorded.",
+                },
+              ]
+            : [],
+          revertible: true,
+        };
+        this.applies = [result, ...this.applies];
+        this.recordScan(this.lastScan?.scanId ?? "scan-1");
+        this.applyDoneEvent.emit(result);
       }
     }, TICK_MS);
+
+    return { applyId };
   }
 
-  private currentMove(
-    picked: readonly PlannedModel[],
-    overall: number,
-  ): ApplyProgress["current"] {
-    if (picked.length === 0) return null;
-    const model = picked[Math.min(picked.length - 1, Math.floor(overall * picked.length))]!;
-    const keeper = model.keeper;
-    const link = model.liveExtras[0] ?? keeper;
-    if (!keeper || !link) return null;
-    return {
-      name: model.filename,
-      fromInstance: this.instanceName(keeper.instanceId),
-      fromPath: keeper.folder,
-      toPath: model.vaultPath,
-      linkInstance: this.instanceName(link.instanceId),
-      linkPath: link.folder,
+  /** Move the source into the vault and leave a link at every path it covered. */
+  private commitGroup(group: PlanGroup): void {
+    const content = this.world.contents.find((c) => c.sha256 === group.sha256);
+    if (!content) return;
+    const vaultName = fileNameOf(group.vaultRelPath);
+    const entry = this.world.vault.get(group.sha256) ?? {
+      sha256: group.sha256,
+      canonicalName: vaultName,
+      aliases: [],
+      addedAt: new Date().toISOString(),
     };
+    for (const link of group.links) {
+      if (
+        link.linkName !== entry.canonicalName &&
+        !entry.aliases.includes(link.linkName)
+      ) {
+        entry.aliases.push(link.linkName);
+      }
+    }
+    this.world.vault.set(group.sha256, entry);
+
+    for (const copy of content.copies) {
+      if (copy.blocked || copy.isLink) continue;
+      if (!group.links.some((l) => l.absPath === copy.absPath)) continue;
+      copy.isLink = true;
+      this.world.links.push({
+        id: `link-${this.world.links.length + 1}`,
+        installId: copy.installId,
+        absPath: copy.absPath,
+        relPath: copy.relPath,
+        linkName: copy.name,
+        sha256: group.sha256,
+        vaultRelPath: group.vaultRelPath,
+        createdAt: new Date().toISOString(),
+        createdBy: "apply",
+        state: "ok",
+      });
+    }
+    this.world.freeBytes += group.bytesFreed;
   }
 
-  private finishApply(
-    picked: readonly PlannedModel[],
-    log: MoveLogLine[],
-    skipped: SkippedFile[],
-    progress: ApplyProgress,
-  ): void {
-    const scan = this.scan;
-    if (!scan) return;
-    const skippedIds = new Set(skipped.map((s) => s.modelId));
-    const movedIds = new Set(
-      picked.filter((m) => !skippedIds.has(m.id)).map((m) => m.id),
-    );
-
-    // The files are in the vault now and every place they were holds a link.
-    const now = new Date().toISOString();
-    const models = scan.models.map((m) => {
-      if (!movedIds.has(m.id)) return m;
-      const placements: Placement[] = m.placements.map((p) =>
-        p.blocked === null ? { ...p, isLink: true } : p,
-      );
-      return { ...m, placements, inVaultSince: now };
-    });
-    this.scan = { ...scan, models };
-    this.machine = {
-      ...this.machine,
-      vaultDrive: {
-        ...this.machine.vaultDrive,
-        freeBytes: this.machine.vaultDrive.freeBytes + progress.bytesMoved,
-      },
-    };
-
-    const plan = derivePlan(this.scan, this.machine);
-    const result: ApplyResult = {
-      runId: `run-${Date.now()}`,
-      startedAt: log[0]?.at ?? now,
-      finishedAt: now,
-      filesMoved: progress.filesMoved,
-      linksCreated: progress.linksCreated,
-      bytesFreed: progress.bytesMoved,
-      renamedInVault: plan.clashes.reduce((s, g) => s + g.models.length - 1, 0),
-      leftAlone: {
-        files: plan.blocked.length,
-        bytes: plan.totals.blockedBytes,
-      },
-      skipped,
-      log,
-      logPath: `${this.machine.vaultPath}\\moves.log`,
-      revertable: true,
-    };
-    this.run = result;
-    this.applyFinished.emit(result);
-  }
-
-  async stopApply(): Promise<void> {
-    this.applyStopping = true;
+  async cancelApply(): Promise<{ cancelled: true }> {
+    this.applyCancelling = true;
+    return { cancelled: true };
   }
 
   private stopApplyTimer(): void {
@@ -490,380 +690,344 @@ export class FixtureEngine implements Engine {
     this.applyTimer = null;
   }
 
+  async getApplyResult(applyId: string): Promise<ApplyResult> {
+    const result = this.applies.find((a) => a.applyId === applyId);
+    if (!result) throw error("notFound", "That run is not on record.");
+    return result;
+  }
+
+  async listApplies(): Promise<ApplyResult[]> {
+    return this.applies;
+  }
+
+  async getInterruptedApplies(): Promise<InterruptedApply[]> {
+    return this.applies
+      .filter((a) => a.state === "interrupted")
+      .map((a) => ({
+        applyId: a.applyId,
+        planId: a.planId,
+        startedAt: a.startedAt,
+        stepsDone: a.groupsApplied,
+        stepsPending: a.groupsRequested - a.groupsApplied,
+        description:
+          "ComfyVault stopped part way through a run. Finishing it puts every remaining file where the plan said.",
+        affectedPaths: [],
+      }));
+  }
+
+  async resumeApply(applyId: string): Promise<{ applyId: string }> {
+    return { applyId };
+  }
+
+  async revertApply(applyId: string): Promise<{ applyId: string }> {
+    const before = this.worldBeforeApply;
+    if (!before) throw error("conflict", "There is nothing to put back.");
+    this.world = before;
+    this.worldBeforeApply = null;
+    this.applies = this.applies.map((a) =>
+      a.applyId === applyId ? { ...a, state: "reverted" as const, revertible: false } : a,
+    );
+    this.recordScan(this.lastScan?.scanId ?? "scan-1");
+    this.revertDoneEvent.emit(await this.getApplyResult(applyId));
+    return { applyId };
+  }
+
   onApplyProgress(fn: (p: ApplyProgress) => void): Unsubscribe {
-    return this.applyProgress.on(fn);
+    return this.applyProgressEvent.on(fn);
   }
-  onApplyFinished(fn: (r: ApplyResult) => void): Unsubscribe {
-    return this.applyFinished.on(fn);
+  onApplyDone(fn: (r: ApplyResult) => void): Unsubscribe {
+    return this.applyDoneEvent.on(fn);
   }
-
-  async lastRun(): Promise<ApplyResult | null> {
-    return this.run;
+  onApplyError(fn: (e: VaultError) => void): Unsubscribe {
+    return this.applyErrorEvent.on(fn);
   }
-
-  async revert(runId: string): Promise<void> {
-    if (!this.run || this.run.runId !== runId || !this.beforeRun) return;
-    this.scan = this.beforeRun;
-    this.machine = {
-      ...this.machine,
-      vaultDrive: { ...this.machine.vaultDrive, freeBytes: this.freeBeforeRun },
-    };
-    this.beforeRun = null;
-    this.run = null;
+  onRevertProgress(fn: (p: ApplyProgress) => void): Unsubscribe {
+    return this.revertProgressEvent.on(fn);
+  }
+  onRevertDone(fn: (r: ApplyResult) => void): Unsubscribe {
+    return this.revertDoneEvent.on(fn);
+  }
+  onRevertError(fn: (e: VaultError) => void): Unsubscribe {
+    return this.revertErrorEvent.on(fn);
   }
 
-  // ── folder picker ─────────────────────────────────────────────────────────
+  // ── links ─────────────────────────────────────────────────────────────────
 
-  async listFolder(
-    path: string | null,
-    purpose: PickerPurpose,
-  ): Promise<FolderEntry[]> {
-    if (path === null) {
-      if (purpose === "link") {
-        // A link belongs inside an install, so the picker starts at the model
-        // folders of the installs that are registered.
-        return (this.scan?.instances ?? []).map((i) => ({
-          path: `${i.path}\\models`,
-          name: `${i.name}  \\models`,
-          kind: "folder" as const,
-          looksLikeInstall: null,
-          readable: true,
-        }));
-      }
-      return this.disk
-        .filter((f) => /^[A-Za-z]:\\$/.test(f.path))
-        .map((f) => ({
-          path: f.path,
-          name: f.path,
-          kind: "drive" as const,
-          looksLikeInstall: null,
-          readable: true,
-        }));
+  async createLink(args: {
+    installId: string;
+    sha256: string;
+    relativeDir: string;
+    linkName?: string;
+  }): Promise<Link> {
+    const install = this.world.installs.find((i) => i.id === args.installId);
+    if (!install) throw error("notFound", "That install is not registered.");
+    const entry = this.world.vault.get(args.sha256);
+    if (!entry) throw error("notFound", "The vault does not hold that file.");
+    const linkName = args.linkName ?? entry.canonicalName;
+    const absPath = `${install.root}\\${args.relativeDir}\\${linkName}`;
+    if (this.world.links.some((l) => l.absPath === absPath)) {
+      throw error("conflict", "Something already sits at that name.");
     }
-    const folder = this.disk.find((f) => f.path === path);
-    if (!folder || folder.readable === false) return [];
-    return folder.children.map((child) => ({
-      path: child,
-      name: leafOf(child),
-      kind: "folder" as const,
-      looksLikeInstall:
-        purpose === "instance" ? this.hasModelsFolder(child) : null,
-      readable: this.disk.find((f) => f.path === child)?.readable !== false,
+    const link: Link = {
+      id: `link-${this.world.links.length + 1}`,
+      installId: args.installId,
+      absPath,
+      relPath: `${args.relativeDir}\\${linkName}`,
+      linkName,
+      sha256: args.sha256,
+      vaultRelPath: entry.canonicalName,
+      createdAt: new Date().toISOString(),
+      createdBy: "manual",
+      state: "ok",
+    };
+    this.world.links.push(link);
+    return link;
+  }
+
+  async removeLink(linkId: string): Promise<{ removed: true }> {
+    this.world.links = this.world.links.filter((l) => l.id !== linkId);
+    return { removed: true };
+  }
+
+  async createModelFolder(
+    installId: string,
+    relativeDir: string,
+  ): Promise<{ absPath: string; created: boolean }> {
+    const install = this.world.installs.find((i) => i.id === installId);
+    if (!install) throw error("notFound", "That install is not registered.");
+    return { absPath: `${install.root}\\${relativeDir}`, created: true };
+  }
+
+  async listLinks(filter?: { sha256?: string }): Promise<Link[]> {
+    return filter?.sha256
+      ? this.world.links.filter((l) => l.sha256 === filter.sha256)
+      : this.world.links;
+  }
+
+  // ── vault contents ────────────────────────────────────────────────────────
+
+  async listVaultFiles(args: {
+    offset: number;
+    limit: number;
+  }): Promise<VaultFilePage> {
+    const all = vaultFilesOf(this.world);
+    return {
+      total: all.length,
+      offset: args.offset,
+      files: all.slice(args.offset, args.offset + Math.min(args.limit, 1000)),
+    };
+  }
+
+  async listNameGroups(): Promise<NameGroup[]> {
+    return nameGroupsOf(this.world);
+  }
+
+  async setCanonicalName(sha256: string, name: string): Promise<VaultFile> {
+    const entry = this.world.vault.get(sha256);
+    if (!entry) throw error("notFound", "The vault does not hold that file.");
+    const names = [entry.canonicalName, ...entry.aliases];
+    if (!names.includes(name)) names.push(name);
+    entry.canonicalName = name;
+    entry.aliases = names.filter((n) => n !== name);
+    const file = vaultFilesOf(this.world).find((f) => f.sha256 === sha256);
+    if (!file) throw error("notFound", "The vault does not hold that file.");
+    return file;
+  }
+
+  async removeAlias(sha256: string, name: string): Promise<{ removed: true }> {
+    const entry = this.world.vault.get(sha256);
+    if (!entry) throw error("notFound", "The vault does not hold that file.");
+    if (entry.canonicalName === name) {
+      throw error("conflict", "That is the name the vault keeps.");
+    }
+    const used = this.world.links.filter(
+      (l) => l.sha256 === sha256 && l.linkName === name,
+    );
+    if (used.length > 0) {
+      throw error(
+        "conflict",
+        `${used.length} ${used.length === 1 ? "link resolves" : "links resolve"} through that name.`,
+      );
+    }
+    entry.aliases = entry.aliases.filter((n) => n !== name);
+    return { removed: true };
+  }
+
+  async listOrphans(): Promise<VaultFile[]> {
+    return vaultFilesOf(this.world).filter((f) => f.linkCount === 0);
+  }
+
+  async deleteVaultFile(
+    sha256: string,
+    confirm: string,
+  ): Promise<{ deleted: true; bytesFreed: number }> {
+    if (confirm !== sha256) {
+      throw error("invalidArgument", "The confirmation did not match.");
+    }
+    if (this.world.links.some((l) => l.sha256 === sha256)) {
+      throw error("conflict", "An install still links to that file.");
+    }
+    const content = this.world.contents.find((c) => c.sha256 === sha256);
+    this.world.vault.delete(sha256);
+    const bytesFreed = content?.bytes ?? 0;
+    this.world.freeBytes += bytesFreed;
+    return { deleted: true, bytesFreed };
+  }
+
+  async checkVaultHealth(): Promise<VaultHealth> {
+    return {
+      checkedLinks: this.world.links.length,
+      checkedFiles: this.world.vault.size,
+      danglingLinks: [],
+      replacedLinks: [],
+      missingVaultFiles: [],
+      foreignFiles: [],
+      ok: true,
+    };
+  }
+
+  // ── usage and metadata ────────────────────────────────────────────────────
+
+  async checkModelUsage(names: string[]): Promise<UsageResult[]> {
+    return names.map((name) => {
+      const content = this.world.contents.find(
+        (c) => c.filename === name || c.copies.some((copy) => copy.name === name),
+      );
+      const hits = content?.workflowHits ?? 0;
+      return {
+        name,
+        used: hits > 0,
+        matches: Array.from({ length: Math.min(hits, 4) }, (_, i) => ({
+          installId: "prod",
+          installLabel: "Production",
+          workflowPath: `C:\\ComfyUI-Alpha\\user\\default\\workflows\\flow-${i + 1}.json`,
+          workflowName: `flow-${i + 1}.json`,
+        })),
+        method: USAGE_METHOD,
+      };
+    });
+  }
+
+  async getMetadata(sha256: string): Promise<ModelMetadata | null> {
+    if (!this.world.metadataLookupsEnabled) return null;
+    return this.world.contents.find((c) => c.sha256 === sha256)?.metadata ?? null;
+  }
+
+  async fetchMetadataBatch(hashes: string[]): Promise<ModelMetadata[]> {
+    const out: ModelMetadata[] = [];
+    for (const sha of hashes) {
+      const found = await this.getMetadata(sha);
+      if (found) out.push(found);
+    }
+    return out;
+  }
+
+  // ── running programs ──────────────────────────────────────────────────────
+
+  async getRunningComfy(): Promise<RunningComfy[]> {
+    return this.world.running.map((installId, i) => {
+      const root = this.world.installs.find((x) => x.id === installId)?.root ?? null;
+      return {
+        pid: 18244 + i,
+        name: "python.exe",
+        exePath: root ? `${root}\\python_embeded\\python.exe` : null,
+        cwd: root,
+        commandLine: ["python.exe", "main.py"],
+        matchedInstallIds: [installId],
+        matchReason: "exeUnderRoot" as const,
+      };
+    });
+  }
+
+  async checkLockedFiles(paths: string[]): Promise<LockState[]> {
+    return paths.map((path) => ({
+      path,
+      locked: LOCKED_PATHS.has(path) && this.world.running.length > 0,
+      checkable: true,
+      detail: null,
     }));
   }
 
-  private hasModelsFolder(path: string): boolean {
-    const folder = this.disk.find((f) => f.path === path);
-    return folder?.children.some((c) => leafOf(c).toLowerCase() === "models") ?? false;
-  }
+  // ── the window ────────────────────────────────────────────────────────────
 
-  async checkFolder(path: string, purpose: PickerPurpose): Promise<FolderCheck> {
-    if (purpose === "instance") {
-      const existing = this.scan?.instances.find(
-        (i) => i.path.toLowerCase() === path.toLowerCase(),
-      );
-      if (existing) {
-        return { for: "instance", ok: false, reason: "already_registered", instanceId: existing.id };
-      }
-      const folder = this.disk.find((f) => f.path === path);
-      if (folder?.readable === false) {
-        return { for: "instance", ok: false, reason: "unreadable" };
-      }
-      if (!this.hasModelsFolder(path)) {
-        return { for: "instance", ok: false, reason: "no_models_folder" };
-      }
-      const peek = PEEK[path] ?? PEEK_DEFAULT;
-      return {
-        for: "instance",
-        ok: true,
-        modelFolders: peek.folders,
-        files: peek.files,
-        bytes: peek.bytes,
-        hasExtraModelPaths: peek.yaml,
-        onDifferentDrive:
-          path.slice(0, 2).toUpperCase() !==
-          this.machine.vaultPath.slice(0, 2).toUpperCase(),
-        wasRemoved: this.scan?.removedInstance?.path === path,
-      };
-    }
-
-    if (purpose === "vault") {
-      const inside = this.scan?.instances.find((i) =>
-        path.toLowerCase().startsWith(i.path.toLowerCase() + "\\"),
-      );
-      if (inside) {
-        return { for: "vault", ok: false, reason: "inside_an_install", instanceId: inside.id };
-      }
-      const folder = this.disk.find((f) => f.path === path);
-      if (folder?.readable === false) {
-        return { for: "vault", ok: false, reason: "not_writable" };
-      }
-      const drive = path.slice(0, 2).toUpperCase();
-      const others = (this.scan?.instances ?? []).filter(
-        (i) => i.path.slice(0, 2).toUpperCase() !== drive,
-      );
-      return {
-        for: "vault",
-        ok: true,
-        drive,
-        freeBytes:
-          drive === this.machine.vaultDrive.letter
-            ? this.machine.vaultDrive.freeBytes
-            : 421_000 * MB,
-        sameDriveAsInstalls: others.length === 0,
-        installsOnOtherDrives: others.map((i) => i.name),
-      };
-    }
-
-    const owner = this.scan?.instances.find((i) =>
-      path.toLowerCase().startsWith(i.path.toLowerCase() + "\\"),
-    );
-    if (!owner) return { for: "link", ok: false, reason: "outside_every_install" };
-    const folder = this.disk.find((f) => f.path === path);
-    if (folder?.readable === false) {
-      return { for: "link", ok: false, reason: "not_writable" };
-    }
-    return { for: "link", ok: true, instanceId: owner.id };
-  }
-
-  async createFolder(parent: string, name: string): Promise<CreateFolderResult> {
-    const parentFolder = this.disk.find((f) => f.path === parent);
-    if (!parentFolder) return { ok: false, reason: "invalid_name" };
-    if (parentFolder.readable === false) return { ok: false, reason: "denied" };
-    const path = joinPath(parent, name);
-    if (this.disk.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
-      return { ok: false, reason: "exists" };
-    }
-    (parentFolder.children as string[]).push(path);
-    this.disk.push({ path, children: [] });
-    return { ok: true, path };
-  }
-
-  // ── changes the person makes ───────────────────────────────────────────────
-
-  async addInstance(path: string): Promise<ScanResult> {
-    const scan = this.scan ?? fixtureScan([]);
-    const id = leafOf(path).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const instance = {
-      id,
-      name: leafOf(path).replace(/^ComfyUI-?/i, "") || leafOf(path),
-      path,
-      running: false,
-      extraModelPaths: null,
-      addedAt: new Date().toISOString(),
-    };
-    this.scan = { ...scan, instances: [...scan.instances, instance] };
-    return this.scan;
-  }
-
-  async setInstancePath(id: InstanceId, path: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    this.scan = {
-      ...scan,
-      instances: scan.instances.map((i) => (i.id === id ? { ...i, path } : i)),
-    };
-    return this.scan;
-  }
-
-  async removeInstance(id: InstanceId): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    this.scan = {
-      ...scan,
-      instances: scan.instances.filter((i) => i.id !== id),
-      models: scan.models.map((m) => ({
-        ...m,
-        placements: m.placements.filter((p) => p.instanceId !== id),
-      })),
-    };
-    return this.scan;
-  }
-
-  async setVaultPath(path: string): Promise<MachineState> {
-    this.machine = { ...this.machine, vaultPath: path };
-    return this.machine;
-  }
-
-  async setCivitaiEnabled(on: boolean): Promise<void> {
-    if (this.scan) this.scan = { ...this.scan, civitaiEnabled: on };
-  }
-
-  async setVaultName(modelId: string, name: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    this.scan = {
-      ...scan,
-      models: scan.models.map((m) =>
-        m.id === modelId ? { ...m, filename: name } : m,
-      ),
-    };
-    return this.scan;
-  }
-
-  async dropName(modelId: string, name: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    this.scan = {
-      ...scan,
-      models: scan.models.map((m) =>
-        m.id === modelId
-          ? { ...m, placements: m.placements.filter((p) => p.filename !== name) }
-          : m,
-      ),
-    };
-    return this.scan;
-  }
-
-  async addLink(modelId: string, folder: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    const owner = scan.instances.find((i) =>
-      folder.toLowerCase().startsWith(i.path.toLowerCase() + "\\"),
-    );
-    this.scan = {
-      ...scan,
-      models: scan.models.map((m) => {
-        if (m.id !== modelId || !owner) return m;
-        const relative = `${folder.slice(owner.path.length + 1)}\\`;
-        return {
-          ...m,
-          placements: [
-            ...m.placements,
-            {
-              id: `${m.id}-link-${m.placements.length}`,
-              instanceId: owner.id,
-              folder: relative,
-              filename: m.filename,
-              fullPath: `${folder}\\${m.filename}`,
-              isLink: true,
-              blocked: null,
-            },
-          ],
-        };
-      }),
-    };
-    return this.scan;
-  }
-
-  async deleteOrphan(modelId: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    const model = scan.models.find((m) => m.id === modelId);
-    this.scan = { ...scan, models: scan.models.filter((m) => m.id !== modelId) };
-    if (model) {
-      this.machine = {
-        ...this.machine,
-        vaultDrive: {
-          ...this.machine.vaultDrive,
-          freeBytes: this.machine.vaultDrive.freeBytes + model.bytes,
-        },
-      };
-    }
-    return this.scan;
-  }
-
-  async markCopyInstead(modelId: string, placementId: string): Promise<ScanResult> {
-    const scan = this.scan;
-    if (!scan) throw new Error("nothing scanned");
-    this.scan = {
-      ...scan,
-      models: scan.models.map((m) =>
-        m.id === modelId
-          ? {
-              ...m,
-              placements: m.placements.map((p) =>
-                p.id === placementId && p.blocked?.kind === "other_drive"
-                  ? { ...p, blocked: null }
-                  : p,
-              ),
-            }
-          : m,
-      ),
-    };
-    return this.scan;
-  }
-
-  async openWindowsDeveloperSettings(): Promise<void> {
-    // The real engine opens ms-settings:developers. There is no Windows here.
-  }
-
-  async openInExplorer(): Promise<void> {
-    // The real engine opens Explorer. There is no Explorer here.
-  }
-
+  async openExternal(): Promise<void> {}
+  async revealInFileManager(): Promise<void> {}
   async windowMinimize(): Promise<void> {}
   async windowToggleMaximize(): Promise<void> {}
   async windowClose(): Promise<void> {}
 
-  // ── development affordances, used by the dev panel only ───────────────────
+  // ── development affordances ───────────────────────────────────────────────
 
-  /** Flip Developer Mode, the way turning it on in Windows would. */
-  devSetDeveloperMode(on: boolean): void {
-    this.machine = { ...this.machine, developerMode: on };
+  /** Turn Windows Developer Mode on or off, which only Windows can really do. */
+  devSetSymlinksSupported(on: boolean): void {
+    this.world.symlinksSupported = on;
   }
 
-  /** Close or reopen ComfyUI, the way the person would. */
+  /** Close or start ComfyUI, which only the person can really do. */
   devSetComfyRunning(running: boolean): void {
-    this.machine = {
-      ...this.machine,
-      running: running ? [FIXTURE_COMFY_PROCESS] : [],
-    };
-    const scan = this.scan;
-    if (!scan) return;
-    const withInstances: ScanResult = {
-      ...scan,
-      instances: scan.instances.map((i) =>
-        i.id === FIXTURE_COMFY_PROCESS.instanceId ? { ...i, running } : i,
-      ),
-    };
-    this.scan = running
-      ? this.restoreOpenBlocks(withInstances)
-      : clearOpenBlocks(withInstances);
+    this.world.running = running ? ["prod"] : [];
+    for (const content of this.world.contents) {
+      for (const copy of content.copies) {
+        if (copy.blocked === "fileLocked" && !running) copy.blocked = null;
+        else if (copy.blocked === null && running && LOCKED_PATHS.has(copy.absPath)) {
+          copy.blocked = "fileLocked";
+        }
+      }
+    }
+    this.recordScan(this.lastScan?.scanId ?? "scan-1");
   }
 
-  private restoreOpenBlocks(scan: ScanResult): ScanResult {
-    const original = fixtureScan();
-    const openPaths = new Set(
-      original.models.flatMap((m) =>
-        m.placements
-          .filter((p) => p.blocked?.kind === "file_open")
-          .map((p) => p.fullPath),
-      ),
-    );
-    return {
-      ...scan,
-      models: scan.models.map((m) => ({
-        ...m,
-        placements: m.placements.map((p) =>
-          openPaths.has(p.fullPath) && p.blocked === null
-            ? {
-                ...p,
-                blocked: {
-                  kind: "file_open" as const,
-                  process: FIXTURE_COMFY_PROCESS.process,
-                  pid: FIXTURE_COMFY_PROCESS.pid,
-                  instanceId: FIXTURE_COMFY_PROCESS.instanceId,
-                },
-              }
-            : p,
-        ),
-      })),
-    };
-  }
-
-  /** Throw the app back to the state a first run is in. */
   devReset(empty: boolean): void {
     this.stopScanTimer();
     this.stopApplyTimer();
-    this.scan = empty ? null : fixtureScan();
-    this.machine = fixtureMachine(empty ? { running: [] } : {});
-    this.run = null;
-    this.beforeRun = null;
-    this.disk = FAKE_DISK.map((f) => ({ ...f, children: [...f.children] }));
+    this.world = buildWorld();
+    this.disk = DISK.map((f) => ({ ...f, children: [...f.children] }));
+    this.plans.clear();
+    this.applies = [];
+    this.worldBeforeApply = null;
+    this.busy = null;
+    if (empty) this.emptyWorld();
+    else this.recordScan("scan-1");
   }
+}
 
-  private instanceName(id: InstanceId): string {
-    return this.scan?.instances.find((i) => i.id === id)?.name ?? id;
-  }
+function invalidCandidate(reason: string): InstallCandidate {
+  return {
+    valid: false,
+    root: null,
+    nestedDepth: 0,
+    markersFound: [],
+    markersMissing: ["main.py", "nodes.py", "folder_paths.py"],
+    contentCheckPassed: false,
+    otherCandidates: [],
+    version: null,
+    versionSource: null,
+    modelsDir: null,
+    modelsDirExists: false,
+    extraPathsFile: null,
+    extraPaths: [],
+    extraPathsError: null,
+    outputModelDirs: [],
+    reason,
+  };
+}
+
+function error(code: VaultError["code"], message: string): VaultError {
+  return { code, message };
+}
+
+function cloneWorld(world: World): World {
+  return {
+    ...world,
+    installs: world.installs.map((i) => ({ ...i })),
+    contents: world.contents.map((c) => ({
+      ...c,
+      copies: c.copies.map((copy) => ({ ...copy })),
+    })),
+    vault: new Map(
+      [...world.vault.entries()].map(([k, v]) => [k, { ...v, aliases: [...v.aliases] }]),
+    ),
+    links: world.links.map((l) => ({ ...l })),
+    running: [...world.running],
+  };
 }

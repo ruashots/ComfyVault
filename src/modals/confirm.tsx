@@ -1,10 +1,15 @@
 import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { useApp, type AppState, type ConfirmLine } from "~/state/store";
+import {
+  messageOf,
+  useApp,
+  type AppStore,
+  type ConfirmLine,
+} from "~/state/store";
 
 export function openConfirm(
-  app: AppState,
+  app: AppStore,
   options: {
     title: string;
     cta: string;
@@ -19,6 +24,7 @@ export function openConfirm(
     body: options.body,
     action: options.action,
     running: false,
+    error: null,
   });
 }
 
@@ -29,16 +35,30 @@ export function ConfirmModalView() {
     return current && current.kind === "confirm" ? current : null;
   };
 
+  /**
+   * The modal stays open when the engine refuses, and says why. Closing it on a
+   * refusal would leave the person with a toast and no idea what to do next.
+   */
   const run = async () => {
     const current = modal();
     if (!current || current.running) return;
     app.patchModal((m) => {
-      if (m.kind === "confirm") m.running = true;
+      if (m.kind === "confirm") {
+        m.running = true;
+        m.error = null;
+      }
     });
     try {
       await current.action();
-    } finally {
       app.setModal(null);
+      await app.actions.refresh();
+    } catch (error) {
+      app.patchModal((m) => {
+        if (m.kind === "confirm") {
+          m.running = false;
+          m.error = messageOf(error);
+        }
+      });
     }
   };
 
@@ -48,7 +68,9 @@ export function ConfirmModalView() {
         <div
           class="veil"
           onClick={(e) => {
-            if (e.target === e.currentTarget) app.setModal(null);
+            if (e.target === e.currentTarget && !current().running) {
+              app.setModal(null);
+            }
           }}
         >
           <div
@@ -70,6 +92,7 @@ export function ConfirmModalView() {
                       "line-height": "1.6",
                       color: "var(--t-body)",
                       "font-size": "11px",
+                      "margin-bottom": "8px",
                     }}
                   >
                     <For each={line}>
@@ -82,10 +105,25 @@ export function ConfirmModalView() {
                   </div>
                 )}
               </For>
+              <Show when={current().error}>
+                {(message) => (
+                  <div class="verdict no" role="alert">
+                    <h4>
+                      <Icon name="x" size={12} />
+                      That did not happen
+                    </h4>
+                    <p>{message()}</p>
+                  </div>
+                )}
+              </Show>
             </div>
             <div class="mf">
               <span class="sp" />
-              <button class="btn" onClick={() => app.setModal(null)}>
+              <button
+                class="btn"
+                disabled={current().running}
+                onClick={() => app.setModal(null)}
+              >
                 Cancel
               </button>
               <button

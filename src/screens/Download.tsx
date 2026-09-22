@@ -32,7 +32,7 @@ export function DownloadScreen() {
           </div>
           <div class="foot">
             Destination &nbsp;
-            <span class="emph">{app.machine()?.vaultPath ?? "C:\\ComfyVault"}</span>
+            <span class="emph">{app.vault()?.root ?? "C:\\ComfyVault"}</span>
             <br />
             Until then, download where you always do and run a scan.
           </div>

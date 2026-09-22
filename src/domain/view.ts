@@ -1,0 +1,473 @@
+/**
+ * Turn what the engine returns into what the screens draw.
+ *
+ * The engine owns the plan. This file never decides which copy is kept or what
+ * a clashing file is renamed to: it reads those decisions out of the plan and
+ * arranges them. What it does own is the arranging, and it is pure, so every
+ * rule below is testable on its own.
+ */
+
+import { blockedRank, isSkippedByDesign } from "~/domain/blocked";
+import type {
+  BlockedRow,
+  ConsolidationPlan,
+  Install,
+  ModelMetadata,
+  NameGroup,
+  PlanGroup,
+  ScanTotals,
+  UsageResult,
+  VaultFile,
+} from "~/ipc/contract";
+
+// ── the Consolidate view ────────────────────────────────────────────────────
+
+export interface ClashView {
+  /** The plain name both files want. */
+  filename: string;
+  /** The group that keeps the plain name first, then the ones that were renamed. */
+  groups: readonly PlanGroup[];
+}
+
+export interface CountedNeverMoved {
+  kind: "custom_nodes" | "huggingface_cache";
+  files: number;
+  bytes: number;
+}
+
+export interface PlanView {
+  readonly plan: ConsolidationPlan;
+  /** Groups that give space back, biggest win first. */
+  readonly duplicates: readonly PlanGroup[];
+  /** Groups that move into the vault and free nothing. */
+  readonly singles: readonly PlanGroup[];
+  /** Two different files that want one name. */
+  readonly clashes: readonly ClashView[];
+  /** What cannot move and is worth reading, grouped by reason. */
+  readonly blocked: readonly BlockedRow[];
+  /** Weights that are counted and never moved. Not a problem, so not listed. */
+  readonly countedNeverMoved: readonly CountedNeverMoved[];
+  readonly byGroupId: ReadonlyMap<string, PlanGroup>;
+}
+
+export function buildPlanView(
+  plan: ConsolidationPlan,
+  totals: ScanTotals | null,
+): PlanView {
+  const duplicates = plan.groups
+    .filter((g) => g.bytesFreed > 0)
+    .sort((a, b) => b.bytesFreed - a.bytesFreed);
+
+  const singles = plan.groups
+    .filter((g) => g.singleCopy)
+    .sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+  const clashes = buildClashes(plan.groups);
+
+  const blocked = plan.blocked
+    .filter((row) => !isSkippedByDesign(row.reason))
+    .sort(
+      (a, b) =>
+        blockedRank(a.reason) - blockedRank(b.reason) ||
+        b.sizeBytes - a.sizeBytes,
+    );
+
+  const countedNeverMoved: CountedNeverMoved[] = [];
+  if (totals && totals.customNodeFiles > 0) {
+    countedNeverMoved.push({
+      kind: "custom_nodes",
+      files: totals.customNodeFiles,
+      bytes: totals.customNodeBytes,
+    });
+  }
+  if (totals && totals.hfCacheFiles > 0) {
+    countedNeverMoved.push({
+      kind: "huggingface_cache",
+      files: totals.hfCacheFiles,
+      bytes: totals.hfCacheBytes,
+    });
+  }
+
+  return {
+    plan,
+    duplicates,
+    singles,
+    clashes,
+    blocked,
+    countedNeverMoved,
+    byGroupId: new Map(plan.groups.map((g) => [g.groupId, g])),
+  };
+}
+
+/**
+ * A renamed group names the hash that took the plain name. Follow that back to
+ * pair them up, and put the group that kept the plain name first.
+ */
+function buildClashes(groups: readonly PlanGroup[]): ClashView[] {
+  const bySha = new Map(groups.map((g) => [g.sha256, g]));
+  const families = new Map<string, PlanGroup[]>();
+
+  for (const group of groups) {
+    if (!group.vaultNameAdjusted || !group.clashesWith) continue;
+    const owner = bySha.get(group.clashesWith);
+    const key = owner?.sha256 ?? group.clashesWith;
+    const family = families.get(key);
+    if (family) family.push(group);
+    else families.set(key, owner ? [owner, group] : [group]);
+  }
+
+  return [...families.values()].map((family) => ({
+    filename: fileNameOf(family[0]!.vaultRelPath),
+    groups: family,
+  }));
+}
+
+/** "loras/lora1.safetensors" -> "lora1.safetensors" */
+export function fileNameOf(relPath: string): string {
+  const at = Math.max(relPath.lastIndexOf("/"), relPath.lastIndexOf("\\"));
+  return at < 0 ? relPath : relPath.slice(at + 1);
+}
+
+/** Why the engine chose this copy to become the vault file. */
+export function chosenBecauseText(
+  group: PlanGroup,
+  vaultVolume: string,
+): string {
+  switch (group.source.chosenBecause) {
+    case "sameVolume":
+      return `kept the copy in ${group.source.installLabel}, which is already on drive ${vaultVolume}, so moving it is a rename and takes no time`;
+    case "onlyCopy":
+      return `kept the copy in ${group.source.installLabel}, the only one there is`;
+    case "firstByPath":
+      return `kept the copy in ${group.source.installLabel}, the first by path, because no copy is on drive ${vaultVolume} yet`;
+  }
+}
+
+// ── the Library view ────────────────────────────────────────────────────────
+
+export type PlaceKind = "source" | "willLink" | "isLink" | "stays";
+
+export interface Place {
+  installId: string;
+  installLabel: string;
+  absPath: string;
+  relPath: string;
+  /** The name the file carries at this place. */
+  name: string;
+  kind: PlaceKind;
+  blocked: BlockedRow | null;
+}
+
+export interface ContentRow {
+  sha256: string;
+  /** The name the vault uses, or will use. */
+  name: string;
+  category: string;
+  bytes: number;
+  vaultRelPath: string;
+  /** Every place these bytes are reachable today. */
+  places: readonly Place[];
+  /** Other names the content carries. */
+  aliases: readonly string[];
+  /** Every name, the vault's own first. */
+  allNames: readonly string[];
+  /** Set once the vault holds it. */
+  inVaultSince: string | null;
+  linkCount: number;
+  metadata: ModelMetadata | null;
+  /** Nothing points at it and the vault holds it alone. */
+  isOrphan: boolean;
+  /** The group that will act on it, when the plan has one. */
+  groupId: string | null;
+}
+
+/**
+ * One row per unique content, whether the vault holds it or it is still out in
+ * the installs. Vault files and plan groups are two views of the same content,
+ * so a content present in both is merged into one row.
+ */
+export function buildLibrary(
+  plan: ConsolidationPlan | null,
+  vaultFiles: readonly VaultFile[],
+): ContentRow[] {
+  const rows = new Map<string, ContentRow>();
+
+  for (const file of vaultFiles) {
+    rows.set(file.sha256, {
+      sha256: file.sha256,
+      name: file.canonicalName,
+      category: file.category,
+      bytes: file.sizeBytes,
+      vaultRelPath: file.vaultRelPath,
+      places: file.links.map((link) => ({
+        installId: link.installId,
+        installLabel: link.installId,
+        absPath: link.absPath,
+        relPath: link.relPath,
+        name: link.linkName,
+        kind: "isLink" as const,
+        blocked: null,
+      })),
+      aliases: file.aliases,
+      allNames: [file.canonicalName, ...file.aliases],
+      inVaultSince: file.addedAt,
+      linkCount: file.linkCount,
+      metadata: file.metadata,
+      isOrphan: file.linkCount === 0,
+      groupId: null,
+    });
+  }
+
+  if (plan) {
+    const blockedBySha = new Map<string, BlockedRow[]>();
+    for (const row of plan.blocked) {
+      if (!row.sha256 || isSkippedByDesign(row.reason)) continue;
+      const list = blockedBySha.get(row.sha256);
+      if (list) list.push(row);
+      else blockedBySha.set(row.sha256, [row]);
+    }
+
+    for (const group of plan.groups) {
+      // Every path the group covers is in links, the one the file moves out of
+      // included. Adding the source separately would list it twice.
+      const places: Place[] = [
+        ...group.links.map((link) => ({
+          installId: link.installId,
+          installLabel: link.installLabel,
+          absPath: link.absPath,
+          relPath: link.relPath,
+          name: link.linkName,
+          kind:
+            link.absPath === group.source.absPath
+              ? ("source" as const)
+              : ("willLink" as const),
+          blocked: null,
+        })),
+        ...(blockedBySha.get(group.sha256) ?? []).map((row) => ({
+          installId: row.installId ?? "",
+          installLabel: row.installLabel ?? "",
+          absPath: row.absPath,
+          relPath: row.absPath,
+          name: fileNameOf(row.absPath),
+          kind: "stays" as const,
+          blocked: row,
+        })),
+      ];
+
+      const name = fileNameOf(group.vaultRelPath);
+      const names = [...new Set(places.map((p) => p.name))];
+      const existing = rows.get(group.sha256);
+      rows.set(group.sha256, {
+        sha256: group.sha256,
+        name,
+        category: group.category,
+        bytes: group.sizeBytes,
+        vaultRelPath: group.vaultRelPath,
+        places: [...(existing?.places ?? []), ...places],
+        aliases: names.filter((n) => n !== name),
+        allNames: [name, ...names.filter((n) => n !== name)],
+        inVaultSince: existing?.inVaultSince ?? null,
+        linkCount: existing?.linkCount ?? 0,
+        metadata: existing?.metadata ?? null,
+        isOrphan: false,
+        groupId: group.groupId,
+      });
+    }
+
+    // A file that cannot move and belongs to no group still has to be findable.
+    for (const [sha, blockedRows] of blockedBySha) {
+      if (rows.has(sha)) continue;
+      const first = blockedRows[0]!;
+      rows.set(sha, {
+        sha256: sha,
+        name: fileNameOf(first.absPath),
+        category: "",
+        bytes: first.sizeBytes,
+        vaultRelPath: "",
+        places: blockedRows.map((row) => ({
+          installId: row.installId ?? "",
+          installLabel: row.installLabel ?? "",
+          absPath: row.absPath,
+          relPath: row.absPath,
+          name: fileNameOf(row.absPath),
+          kind: "stays" as const,
+          blocked: row,
+        })),
+        aliases: [],
+        allNames: [fileNameOf(first.absPath)],
+        inVaultSince: null,
+        linkCount: 0,
+        metadata: null,
+        isOrphan: false,
+        groupId: null,
+      });
+    }
+  }
+
+  return [...rows.values()];
+}
+
+/** Every category present, for the Library's folder filter. */
+export function categoriesOf(rows: readonly ContentRow[]): string[] {
+  return [...new Set(rows.map((r) => r.category).filter(Boolean))].sort();
+}
+
+// ── installs ────────────────────────────────────────────────────────────────
+
+export interface InstallView {
+  install: Install;
+  /** A ComfyUI process is running out of it right now. */
+  running: boolean;
+  /** Files this install holds, and what the plan does with them. */
+  files: number;
+  bytes: number;
+  moving: number;
+  movingBytes: number;
+  stuck: number;
+  stuckBytes: number;
+  /**
+   * ComfyUI 0.28.0 and later refuse to serve a preview thumbnail through a
+   * per-file link. Loading a model is unaffected.
+   */
+  thumbnailsAffected: boolean;
+}
+
+export function buildInstallViews(
+  installs: readonly Install[],
+  plan: ConsolidationPlan | null,
+  runningInstallIds: ReadonlySet<string>,
+): InstallView[] {
+  const moving = new Map<string, { files: number; bytes: number }>();
+  const stuck = new Map<string, { files: number; bytes: number }>();
+  const bump = (
+    map: Map<string, { files: number; bytes: number }>,
+    id: string | null,
+    bytes: number,
+  ) => {
+    if (!id) return;
+    const cur = map.get(id) ?? { files: 0, bytes: 0 };
+    map.set(id, { files: cur.files + 1, bytes: cur.bytes + bytes });
+  };
+
+  if (plan) {
+    // Every path a group covers ends up holding a link, the one the file moved
+    // out of included, so the links are the whole list. Counting the source as
+    // well would count it twice.
+    for (const group of plan.groups) {
+      for (const link of group.links) bump(moving, link.installId, group.sizeBytes);
+    }
+    for (const row of plan.blocked) {
+      if (isSkippedByDesign(row.reason)) continue;
+      bump(stuck, row.installId, row.sizeBytes);
+    }
+  }
+
+  return installs.map((install) => {
+    const totals = install.lastScanTotals;
+    const m = moving.get(install.id) ?? { files: 0, bytes: 0 };
+    const s = stuck.get(install.id) ?? { files: 0, bytes: 0 };
+    return {
+      install,
+      running: runningInstallIds.has(install.id),
+      files: totals?.movableFiles ?? m.files + s.files,
+      bytes: totals?.movableBytes ?? m.bytes + s.bytes,
+      moving: m.files,
+      movingBytes: m.bytes,
+      stuck: s.files,
+      stuckBytes: s.bytes,
+      thumbnailsAffected: isAtLeast(install.version, [0, 28, 0]),
+    };
+  });
+}
+
+/** True when a version string is at least the given release. */
+export function isAtLeast(
+  version: string | null,
+  minimum: readonly [number, number, number],
+): boolean {
+  if (!version) return false;
+  const parts = version
+    .replace(/^v/i, "")
+    .split(".")
+    .map((p) => Number.parseInt(p, 10));
+  for (let i = 0; i < 3; i++) {
+    const got = parts[i];
+    if (got === undefined || Number.isNaN(got)) return false;
+    const want = minimum[i]!;
+    if (got > want) return true;
+    if (got < want) return false;
+  }
+  return true;
+}
+
+// ── cleanup ─────────────────────────────────────────────────────────────────
+
+export interface NameChoice {
+  name: string;
+  isCanonical: boolean;
+  /** Install links that resolve through this name. */
+  usedByLinks: number;
+  seenInInstalls: readonly string[];
+  /** True when nothing on disk uses this name, so removing it is safe. */
+  removable: boolean;
+}
+
+export interface NameGroupView {
+  group: NameGroup;
+  choices: readonly NameChoice[];
+  /** The name the vault should keep, and why. */
+  suggestion: { name: string; reason: string };
+}
+
+/**
+ * Which name the vault should keep: the one the most install links already
+ * resolve through, then the one seen in the most installs, then the longer one.
+ * The reason is printed under the choices, so the rule is never a secret.
+ */
+export function buildNameGroupView(group: NameGroup): NameGroupView {
+  const choices: NameChoice[] = group.names.map((n) => ({
+    name: n.name,
+    isCanonical: n.isCanonical,
+    usedByLinks: n.usedByLinks,
+    seenInInstalls: n.seenInInstalls,
+    removable: n.usedByLinks === 0 && !n.isCanonical,
+  }));
+
+  const ranked = [...group.names].sort(
+    (a, b) =>
+      b.usedByLinks - a.usedByLinks ||
+      b.seenInInstalls.length - a.seenInInstalls.length ||
+      b.name.length - a.name.length,
+  );
+  const best = ranked[0]!;
+  const rest = ranked.slice(1);
+
+  const linksPoint = (n: number) =>
+    `${n} ${n === 1 ? "link points" : "links point"}`;
+
+  let reason: string;
+  if (best.usedByLinks > 0) {
+    const other = rest[0];
+    if (other && other.usedByLinks === best.usedByLinks) {
+      reason = `the same number of links point at either, so this is the longer name`;
+    } else if (other && other.usedByLinks > 0) {
+      reason = `${linksPoint(best.usedByLinks)} at this name already, ${other.usedByLinks} at the next one`;
+    } else {
+      reason = `${linksPoint(best.usedByLinks)} at this name and none at ${rest.length === 1 ? "the other" : "the others"}`;
+    }
+  } else if (best.seenInInstalls.length > 0) {
+    reason = `this is the name ${best.seenInInstalls.join(" and ")} ${best.seenInInstalls.length === 1 ? "uses" : "use"}`;
+  } else {
+    reason =
+      rest.length === 1
+        ? "longer name, and no link points at either"
+        : "longest name, and no link points at any of them";
+  }
+
+  return { group, choices, suggestion: { name: best.name, reason } };
+}
+
+/** The sentence the engine requires next to every used or not-used answer. */
+export function usageMethodOf(results: readonly UsageResult[]): string | null {
+  return results[0]?.method ?? null;
+}

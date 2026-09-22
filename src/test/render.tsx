@@ -2,10 +2,10 @@ import { render } from "@solidjs/testing-library";
 import type { JSX } from "solid-js";
 
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import { AppProvider, createAppState, type AppState } from "~/state/store";
+import { AppProvider, createAppStore, type AppStore } from "~/state/store";
 
 export interface Harness {
-  app: AppState;
+  app: AppStore;
   engine: FixtureEngine;
   unmount: () => void;
   container: HTMLElement;
@@ -21,9 +21,9 @@ export async function renderWithApp(
   options: { engine?: FixtureEngine } = {},
 ): Promise<Harness> {
   const engine = options.engine ?? new FixtureEngine();
-  let app!: AppState;
+  let app!: AppStore;
   const result = render(() => {
-    app = createAppState(engine);
+    app = createAppStore(engine);
     return <AppProvider value={app}>{ui()}</AppProvider>;
   });
   await waitFor(() => app.ready());

@@ -1,19 +1,25 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { dayMonth, fmt, leafOf } from "~/domain/format";
+import { fmt, leafOf } from "~/domain/format";
 import { folderNameError } from "~/domain/foldername";
-import type { FolderCheck, PickerPurpose } from "~/ipc/contract";
-import { useApp, type AppState, type TreeNode } from "~/state/store";
+import {
+  messageOf,
+  useApp,
+  type AppStore,
+  type PickerPurpose,
+  type TreeNode,
+} from "~/state/store";
+import type { DirectoryEntry, InstallCandidate } from "~/ipc/contract";
 
 // ── opening one ─────────────────────────────────────────────────────────────
 
 async function openPicker(
-  app: AppState,
+  app: AppStore,
   purpose: PickerPurpose,
-  extra: { modelId?: string; replacing?: string } = {},
+  extra: { sha256?: string; replacing?: string } = {},
 ): Promise<void> {
-  const roots = await app.engine.listFolder(null, purpose);
+  const roots = await app.engine.listDirectory(null);
   app.setModal({
     kind: "picker",
     purpose,
@@ -21,46 +27,21 @@ async function openPicker(
     expanded: [],
     loading: [],
     picked: null,
-    check: null,
+    candidate: null,
     checking: false,
     newFolder: null,
-    modelId: extra.modelId ?? null,
+    sha256: extra.sha256 ?? null,
     replacing: extra.replacing ?? null,
   });
 }
 
-export const openInstancePicker = (app: AppState) => openPicker(app, "instance");
-export const openVaultPicker = (app: AppState) => openPicker(app, "vault");
-export const openLinkPicker = (app: AppState, modelId: string) =>
-  openPicker(app, "link", { modelId });
-/** Point an install that is already registered at a different folder. */
-export const openInstanceEditor = (app: AppState, instanceId: string) =>
-  openPicker(app, "instance", { replacing: instanceId });
+export const openInstallPicker = (app: AppStore) => openPicker(app, "install");
+export const openVaultPicker = (app: AppStore) => openPicker(app, "vault");
+export const openLinkPicker = (app: AppStore, sha256: string) =>
+  openPicker(app, "link", { sha256 });
 
-function instanceNameOf(app: AppState, id: string): string {
-  return app.scan()?.instances.find((i) => i.id === id)?.name ?? id;
-}
-
-function toNode(
-  entry: {
-    path: string;
-    name: string;
-    kind: "drive" | "folder";
-    looksLikeInstall: boolean | null;
-    readable: boolean;
-  },
-  depth: number,
-): TreeNode {
-  return {
-    path: entry.path,
-    name: entry.name,
-    kind: entry.kind,
-    depth,
-    looksLikeInstall: entry.looksLikeInstall,
-    readable: entry.readable,
-    isNew: false,
-    hasChildren: null,
-  };
+function toNode(entry: DirectoryEntry, depth: number): TreeNode {
+  return { ...entry, depth, isNew: false };
 }
 
 // ── the modal ───────────────────────────────────────────────────────────────
@@ -74,11 +55,7 @@ export function PickerModalView() {
   const [confirming, setConfirming] = createSignal(false);
 
   const title = () => {
-    const current = modal();
-    if (current?.replacing) {
-      return `Choose the folder for ${instanceNameOf(app, current.replacing)}`;
-    }
-    switch (current?.purpose) {
+    switch (modal()?.purpose) {
       case "vault":
         return "Choose the vault folder";
       case "link":
@@ -88,9 +65,7 @@ export function PickerModalView() {
     }
   };
   const cta = () => {
-    const current = modal();
-    if (current?.replacing) return "Point it here";
-    switch (current?.purpose) {
+    switch (modal()?.purpose) {
       case "vault":
         return "Use this folder";
       case "link":
@@ -100,7 +75,7 @@ export function PickerModalView() {
     }
   };
 
-  /** Everything under a folder, for the prefix test. "C:\\" has no extra slash. */
+  /** Everything under a folder, for the prefix test. "C:\" has no extra slash. */
   const insideOf = (path: string) => (path.endsWith("\\") ? path : `${path}\\`);
 
   const collapse = (node: TreeNode) => {
@@ -120,7 +95,7 @@ export function PickerModalView() {
     app.patchModal((m) => {
       if (m.kind === "picker") m.loading = [...m.loading, node.path];
     });
-    const children = await app.engine.listFolder(node.path, current.purpose);
+    const children = await app.engine.listDirectory(node.path);
     app.patchModal((m) => {
       if (m.kind !== "picker") return;
       m.loading = m.loading.filter((p) => p !== node.path);
@@ -144,6 +119,64 @@ export function PickerModalView() {
   };
 
   /**
+   * Picking a folder asks the engine what it is. Only the install picker has a
+   * judgement to ask for; the other two are judged here, against facts the
+   * interface already holds.
+   */
+  const pick = async (node: TreeNode) => {
+    const current = modal();
+    if (!current) return;
+    app.patchModal((m) => {
+      if (m.kind !== "picker") return;
+      m.picked = node.path;
+      m.candidate = null;
+      m.checking = current.purpose === "install";
+      m.newFolder = null;
+    });
+    if (current.purpose !== "install") return;
+    try {
+      const candidate = await app.engine.validateInstallPath(node.path);
+      app.patchModal((m) => {
+        if (m.kind !== "picker" || m.picked !== node.path) return;
+        m.candidate = candidate;
+        m.checking = false;
+      });
+    } catch (error) {
+      app.patchModal((m) => {
+        if (m.kind !== "picker" || m.picked !== node.path) return;
+        m.checking = false;
+        m.candidate = {
+          valid: false,
+          root: null,
+          nestedDepth: 0,
+          markersFound: [],
+          markersMissing: [],
+          contentCheckPassed: false,
+          otherCandidates: [],
+          version: null,
+          versionSource: null,
+          modelsDir: null,
+          modelsDirExists: false,
+          extraPathsFile: null,
+          extraPaths: [],
+          extraPathsError: null,
+          outputModelDirs: [],
+          reason: messageOf(error),
+        };
+      });
+    }
+  };
+
+  const siblingsOf = (parent: string) => {
+    const inside = insideOf(parent).toLowerCase();
+    return (
+      modal()
+        ?.nodes.filter((n) => n.path.toLowerCase().startsWith(inside))
+        .map((n) => n.path) ?? []
+    );
+  };
+
+  /**
    * Opening New folder first reads what is already inside the chosen folder, so
    * a name that is taken is refused straight away and the person can see why.
    */
@@ -156,33 +189,6 @@ export function PickerModalView() {
       if (m.kind !== "picker" || !m.picked) return;
       m.newFolder = { parent: m.picked, name: "", error: null, saving: false };
     });
-  };
-
-  const pick = async (node: TreeNode) => {
-    const current = modal();
-    if (!current) return;
-    app.patchModal((m) => {
-      if (m.kind !== "picker") return;
-      m.picked = node.path;
-      m.check = null;
-      m.checking = true;
-      m.newFolder = null;
-    });
-    const check = await app.engine.checkFolder(node.path, current.purpose);
-    app.patchModal((m) => {
-      if (m.kind !== "picker" || m.picked !== node.path) return;
-      m.check = check;
-      m.checking = false;
-    });
-  };
-
-  const siblingsOf = (parent: string) => {
-    const inside = insideOf(parent).toLowerCase();
-    return (
-      modal()
-        ?.nodes.filter((n) => n.path.toLowerCase().startsWith(inside))
-        .map((n) => n.path) ?? []
-    );
   };
 
   const saveNewFolder = async () => {
@@ -202,23 +208,19 @@ export function PickerModalView() {
         m.newFolder.error = null;
       }
     });
-    const result = await app.engine.createFolder(draft.parent, draft.name.trim());
-    if (!result.ok) {
-      const message =
-        result.reason === "exists"
-          ? `There is already a folder called ${draft.name.trim()} here.`
-          : result.reason === "denied"
-            ? "Windows refused to create a folder there. Pick another place."
-            : "Windows will not accept that name. Try a different one.";
+    let created: string;
+    try {
+      created = (await app.engine.createDirectory(draft.parent, draft.name.trim()))
+        .path;
+    } catch (failure) {
       app.patchModal((m) => {
         if (m.kind === "picker" && m.newFolder) {
           m.newFolder.saving = false;
-          m.newFolder.error = message;
+          m.newFolder.error = messageOf(failure);
         }
       });
       return;
     }
-    const created = result.path;
     app.patchModal((m) => {
       if (m.kind !== "picker") return;
       const parentIndex = m.nodes.findIndex((n) => n.path === draft.parent);
@@ -231,12 +233,11 @@ export function PickerModalView() {
           {
             path: created,
             name: leafOf(created),
-            kind: "folder",
-            depth: parent.depth + 1,
-            looksLikeInstall: false,
+            isDrive: false,
             readable: true,
-            isNew: true,
             hasChildren: false,
+            depth: parent.depth + 1,
+            isNew: true,
           },
           ...m.nodes.slice(at),
         ];
@@ -255,44 +256,59 @@ export function PickerModalView() {
     const current = modal();
     if (!current || !current.picked || confirming()) return;
     setConfirming(true);
+    const path = current.picked;
     try {
-      const path = current.picked;
-      if (current.purpose === "instance") {
-        await app.engine.addInstance(path);
-        await app.actions.refresh();
+      if (current.purpose === "install") {
+        const root = current.candidate?.root ?? path;
+        await app.engine.registerInstall(root);
         app.setModal(null);
-        if (app.scan()?.models.length) {
-          app.actions.showToast(`Added ${path} · run a scan to read it`);
-        } else {
-          void app.engine.startScan();
-        }
+        await app.actions.refresh();
+        app.actions.showToast(`Added ${root} \u00b7 run a scan to read it`);
       } else if (current.purpose === "vault") {
-        await app.engine.setVaultPath(path);
-        await app.actions.refresh();
+        await app.engine.selectVault(path, true);
         app.setModal(null);
+        await app.actions.refresh();
         app.actions.showToast(`Vault folder set to ${path}`);
-      } else {
-        if (current.modelId) await app.engine.addLink(current.modelId, path);
-        await app.actions.refresh();
+      } else if (current.sha256) {
+        const install = app
+          .installs()
+          .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
+        if (!install) throw new Error("That folder is not inside a registered install.");
+        await app.engine.createLink({
+          installId: install.id,
+          sha256: current.sha256,
+          relativeDir: path.slice(install.root.length + 1).replace(/\\/g, "/"),
+          createDir: false,
+        });
         app.setModal(null);
+        await app.actions.refresh();
         app.actions.showToast(`Link created at ${path}`);
       }
+    } catch (failure) {
+      app.actions.showToast(messageOf(failure), "bad");
     } finally {
       setConfirming(false);
     }
   };
 
-  const canConfirm = createMemo(() => {
+  const verdict = createMemo(() => {
+    const current = modal();
+    if (!current?.picked) return null;
+    if (current.checking) return null;
+    return verdictFor(app, current.purpose, current.picked, current.candidate);
+  });
+
+  const canConfirm = () => {
     const current = modal();
     if (!current) return false;
     return (
       current.picked != null &&
-      current.check?.ok === true &&
+      verdict()?.ok === true &&
       current.newFolder === null &&
       !current.checking &&
       !confirming()
     );
-  });
+  };
 
   return (
     <Show when={modal()}>
@@ -320,9 +336,11 @@ export function PickerModalView() {
               <div class="note" style={{ "margin-bottom": "9px" }}>
                 <Show
                   when={current().purpose === "link"}
-                  fallback={<>Pick a folder. There is nowhere in ComfyVault to type a path.</>}
+                  fallback={
+                    <>Pick a folder. There is nowhere in ComfyVault to type a path.</>
+                  }
                 >
-                  Pick the folder inside this install where the link should appear.
+                  Pick the folder inside an install where the link should appear.
                   ComfyUI will find the model at that path.
                 </Show>
               </div>
@@ -331,7 +349,10 @@ export function PickerModalView() {
                 <For each={current().nodes}>
                   {(node) => (
                     <>
-                      <div class="trow" style={{ "padding-left": `${node.depth * 16}px` }}>
+                      <div
+                        class="trow"
+                        style={{ "padding-left": `${node.depth * 16}px` }}
+                      >
                         <Twist
                           node={node}
                           open={current().expanded.includes(node.path)}
@@ -342,32 +363,38 @@ export function PickerModalView() {
                           class="tnode"
                           classList={{ on: current().picked === node.path }}
                           disabled={!node.readable}
-                          title={node.readable ? node.path : `${node.path} cannot be opened`}
+                          title={
+                            node.readable ? node.path : `${node.path} cannot be opened`
+                          }
                           onClick={() => void pick(node)}
                         >
-                          <Icon name={node.kind === "drive" ? "drive" : "folder"} size={12} />
+                          <Icon name={node.isDrive ? "drive" : "folder"} size={12} />
                           <span>{node.name}</span>
                           <Show when={node.isNew}>
                             <span class="tnew-tag">new</span>
-                          </Show>
-                          <Show when={node.looksLikeInstall === true}>
-                            <span class="hint">has a models folder</span>
                           </Show>
                           <Show when={!node.readable}>
                             <span class="hint">cannot be opened</span>
                           </Show>
                         </button>
                       </div>
-                      <Show when={current().newFolder?.parent === node.path ? current().newFolder : null}>
+                      <Show
+                        when={
+                          current().newFolder?.parent === node.path
+                            ? current().newFolder
+                            : null
+                        }
+                      >
                         {(draft) => (
                           <>
                             <div
                               class="tnew"
-                              style={{ "padding-left": `${7 + (node.depth + 1) * 16}px` }}
+                              style={{
+                                "padding-left": `${7 + (node.depth + 1) * 16}px`,
+                              }}
                             >
                               <Icon name="folder" size={12} />
                               <input
-                                id="newfoldername"
                                 ref={(el) => queueMicrotask(() => el.focus())}
                                 value={draft().name}
                                 spellcheck={false}
@@ -414,10 +441,10 @@ export function PickerModalView() {
                               </button>
                             </div>
                             <Show when={draft().error}>
-                              {(error) => (
+                              {(message) => (
                                 <div class="tnew-err" role="alert">
                                   <Icon name="warn" size={11} />
-                                  <span>{error()}</span>
+                                  <span>{message()}</span>
                                 </div>
                               )}
                             </Show>
@@ -432,7 +459,26 @@ export function PickerModalView() {
               <Show when={current().picked}>
                 {(path) => <div class="picked">{path()}</div>}
               </Show>
-              <Verdict />
+              <Show when={current().checking}>
+                <div class="verdict wait">
+                  <h4>
+                    <Icon name="clock" size={12} />
+                    Looking inside
+                  </h4>
+                  <p>ComfyVault is reading that folder.</p>
+                </div>
+              </Show>
+              <Show when={verdict()}>
+                {(v) => (
+                  <div class="verdict" classList={{ ok: v().ok, no: !v().ok }}>
+                    <h4>
+                      <Icon name={v().ok ? "check" : "x"} size={12} />
+                      {v().title}
+                    </h4>
+                    {v().body}
+                  </div>
+                )}
+              </Show>
             </div>
             <div class="mf">
               <button
@@ -487,7 +533,9 @@ function Twist(props: {
         class="twist"
         classList={{ open: props.open, shut: !props.open, busy: props.busy }}
         aria-expanded={props.open}
-        aria-label={props.open ? `Collapse ${props.node.name}` : `Open ${props.node.name}`}
+        aria-label={
+          props.open ? `Collapse ${props.node.name}` : `Open ${props.node.name}`
+        }
         onClick={props.onToggle}
       >
         <Icon name={props.busy ? "refresh" : "chev"} size={11} />
@@ -498,52 +546,7 @@ function Twist(props: {
 
 // ── the verdict under the tree ──────────────────────────────────────────────
 
-function Verdict() {
-  const app = useApp();
-  const modal = () => {
-    const current = app.modal();
-    return current && current.kind === "picker" ? current : null;
-  };
-
-  return (
-    <Show when={modal()?.picked}>
-      <Show
-        when={!modal()?.checking}
-        fallback={
-          <div class="verdict wait">
-            <h4>
-              <Icon name="clock" size={12} />
-              Looking inside
-            </h4>
-            <p>ComfyVault is reading that folder.</p>
-          </div>
-        }
-      >
-        <Show when={modal()?.check}>
-          {(check) => {
-            const verdict = verdictFor(
-              check(),
-              modal()!.picked!,
-              app,
-              modal()!.replacing,
-            );
-            return (
-              <div class="verdict" classList={{ ok: verdict.ok, no: !verdict.ok }}>
-                <h4>
-                  <Icon name={verdict.ok ? "check" : "x"} size={12} />
-                  {verdict.title}
-                </h4>
-                {verdict.body}
-              </div>
-            );
-          }}
-        </Show>
-      </Show>
-    </Show>
-  );
-}
-
-interface VerdictCopy {
+export interface VerdictCopy {
   ok: boolean;
   title: string;
   body: JSX.Element;
@@ -551,27 +554,16 @@ interface VerdictCopy {
 
 /** Every sentence the picker says about a folder it looked into. */
 export function verdictFor(
-  check: FolderCheck,
+  app: AppStore,
+  purpose: PickerPurpose,
   path: string,
-  app: AppState,
-  replacing: string | null = null,
+  candidate: InstallCandidate | null,
 ): VerdictCopy {
-  const instanceName = (id: string) => instanceNameOf(app, id);
-
-  if (check.for === "link") {
-    if (check.ok) {
-      return {
-        ok: true,
-        title: "Folder accepted",
-        body: (
-          <p>
-            The link will appear at <span class="emph">{path}</span>. The file
-            itself stays in the vault.
-          </p>
-        ),
-      };
-    }
-    if (check.reason === "outside_every_install") {
+  if (purpose === "link") {
+    const install = app
+      .installs()
+      .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
+    if (!install) {
       return {
         ok: false,
         title: "Outside every install",
@@ -583,52 +575,64 @@ export function verdictFor(
         ),
       };
     }
-    if (check.reason === "already_holds_this_name") {
+    const inModels =
+      path.toLowerCase().startsWith(install.modelsDir.toLowerCase()) ||
+      install.extraPaths.some((extra) =>
+        path.toLowerCase().startsWith(extra.path.toLowerCase()),
+      );
+    if (!inModels) {
       return {
         ok: false,
-        title: "A file of that name is already here",
+        title: "ComfyUI does not look here",
         body: (
           <p>
-            This folder already holds{" "}
-            <span class="emph">{check.filename}</span>. Putting a link there would
-            replace it. Pick another folder.
+            {install.label} only reads models from{" "}
+            <span class="emph">{install.modelsDir}</span> and the folders its
+            extra_model_paths.yaml adds. A link anywhere else would never be found.
           </p>
         ),
       };
     }
     return {
-      ok: false,
-      title: "Windows will not write here",
-      body: <p>ComfyVault has no permission to create anything in that folder.</p>,
+      ok: true,
+      title: "Folder accepted",
+      body: (
+        <p>
+          The link will appear at <span class="emph">{path}</span>, inside{" "}
+          {install.label}. The file itself stays in the vault.
+        </p>
+      ),
     };
   }
 
-  if (check.for === "vault") {
-    if (!check.ok) {
-      if (check.reason === "inside_an_install") {
-        return {
-          ok: false,
-          title: "That is inside an install",
-          body: (
-            <p>
-              The vault cannot live inside{" "}
-              <span class="emph">{instanceName(check.instanceId)}</span>. Removing
-              that install later would take the vault with it. Pick a folder of its
-              own.
-            </p>
-          ),
-        };
-      }
+  if (purpose === "vault") {
+    const inside = app
+      .installs()
+      .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
+    if (inside) {
       return {
         ok: false,
-        title: "Windows will not write here",
-        body: <p>ComfyVault has no permission to create anything in that folder.</p>,
+        title: "That is inside an install",
+        body: (
+          <p>
+            The vault cannot live inside <span class="emph">{inside.label}</span>.
+            Removing that install later would take the vault with it. Pick a folder
+            of its own.
+          </p>
+        ),
       };
     }
-    if (check.sameDriveAsInstalls) {
+    const volume = path.slice(0, 2).toUpperCase();
+    const elsewhere = app
+      .installs()
+      .filter((i) => i.root.slice(0, 2).toUpperCase() !== volume);
+    if (elsewhere.length === 0) {
       return {
         ok: true,
-        title: `Same drive as ${app.scan()!.instances.length === 1 ? "the install" : "every install"}`,
+        title:
+          app.installs().length === 1
+            ? "Same drive as the install"
+            : "Same drive as every install",
         body: (
           <p>
             Files move instead of being copied. The space comes back as each one
@@ -637,105 +641,119 @@ export function verdictFor(
         ),
       };
     }
-    const needed = app.plan()?.totals.uniqueBytes ?? 0;
+    const needed = app.scan()?.totals.uniqueBytes ?? 0;
     return {
       ok: true,
       title: "This is on another drive",
       body: (
         <p>
-          {check.installsOnOtherDrives.join(" and ")}{" "}
-          {check.installsOnOtherDrives.length === 1 ? "sits" : "sit"} on a different
-          drive from {check.drive}. Every file from there is{" "}
-          <span class="emph">copied</span>, not moved, so {check.drive} needs{" "}
+          {elsewhere.map((i) => i.label).join(" and ")}{" "}
+          {elsewhere.length === 1 ? "sits" : "sit"} on a different drive from{" "}
+          {volume}. Every file from there is <span class="emph">copied</span> and
+          checked before the original goes, so {volume} needs up to{" "}
           <span class="emph">{fmt(needed)}</span> free before the other drive gives
-          anything back. Confirm this and ComfyVault will check the free space
-          first.
+          anything back. ComfyVault checks the free space before it starts.
         </p>
       ),
     };
   }
 
-  if (!check.ok) {
-    if (check.reason === "already_registered") {
-      if (replacing && check.instanceId === replacing) {
-        return {
-          ok: false,
-          title: "This is the folder it already uses",
-          body: (
-            <p>
-              {instanceName(replacing)} points here now. Pick a different folder,
-              or cancel and nothing changes.
-            </p>
-          ),
-        };
-      }
+  if (!candidate) {
+    return {
+      ok: false,
+      title: "Not checked yet",
+      body: <p>ComfyVault has not looked inside that folder.</p>,
+    };
+  }
+
+  if (!candidate.valid) {
+    const already = app
+      .installs()
+      .find((i) => i.root.toLowerCase() === path.toLowerCase());
+    if (already) {
       return {
         ok: false,
         title: "Already registered",
-        body: (
-          <p>
-            {replacing
-              ? `This folder is ${instanceName(check.instanceId)}. Two installs cannot share one folder.`
-              : "This install is in the list already. Nothing to add."}
-          </p>
-        ),
-      };
-    }
-    if (check.reason === "unreadable") {
-      return {
-        ok: false,
-        title: "Windows will not open that folder",
-        body: (
-          <p>
-            ComfyVault cannot read <span class="emph">{path}</span>, so it cannot
-            tell what is inside. Pick a folder you own.
-          </p>
-        ),
+        body: <p>{already.label} is this folder. Nothing to add.</p>,
       };
     }
     return {
       ok: false,
       title: "Not a ComfyUI install",
       body: (
-        <p>
-          ComfyVault looked for a <span class="emph">models</span> folder inside{" "}
-          <span class="emph">{path}</span> and did not find one. Pick the folder
-          that holds ComfyUI itself, the one with main.py in it.
-        </p>
+        <>
+          <p>
+            {candidate.reason ??
+              "ComfyVault did not find ComfyUI's own files inside that folder."}
+          </p>
+          <Show when={candidate.markersMissing.length > 0}>
+            <p>
+              It looked for {candidate.markersMissing.slice(0, 4).join(", ")} and
+              did not find {candidate.markersMissing.length === 1 ? "it" : "them"}.
+              Pick the folder that holds ComfyUI itself, the one with main.py in it.
+            </p>
+          </Show>
+        </>
       ),
     };
   }
 
-  const removed = app.scan()?.removedInstance;
-  const orphans = app.plan()?.orphans.length ?? 0;
+  const already = app
+    .installs()
+    .find((i) => i.root.toLowerCase() === (candidate.root ?? path).toLowerCase());
+  if (already) {
+    return {
+      ok: false,
+      title: "Already registered",
+      body: <p>{already.label} is this install. Nothing to add.</p>,
+    };
+  }
+
+  const volume = (candidate.root ?? path).slice(0, 2).toUpperCase();
+  const vaultVolume = app.vault()?.volume ?? "C:";
+
   return {
     ok: true,
     title: "This is a ComfyUI install",
     body: (
       <>
-        <p>
-          Found <span class="emph">models\</span> with {check.modelFolders} folders,{" "}
-          {check.files} files, <span class="emph">{fmt(check.bytes)}</span>.{" "}
-          <span class="emph">extra_model_paths.yaml</span>:{" "}
-          {check.hasExtraModelPaths ? "found" : "not found"}. Every file in there is
-          read on the next scan.
-        </p>
-        <Show when={check.onDifferentDrive}>
+        <Show when={candidate.nestedDepth > 0}>
           <p>
-            This install is on drive {path.slice(0, 2)} and the vault is on{" "}
-            {app.machine()!.vaultPath.slice(0, 2)}. Its files are{" "}
-            <span class="emph">copied</span>, not moved, so{" "}
-            {app.machine()!.vaultPath.slice(0, 2)} needs{" "}
-            <span class="emph">{fmt(check.bytes)}</span> free before drive{" "}
-            {path.slice(0, 2)} gives anything back. ComfyVault checks the free space
-            before it starts.
+            ComfyUI itself is at <span class="emph">{candidate.root}</span>, inside
+            the folder you picked. That is the one ComfyVault will read.
           </p>
         </Show>
-        <Show when={check.wasRemoved && removed}>
+        <p>
+          Found <span class="emph">{candidate.modelsDir}</span>.{" "}
+          <span class="emph">extra_model_paths.yaml</span>:{" "}
+          {candidate.extraPathsFile
+            ? `${candidate.extraPaths.length} extra ${candidate.extraPaths.length === 1 ? "folder" : "folders"}`
+            : "not found"}
+          . Every file in there is read on the next scan.
+        </p>
+        <Show when={candidate.extraPathsError}>
+          {(problem) => (
+            <p>
+              Its extra_model_paths.yaml could not be read: {problem()}. ComfyVault
+              will register the install and skip that file.
+            </p>
+          )}
+        </Show>
+        <Show when={candidate.otherCandidates.length > 0}>
           <p>
-            You removed this install on {dayMonth(removed!.removedAt)}. Adding it
-            back relinks the {orphans} vault files that lost their link, so they
-            stop showing up in Cleanup.
+            There {candidate.otherCandidates.length === 1 ? "is" : "are"}{" "}
+            {candidate.otherCandidates.length} more ComfyUI{" "}
+            {candidate.otherCandidates.length === 1 ? "install" : "installs"} under
+            that folder. Add {candidate.otherCandidates.length === 1 ? "it" : "them"}{" "}
+            separately if you want them read too.
+          </p>
+        </Show>
+        <Show when={volume !== vaultVolume}>
+          <p>
+            This install is on drive {volume} and the vault is on {vaultVolume}. Its
+            files are <span class="emph">copied</span> and checked before the
+            original goes, so {vaultVolume} pays for them first. ComfyVault checks
+            the free space before it starts.
           </p>
         </Show>
       </>

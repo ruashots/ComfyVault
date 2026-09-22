@@ -18,12 +18,15 @@ import {
   shortHash,
   usedPercent,
 } from "~/domain/format";
-import { BLESSED, MB } from "~/test/blessed";
+import { MB, SIZE_STRINGS } from "~/test/blessed";
 
 describe("sizes read the way the blessed mock reads them", () => {
-  it.each(BLESSED.sizeStrings)("%i MB reads as %s", (mb, expected) => {
-    expect(fmt(mb * MB)).toBe(expected);
-  });
+  it.each(SIZE_STRINGS.map((row) => [...row] as [number, string]))(
+    "%i MB reads as %s",
+    (mb: number, expected: string) => {
+      expect(fmt(mb * MB)).toBe(expected);
+    },
+  );
 
   it("splits the number from the unit for the big figures", () => {
     expect(fmtN(614673 * MB)).toBe("600");
