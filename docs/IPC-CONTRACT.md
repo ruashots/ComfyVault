@@ -711,6 +711,22 @@ number to match the row count.
 **Blocked rows.** A row that cannot move never appears in a group. It appears
 in `blocked` with a reason.
 
+**A plan is derived fresh, every time.** `build_plan` re-checks the machine: it
+asks again whether each file still matches what the scan read, and whether
+another program holds it open. So the plan changes as the machine changes, and
+it changes in the direction people expect.
+
+When the person closes ComfyUI and the interface builds the plan again from the
+same scan, the plan gets **bigger**:
+
+- A file that was held open rejoins its group, so a content that looked like a
+  single copy becomes a duplicate and starts saving space.
+- The copy that gets kept can change. A copy on the vault's own drive is worth
+  keeping, because moving it is a rename, and if that copy was the one held
+  open then closing ComfyUI changes which file moves.
+
+Do not clear a flag on the old plan. Build it again.
+
 ```ts
 type BlockedRow = {
   absPath: string

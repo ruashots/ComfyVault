@@ -667,3 +667,136 @@ fn every_copy_in_a_group_gets_a_link_and_exactly_one_of_them_is_the_source() {
         "four copies frees three copies' worth: the fourth moves"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Closing ComfyUI makes the plan BIGGER
+//
+// The interface is built on this: re-checking the machine has to re-derive the
+// plan, not clear a flag on the old one. A file that was held open becomes
+// movable, and a copy that was blocked can become the copy that is kept.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_file_that_stops_being_held_open_joins_the_plan() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/free.safetensors", &weights("free"));
+    w.write_model(&b, "models/loras/free.safetensors", &weights("free"));
+    w.write_model(&a, "models/loras/held.safetensors", &weights("held"));
+    let held_b = w.write_model(&b, "models/loras/held.safetensors", &weights("held"));
+
+    // ComfyUI is running and has one model loaded.
+    w.platform.lock_file(held_b.clone());
+    let out = w.scan(&[a.clone(), b.clone()]);
+
+    let while_running = w
+        .planner()
+        .build("p1", &out.record.scan_id, &out.entries, &[a.clone(), b.clone()])
+        .unwrap();
+
+    // The held copy is dropped from its group, so what is left of that content
+    // is a single copy that moves and frees nothing. The person is told why:
+    // the held path is in `blocked`, named, with its reason.
+    let held_now = group_for(&while_running, "held");
+    assert_eq!(held_now.occurrences, 1);
+    assert_eq!(held_now.bytes_freed, 0, "nothing is freed while the other copy is held");
+    assert_eq!(blocked_for(&while_running, "held.safetensors").reason, BlockReason::FileLocked);
+    let before = while_running.totals.bytes_freed;
+    assert_eq!(before, weights("free").len() as u64, "only the free content saves anything");
+
+    // The person closes ComfyUI and the interface re-derives the plan from the
+    // same scan.
+    w.platform.unlock_file(&held_b);
+    let after_closing = w
+        .planner()
+        .build("p2", &out.record.scan_id, &out.entries, &[a, b])
+        .unwrap();
+
+    let held_after = group_for(&after_closing, "held");
+    assert_eq!(held_after.occurrences, 2, "both copies are in the group now");
+    assert_eq!(held_after.bytes_freed, weights("held").len() as u64);
+    assert!(
+        after_closing.totals.bytes_freed > before,
+        "closing ComfyUI must return more space, got {} then {}",
+        before,
+        after_closing.totals.bytes_freed
+    );
+    assert!(
+        after_closing.blocked.iter().all(|b| b.reason != BlockReason::FileLocked),
+        "nothing is held open any more"
+    );
+}
+
+#[test]
+fn a_copy_that_was_held_open_can_become_the_copy_that_is_kept() {
+    // The choice of which copy survives is re-derived too. The copy on the
+    // vault's own drive is the one worth keeping, and if it was the one held
+    // open, closing ComfyUI changes which file moves.
+    let w = TestWorld::new();
+    let on_other_drive = w.add_install("OnD");
+    let on_vault_drive = w.add_install("OnC");
+    let far = w.write_model(&on_other_drive, "models/loras/m.safetensors", &weights("m"));
+    let near = w.write_model(&on_vault_drive, "models/loras/m.safetensors", &weights("m"));
+
+    w.platform.set_volume(&on_other_drive.root, "D:");
+    w.platform.set_volume(&w.vault_root, "C:");
+    w.platform.set_volume(&on_vault_drive.root, "C:");
+
+    // ComfyUI holds the copy that would otherwise be kept.
+    w.platform.lock_file(near.clone());
+    let out = w.scan(&[on_other_drive.clone(), on_vault_drive.clone()]);
+
+    let while_running = w
+        .planner()
+        .build("p1", &out.record.scan_id, &out.entries, &[on_other_drive.clone(), on_vault_drive.clone()])
+        .unwrap();
+
+    // Only the far copy is left in the group, so the plan would copy across
+    // drives and free nothing.
+    let before = group_for(&while_running, "m");
+    assert_eq!(before.source.abs_path, far);
+    assert!(before.cross_volume, "the only copy left is on the other drive");
+    assert_eq!(before.bytes_freed, 0);
+
+    w.platform.unlock_file(&near);
+    let after_closing = w
+        .planner()
+        .build("p2", &out.record.scan_id, &out.entries, &[on_other_drive, on_vault_drive])
+        .unwrap();
+
+    let g = group_for(&after_closing, "m");
+    assert_eq!(
+        g.source.abs_path, near,
+        "the copy on the vault's drive is the one to keep, now that it is free"
+    );
+    assert_eq!(g.source.chosen_because, SourceChoice::SameVolume);
+    assert!(!g.cross_volume, "so the move is a rename and costs nothing");
+    assert_eq!(g.links.iter().find(|l| !l.is_source).unwrap().abs_path, far);
+}
+
+#[test]
+fn the_plan_is_derived_fresh_every_time_and_never_cached() {
+    // Two builds from one scan, with the machine changed in between, must not
+    // agree. If they did, the interface could show a stale plan after the
+    // person acted on what it told them to do.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let held = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+
+    let out = w.scan(&[a.clone(), b.clone()]);
+
+    w.platform.lock_file(held.clone());
+    let locked = w.planner().build("p1", &out.record.scan_id, &out.entries, &[a.clone(), b.clone()]).unwrap();
+
+    w.platform.unlock_file(&held);
+    let free = w.planner().build("p2", &out.record.scan_id, &out.entries, &[a, b]).unwrap();
+
+    assert_eq!(locked.groups[0].occurrences, 1, "one copy was held open");
+    assert_eq!(free.groups[0].occurrences, 2);
+    assert_eq!(locked.totals.bytes_freed, 0);
+    assert_eq!(free.totals.bytes_freed, weights("m").len() as u64);
+    assert_ne!(locked.totals.bytes_freed, free.totals.bytes_freed);
+}
