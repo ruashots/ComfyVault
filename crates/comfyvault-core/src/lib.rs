@@ -29,6 +29,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::all)]
 
+pub mod apply;
 pub mod error;
 pub mod install;
 pub mod metadata;

@@ -18,7 +18,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::error::{ErrorCode, Result, VaultError};
+use crate::error::{Result, VaultError};
 use crate::progress::CancelToken;
 
 /// Read size. Large enough to keep the drive busy, small enough that a

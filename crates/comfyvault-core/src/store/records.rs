@@ -296,9 +296,14 @@ pub enum JournalStep {
     CreateLink { link: PathBuf, target: PathBuf },
     /// A stashed duplicate deleted. Undone by copying the content back out of
     /// the vault, which is safe because the content is identical by hash.
+    ///
+    /// `vault_path` is recorded so the undo does not have to look the file up:
+    /// a revert walks backwards, so the vault file is still in place when this
+    /// step is undone.
     DeleteStash {
         stash: PathBuf,
         original: PathBuf,
+        vault_path: PathBuf,
         sha256: String,
         size_bytes: u64,
     },
@@ -403,6 +408,7 @@ mod tests {
             JournalStep::DeleteStash {
                 stash: "/i/b.safetensors.comfyvault-old".into(),
                 original: "/i/b.safetensors".into(),
+                vault_path: "/v/loras/a.safetensors".into(),
                 sha256: "AA".into(),
                 size_bytes: 10,
             },
