@@ -22,6 +22,7 @@ import type {
   ApplyResult,
   AppState,
   ConsolidationPlan,
+  ContentPage,
   DirectoryListing,
   Engine,
   Install,
@@ -79,6 +80,7 @@ export function createTauriEngine(): Engine {
     getAppState: () => callNoArgs<AppState>("get_app_state"),
     selectVault: (path, createIfMissing) =>
       call<VaultInfo>("select_vault", { path, createIfMissing }),
+    getVaultInfo: () => callNoArgs<VaultInfo>("get_vault_info"),
     getSettings: () => callNoArgs<Settings>("get_settings"),
     updateSettings: (patch) => call<Settings>("update_settings", { ...patch }),
 
@@ -138,6 +140,7 @@ export function createTauriEngine(): Engine {
     listLinks: (filter) => call<Link[]>("list_links", { ...(filter ?? {}) }),
 
     listVaultFiles: (args) => call<VaultFilePage>("list_vault_files", { ...args }),
+    listContents: (args) => call<ContentPage>("list_contents", { ...args }),
     listNameGroups: () => callNoArgs<NameGroup[]>("list_name_groups"),
     setCanonicalName: (sha256, name) =>
       call<VaultFile>("set_canonical_name", { sha256, name }),

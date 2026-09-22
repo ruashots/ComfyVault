@@ -20,9 +20,7 @@ import { createStore, produce, type SetStoreFunction } from "solid-js/store";
 
 import {
   buildInstallViews,
-  buildLibrary,
   buildPlanView,
-  type ContentRow,
   type InstallView,
   type PlanView,
 } from "~/domain/view";
@@ -33,12 +31,13 @@ import {
   type MachineFacts,
   type Selection,
 } from "~/domain/selection";
-import { isVaultError } from "~/ipc/contract";
+import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
   ApplyResult,
   AppState,
   ConsolidationPlan,
+  ContentRow,
   DirectoryEntry,
   Engine,
   Install,
@@ -163,6 +162,10 @@ export interface AppStore {
 
   readonly planView: Accessor<PlanView | null>;
   readonly library: Accessor<readonly ContentRow[]>;
+  /** How many contents the engine holds in total, beyond the page loaded. */
+  readonly libraryTotal: Accessor<number>;
+  /** True when there was no saved workflow file to search at all. */
+  readonly nothingSearched: Accessor<boolean>;
   readonly installViews: Accessor<readonly InstallView[]>;
   readonly selection: Accessor<Selection>;
   readonly gate: Accessor<ApplyGate>;
@@ -232,6 +235,9 @@ export function createAppStore(engine: Engine): AppStore {
   const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
   const [lastApply, setLastApply] = createSignal<ApplyResult | null>(null);
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
+  const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
+  const [libraryTotal, setLibraryTotal] = createSignal(0);
+  const [nothingSearched, setNothingSearched] = createSignal(false);
 
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
@@ -275,10 +281,6 @@ export function createAppStore(engine: Engine): AppStore {
     return buildPlanView(current, scan()?.totals ?? null);
   });
 
-  const library = createMemo<readonly ContentRow[]>(() =>
-    buildLibrary(plan(), vaultFiles()),
-  );
-
   const runningInstallIds = createMemo(
     () => new Set(running().flatMap((p) => p.matchedInstallIds)),
   );
@@ -305,7 +307,12 @@ export function createAppStore(engine: Engine): AppStore {
     () => health()?.danglingLinks ?? [],
   );
 
+  /**
+   * How many models no saved workflow names. Zero when nothing was searched,
+   * because "not checked" is not an answer a person should act on.
+   */
   const unusedCount = createMemo(() => {
+    if (nothingSearched()) return 0;
     const answers = usage();
     if (answers.size === 0) return 0;
     return library().filter((row) => answers.get(row.name)?.used === false).length;
@@ -319,14 +326,20 @@ export function createAppStore(engine: Engine): AppStore {
   // ── loading ───────────────────────────────────────────────────────────────
 
   const loadUsage = async (rows: readonly ContentRow[]) => {
-    const names = [...new Set(rows.flatMap((row) => row.allNames))];
+    const names = [...new Set(rows.flatMap((row) => [row.name, ...row.aliases]))];
     if (names.length === 0) {
-      setUsage(new Map());
+      batch(() => {
+        setUsage(new Map());
+        setNothingSearched(false);
+      });
       return;
     }
     try {
       const answers = await engine.checkModelUsage(names);
-      setUsage(new Map(answers.map((a) => [a.name, a])));
+      batch(() => {
+        setUsage(new Map(answers.map((a) => [a.name, a])));
+        setNothingSearched(answers.length > 0 && answers.every(nothingWasSearched));
+      });
     } catch {
       // Whether a model is named in a workflow is useful, not essential. The
       // screen says when the answer is missing rather than pretending.
@@ -346,28 +359,29 @@ export function createAppStore(engine: Engine): AppStore {
           engine.getRunningComfy(),
         ]);
 
-      const vaultInfo = state.vaultRoot
-        ? await engine.selectVault(state.vaultRoot, false)
-        : null;
+      const vaultInfo = state.vaultInitialized ? await engine.getVaultInfo() : null;
 
       const nextPlan =
         lastScan && !lastScan.cancelled
           ? await engine.buildPlan(lastScan.scanId)
           : null;
 
-      const [files, groups, orphanList, vaultHealth] = state.vaultInitialized
-        ? await Promise.all([
-            engine.listVaultFiles({ offset: 0, limit: 1000 }),
-            engine.listNameGroups(),
-            engine.listOrphans(),
-            engine.checkVaultHealth(),
-          ])
-        : [
-            { total: 0, offset: 0, files: [] as VaultFile[] },
-            [],
-            [],
-            null,
-          ];
+      const [files, groups, orphanList, vaultHealth, contents] =
+        state.vaultInitialized
+          ? await Promise.all([
+              engine.listVaultFiles({ offset: 0, limit: 1000 }),
+              engine.listNameGroups(),
+              engine.listOrphans(),
+              engine.checkVaultHealth(),
+              engine.listContents({ offset: 0, limit: 1000, sort: "size" }),
+            ])
+          : [
+              { total: 0, offset: 0, files: [] as VaultFile[] },
+              [],
+              [],
+              null,
+              { total: 0, offset: 0, rows: [] as ContentRow[], scanId: null },
+            ];
 
       batch(() => {
         setAppState(state);
@@ -379,6 +393,8 @@ export function createAppStore(engine: Engine): AppStore {
         setNameGroups(groups);
         setOrphans(orphanList);
         setHealth(vaultHealth);
+        setLibrary(contents.rows);
+        setLibraryTotal(contents.total);
         setRunning(runningList);
         setInterrupted(interruptedList);
         setLastApply(applies.find((a) => a.state !== "reverted") ?? null);
@@ -386,7 +402,7 @@ export function createAppStore(engine: Engine): AppStore {
         setReady(true);
       });
 
-      await loadUsage(buildLibrary(nextPlan, files.files));
+      await loadUsage(contents.rows);
     } catch (error) {
       batch(() => {
         setFailure(messageOf(error));
@@ -509,6 +525,8 @@ export function createAppStore(engine: Engine): AppStore {
     failure,
     planView,
     library,
+    libraryTotal,
+    nothingSearched,
     installViews,
     selection,
     gate,

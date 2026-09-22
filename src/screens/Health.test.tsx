@@ -126,6 +126,42 @@ describe("what the workflow check actually did", () => {
   });
 });
 
+describe("when there was no saved workflow file to search", () => {
+  it("says so rather than calling every model unused", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetWorkflowsOnDisk(0);
+    harness = await renderWithApp(() => <LibraryScreen />, { engine });
+    await waitFor(() => harness!.app.usage().size > 0);
+    await waitFor(() => harness!.app.nothingSearched());
+
+    // The filter is not offered, because there is no answer to filter on.
+    expect(screen.queryByRole("button", { name: /Not used/ })).toBeNull();
+    expect(harness.app.unusedCount()).toBe(0);
+    // And no row is marked either way.
+    expect(document.querySelector(".lrow .dot.unused")).toBeNull();
+    expect(document.querySelector(".lrow .dot.used")).toBeNull();
+  });
+
+  it("says so in the drawer, in the engine's own words", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetWorkflowsOnDisk(0);
+    harness = await renderWithApp(() => <LibraryScreen />, { engine });
+    await waitFor(() => harness!.app.usage().size > 0);
+    const row = harness.app.library()[0]!;
+    harness.app.setLib({ selected: row.sha256, drawerOpen: true });
+    await waitFor(() => document.querySelector(".drawer") !== null);
+    const drawer = document.querySelector(".drawer")!;
+    expect(drawer.textContent).toContain(
+      "No saved workflow files were found, so nothing was searched.",
+    );
+    expect(drawer.textContent).toContain("Nothing was checked for this model.");
+    expect(drawer.textContent).not.toContain("appears in no saved workflow file");
+    // The header must not answer either.
+    expect(document.querySelector(".det-meta")!.textContent).not.toContain("Not used");
+    expect(document.querySelector(".det-meta")!.textContent).not.toContain("In use");
+  });
+});
+
 describe("a ComfyUI that will not show a picture for a linked model", () => {
   it("says so on the screen where the person decides", async () => {
     const engine = new FixtureEngine({ speed: 200 });

@@ -2,17 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildInstallViews,
-  buildLibrary,
   buildNameGroupView,
   buildPlanView,
   chosenBecauseText,
   fileNameOf,
   isAtLeast,
+  placesOf,
   thumbnailStateOf,
 } from "~/domain/view";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import type {
-  BlockedRow,
   ConsolidationPlan,
   Install,
   NameGroup,
@@ -106,6 +105,16 @@ describe("the plan the screen shows", () => {
     }
   });
 
+  it("counts blocked bytes from the rows it actually lists", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetSymlinksSupported(true);
+    const scan = (await engine.getLastScan())!;
+    const view = buildPlanView(await engine.buildPlan(scan.scanId), scan.totals);
+    expect(view.blockedBytes).toBe(
+      view.blocked.reduce((sum, row) => sum + row.sizeBytes, 0),
+    );
+  });
+
   it("keeps counted-never-moved out of the list of problems", async () => {
     const { plan, totals } = await readyPlan();
     const view = buildPlanView(plan, totals);
@@ -146,9 +155,19 @@ describe("a plan built while links are unavailable", () => {
     const engine = new FixtureEngine();
     const scan = (await engine.getLastScan())!;
     const plan = await engine.buildPlan(scan.scanId);
+    expect(plan.symlinksSupported).toBe(false);
     expect(plan.groups.length).toBeGreaterThan(0);
     expect(plan.totals.bytesFreed).toBeGreaterThan(0);
-    expect(plan.blocked.some((b) => b.reason === "symlinkUnsupported")).toBe(true);
+  });
+
+  it("says links are off once, not once per file", async () => {
+    const engine = new FixtureEngine();
+    const scan = (await engine.getLastScan())!;
+    const plan = await engine.buildPlan(scan.scanId);
+    const rows = plan.blocked.filter((b) => b.reason === "symlinkUnsupported");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.absPath).toBe(plan.vaultRoot);
+    expect(rows[0]!.sha256).toBeNull();
   });
 });
 
@@ -206,98 +225,54 @@ describe("why the engine kept that copy", () => {
 
 // ── the library ─────────────────────────────────────────────────────────────
 
-describe("one row per unique content", () => {
-  it("lists a plan group and a vault file as one row, not two", async () => {
-    const { engine, plan } = await readyPlan();
-    const vaultFiles = (await engine.listVaultFiles({ offset: 0, limit: 1000 }))
-      .files;
-    const rows = buildLibrary(plan, vaultFiles);
-    const hashes = rows.map((r) => r.sha256);
-    expect(new Set(hashes).size).toBe(hashes.length);
-    expect(rows.length).toBe(plan.groups.length + vaultFiles.length);
-  });
-
-  it("lists the kept copy once, not once as the source and once as a link", async () => {
-    const { engine, plan } = await readyPlan();
-    const vaultFiles = (await engine.listVaultFiles({ offset: 0, limit: 1000 }))
-      .files;
-    const rows = buildLibrary(plan, vaultFiles);
-    for (const row of rows) {
-      const paths = row.places.map((p) => p.absPath);
-      expect(new Set(paths).size, row.name).toBe(paths.length);
-      expect(row.places.filter((p) => p.kind === "source").length).toBeLessThan(2);
-    }
+describe("every place one content is reachable from", () => {
+  it("lists each place once, and marks the copy whose bytes move", async () => {
+    const { plan } = await readyPlan();
     const group = plan.groups.find((g) => g.occurrences > 1)!;
-    const row = rows.find((r) => r.sha256 === group.sha256)!;
-    expect(row.places).toHaveLength(group.occurrences);
+    const labels = new Map([
+      ["prod", "Production"],
+      ["norm", "Normal"],
+    ]);
+    const places = placesOf(group.sha256, plan, [], labels);
+    expect(places).toHaveLength(group.occurrences);
+    expect(places.filter((p) => p.kind === "source")).toHaveLength(1);
+    expect(new Set(places.map((p) => p.absPath)).size).toBe(places.length);
+    expect(places.find((p) => p.kind === "source")!.absPath).toBe(
+      group.source.absPath,
+    );
   });
 
-  it("shows a vault file nothing points at as an orphan", async () => {
-    const { engine, plan } = await readyPlan();
-    const vaultFiles = (await engine.listVaultFiles({ offset: 0, limit: 1000 }))
-      .files;
-    const rows = buildLibrary(plan, vaultFiles);
-    const orphans = rows.filter((r) => r.isOrphan);
-    expect(orphans.length).toBe(3);
-    for (const orphan of orphans) {
-      expect(orphan.places).toHaveLength(0);
-      expect(orphan.inVaultSince).not.toBeNull();
-    }
-  });
-
-  it("gives every place a group covers, including the one that stays put", async () => {
+  it("adds the places that cannot move, with the reason", async () => {
     const engine = new FixtureEngine();
     engine.devSetSymlinksSupported(true);
     const scan = (await engine.getLastScan())!;
     const plan = await engine.buildPlan(scan.scanId);
-    const rows = buildLibrary(plan, []);
-    const withBlocked = rows.filter((r) =>
-      r.places.some((p) => p.blocked !== null),
-    );
-    expect(withBlocked.length).toBeGreaterThan(0);
-    for (const row of withBlocked) {
-      expect(row.places.some((p) => p.kind === "stays")).toBe(true);
-    }
+    const stuck = plan.blocked.find((b) => b.reason === "fileLocked")!;
+    const places = placesOf(stuck.sha256!, plan, [], new Map());
+    const held = places.find((p) => p.absPath === stuck.absPath)!;
+    expect(held.kind).toBe("stays");
+    expect(held.blocked!.reason).toBe("fileLocked");
   });
 
-  it("finds a file that only appears as something that cannot move", () => {
-    const blocked: BlockedRow = {
-      absPath: "C:\\a\\models\\loras\\stuck.safetensors",
-      installId: "a",
-      installLabel: "Production",
-      sizeBytes: 500,
-      sha256: "B".repeat(64),
-      reason: "permissionDenied",
-      detail: "denied",
+  it("never counts a link twice when the vault and the plan both name it", async () => {
+    const { plan } = await readyPlan();
+    const group = plan.groups[0]!;
+    const asLink = {
+      id: "l1",
+      installId: group.links[0]!.installId,
+      absPath: group.links[0]!.absPath,
+      relPath: group.links[0]!.relPath,
+      linkName: group.links[0]!.linkName,
+      sha256: group.sha256,
+      vaultRelPath: group.vaultRelPath,
+      createdAt: "2026-09-20T00:00:00.000Z",
+      createdBy: "apply" as const,
+      state: "ok" as const,
     };
-    const rows = buildLibrary(
-      {
-        planId: "p",
-        scanId: "s",
-        createdAt: "2026-09-22T00:00:00.000Z",
-        vaultRoot: "C:\\ComfyVault",
-        groups: [],
-        blocked: [blocked],
-        totals: {
-          groups: 0,
-          groupsFreeingSpace: 0,
-          singleCopyGroups: 0,
-          nameClashes: 0,
-          crossVolumeGroups: 0,
-          bytesFreed: 0,
-          bytesMoved: 0,
-          filesMoved: 0,
-          linksCreated: 0,
-          blockedRows: 1,
-          blockedBytes: 500,
-          vaultFreeBytesAfter: 0,
-        },
-      },
-      [],
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.name).toBe("stuck.safetensors");
-    expect(rows[0]!.places[0]!.blocked?.reason).toBe("permissionDenied");
+    const places = placesOf(group.sha256, plan, [asLink], new Map());
+    expect(new Set(places.map((p) => p.absPath)).size).toBe(places.length);
+    expect(places.filter((p) => p.absPath === asLink.absPath)).toHaveLength(1);
+    expect(places.find((p) => p.absPath === asLink.absPath)!.kind).toBe("isLink");
   });
 });
 

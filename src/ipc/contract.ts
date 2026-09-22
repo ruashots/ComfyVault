@@ -284,6 +284,8 @@ export interface PlanLink {
   /** The name the link keeps. It can differ from the vault file's name. */
   linkName: string;
   nameDiffersFromVault: boolean;
+  /** This copy's bytes become the vault file. Its old place gets a link too. */
+  isSource: boolean;
 }
 
 export interface PlanGroup {
@@ -297,6 +299,11 @@ export interface PlanGroup {
   /** The SHA-256 that already owns the plain name. */
   clashesWith: string | null;
   source: PlanSource;
+  /**
+   * Every place that gets a link, the one the bytes move out of included, so
+   * this is always `occurrences` long. Read it as "this many places get a
+   * link". Do not subtract one.
+   */
   links: PlanLink[];
   occurrences: number;
   bytesFreed: number;
@@ -349,6 +356,12 @@ export interface ConsolidationPlan {
   scanId: string;
   createdAt: string;
   vaultRoot: string;
+  /**
+   * False when this computer cannot make links. The groups are still real and
+   * worth reading, which is what sends a person to turn Developer Mode on, but
+   * Apply refuses.
+   */
+  symlinksSupported: boolean;
   groups: PlanGroup[];
   blocked: BlockedRow[];
   totals: PlanTotals;
@@ -461,6 +474,38 @@ export interface VaultFilePage {
   files: VaultFile[];
 }
 
+/** One unique content, across the vault and the installs. */
+export interface ContentRow {
+  sha256: string;
+  /** The vault's name for it, or the name it carries on disk. */
+  name: string;
+  category: string;
+  sizeBytes: number;
+  aliases: string[];
+  /** Places on disk that hold this content right now. */
+  occurrenceCount: number;
+  /** How many of those places are links into the vault. */
+  linkCount: number;
+  inVault: boolean;
+  installIds: string[];
+  /** When the vault took it. Null while it is still out in the installs. */
+  addedAt: string | null;
+  metadata: ModelMetadata | null;
+}
+
+export interface ContentFilter extends VaultFileFilter {
+  /** True: already in the vault. False: still out. Absent: both. */
+  inVault?: boolean;
+}
+
+export interface ContentPage {
+  total: number;
+  offset: number;
+  rows: ContentRow[];
+  /** Where the out-of-vault rows came from. Null means nothing was scanned. */
+  scanId: string | null;
+}
+
 export interface NameGroupName {
   name: string;
   isCanonical: boolean;
@@ -503,10 +548,25 @@ export interface UsageResult {
   used: boolean;
   matches: UsageMatch[];
   /**
-   * Always the same sentence, saying what the check actually did. The interface
-   * must show it next to the answer.
+   * One of exactly two sentences, saying what the check actually did. The
+   * interface must show it next to the answer.
+   *
+   * When there were no saved workflow files at all, it says so. That is a
+   * different answer from "searched and found nothing", and only one of them
+   * means a model might be safe to remove.
    */
   method: string;
+}
+
+/**
+ * True when the engine had no saved workflow file to look in, so every "not
+ * used" is "not checked".
+ *
+ * This reads the engine's own sentence, because the contract gives no flag for
+ * it. comfyvault-core has been asked for one.
+ */
+export function nothingWasSearched(result: UsageResult): boolean {
+  return result.method.startsWith("No saved workflow files were found");
 }
 
 // ── metadata ────────────────────────────────────────────────────────────────
@@ -587,6 +647,8 @@ export interface Engine {
   getPlatformReport(): Promise<PlatformReport>;
   getAppState(): Promise<AppState>;
   selectVault(path: string, createIfMissing: boolean): Promise<VaultInfo>;
+  /** The open vault's facts, above all how much room its drive has left. */
+  getVaultInfo(): Promise<VaultInfo>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
 
@@ -672,6 +734,14 @@ export interface Engine {
     sort?: "name" | "size" | "addedAt" | "linkCount";
     descending?: boolean;
   }): Promise<VaultFilePage>;
+  /** One row per unique content, across the vault and the installs. */
+  listContents(args: {
+    offset: number;
+    limit: number;
+    filter?: ContentFilter;
+    sort?: "name" | "size" | "addedAt" | "linkCount" | "occurrences";
+    descending?: boolean;
+  }): Promise<ContentPage>;
   listNameGroups(): Promise<NameGroup[]>;
   setCanonicalName(sha256: string, name: string): Promise<VaultFile>;
   removeAlias(sha256: string, name: string): Promise<{ removed: true }>;

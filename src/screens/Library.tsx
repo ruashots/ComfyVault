@@ -1,16 +1,25 @@
-import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createResource,
+  onCleanup,
+  onMount,
+} from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
 import { blockedShort, blockedWhy } from "~/domain/blocked";
 import { dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
-import { categoriesOf, type ContentRow } from "~/domain/view";
+import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openLinkPicker } from "~/modals/picker";
 import { useApp, type LibrarySort } from "~/state/store";
-import type { UsageResult } from "~/ipc/contract";
+import { nothingWasSearched } from "~/ipc/contract";
+import type { ContentRow, UsageResult } from "~/ipc/contract";
 
 export interface LibraryFilters {
   query: string;
@@ -20,6 +29,19 @@ export interface LibraryFilters {
 }
 
 /** Search, filter and sort, in one place so the list and its count agree. */
+/**
+ * True only when the engine actually looked and found nothing. When there was
+ * no saved workflow file to search, there is no answer to act on.
+ */
+export function isUnused(result: UsageResult | undefined): boolean {
+  return result !== undefined && !result.used && !nothingWasSearched(result);
+}
+
+/** Every category present in the rows on hand, for the folder filter. */
+export function categoriesOf(rows: readonly ContentRow[]): string[] {
+  return [...new Set(rows.map((r) => r.category).filter(Boolean))].sort();
+}
+
 export function libraryRows(
   rows: readonly ContentRow[],
   view: LibraryFilters,
@@ -28,16 +50,21 @@ export function libraryRows(
   const query = view.query.trim().toLowerCase();
   const out = rows.filter((row) => {
     if (view.category !== "all" && row.category !== view.category) return false;
-    if (view.unusedOnly && usage.get(row.name)?.used !== false) return false;
-    if (query && !row.allNames.join(" ").toLowerCase().includes(query)) return false;
+    if (view.unusedOnly && !isUnused(usage.get(row.name))) return false;
+    if (
+      query &&
+      ![row.name, ...row.aliases].join(" ").toLowerCase().includes(query)
+    ) {
+      return false;
+    }
     return true;
   });
   out.sort((a, b) => {
     if (view.sort === "name") return a.name.localeCompare(b.name);
     if (view.sort === "links") {
-      return b.places.length - a.places.length || b.bytes - a.bytes;
+      return b.occurrenceCount - a.occurrenceCount || b.sizeBytes - a.sizeBytes;
     }
-    return b.bytes - a.bytes;
+    return b.sizeBytes - a.sizeBytes;
   });
   return out;
 }
@@ -137,7 +164,9 @@ function LibraryList() {
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });
 
-  const shownBytes = createMemo(() => rows().reduce((s, r) => s + r.bytes, 0));
+  const shownBytes = createMemo(() =>
+    rows().reduce((sum, r) => sum + r.sizeBytes, 0),
+  );
 
   return (
     <>
@@ -158,7 +187,7 @@ function LibraryList() {
             />
           </label>
           <CategoryMenu categories={categories()} />
-          <Show when={app.usage().size > 0}>
+          <Show when={app.usage().size > 0 && !app.nothingSearched()}>
             <button
               class="chip"
               classList={{ on: app.lib.unusedOnly }}
@@ -170,7 +199,7 @@ function LibraryList() {
           </Show>
           <span style={{ flex: 1 }} />
           <span class="count">
-            {rows().length} of {app.library().length} &middot; {fmt(shownBytes())}
+            {rows().length} of {app.libraryTotal()} &middot; {fmt(shownBytes())}
           </span>
         </div>
 
@@ -208,7 +237,13 @@ function LibraryList() {
             </Show>
             <For each={rows()}>
               {(row) => {
-                const used = () => app.usage().get(row.name)?.used;
+                const answer = () => app.usage().get(row.name);
+                // No dot at all when nothing was searched: an empty dot would
+                // read as "checked, and nothing uses it".
+                const used = () =>
+                  answer() === undefined || app.nothingSearched()
+                    ? undefined
+                    : answer()!.used;
                 return (
                   <button
                     class="lrow"
@@ -226,10 +261,13 @@ function LibraryList() {
                     <Show when={!narrow()}>
                       <span class="lf">{row.category}</span>
                     </Show>
-                    <span class="lz">{fmt(row.bytes)}</span>
+                    <span class="lz">{fmt(row.sizeBytes)}</span>
                     <Show when={!narrow()}>
-                      <span class="lk" classList={{ none: row.places.length === 0 }}>
-                        {row.places.length}
+                      <span
+                        class="lk"
+                        classList={{ none: row.occurrenceCount === 0 }}
+                      >
+                        {row.occurrenceCount}
                       </span>
                     </Show>
                     <span class="go">
@@ -346,7 +384,12 @@ function CategoryMenu(props: { categories: readonly string[] }) {
 
 function Drawer(props: { row: ContentRow }) {
   const app = useApp();
-  const used = () => app.usage().get(props.row.name)?.used;
+  // Nothing was checked is not an answer, so the header says nothing either.
+  const used = () => {
+    const answer = app.usage().get(props.row.name);
+    if (!answer || nothingWasSearched(answer)) return undefined;
+    return answer.used;
+  };
   return (
     <div class="drawer">
       <div class="dhead">
@@ -355,7 +398,7 @@ function Drawer(props: { row: ContentRow }) {
             <Wrap text={props.row.name} />
           </div>
           <div class="det-meta">
-            {props.row.category} &nbsp;&middot;&nbsp; {fmt(props.row.bytes)}
+            {props.row.category} &nbsp;&middot;&nbsp; {fmt(props.row.sizeBytes)}
             <Show when={used() !== undefined}>
               {" "}
               &nbsp;&middot;&nbsp;
@@ -389,6 +432,33 @@ function DrawerBody(props: { row: ContentRow }) {
   const row = () => props.row;
   const answer = () => app.usage().get(row().name);
 
+  /**
+   * Where the vault keeps it, or will. The plan is the authority once there is
+   * one, because it carries the renamed form when two files want one name.
+   */
+  const vaultPath = () => {
+    const group = app.plan()?.groups.find((g) => g.sha256 === row().sha256);
+    const rel = group?.vaultRelPath ?? `${row().category}/${row().name}`;
+    return `${app.vault()?.root ?? ""}\\${rel.replace(/\//g, "\\")}`;
+  };
+
+  // The list gives one row per content. The paths behind it are fetched for the
+  // one row the person opened, rather than for every row nobody looked at.
+  const [places] = createResource(
+    () => row().sha256,
+    async (sha256) => {
+      const links = row().inVault
+        ? await app.engine.listLinks({ sha256 })
+        : [];
+      return placesOf(
+        sha256,
+        app.plan(),
+        links,
+        new Map(app.installs().map((i) => [i.id, i.label])),
+      );
+    },
+  );
+
   const deleteFromVault = () => {
     openConfirm(app, {
       title: "Delete a vault file",
@@ -397,7 +467,7 @@ function DrawerBody(props: { row: ContentRow }) {
         [
           { text: row().name, emph: true },
           { text: " is deleted from the vault and " },
-          { text: fmt(row().bytes), emph: true },
+          { text: fmt(row().sizeBytes), emph: true },
           {
             text: " comes back. Nothing points at it today. This cannot be undone: the bytes are gone.",
           },
@@ -413,13 +483,13 @@ function DrawerBody(props: { row: ContentRow }) {
   return (
     <>
       <div class="det-acts">
-        <Show when={row().inVaultSince}>
+        <Show when={row().inVault}>
           <button class="btn sm" onClick={() => void openLinkPicker(app, row().sha256)}>
             <Icon name="plus" size={11} />
             Link into an instance
           </button>
         </Show>
-        <Show when={row().isOrphan}>
+        <Show when={row().inVault && row().occurrenceCount === 0}>
           <button class="btn sm dng" onClick={deleteFromVault}>
             <Icon name="trash" size={11} />
             Delete
@@ -429,20 +499,20 @@ function DrawerBody(props: { row: ContentRow }) {
 
       <div class="sec" style={{ "margin-top": "14px" }}>
         <span class="t">Where it reaches</span>
-        <span class="n">{row().places.length || "none"}</span>
+        <span class="n">{row().occurrenceCount || "none"}</span>
       </div>
       <Show
-        when={row().places.length > 0}
+        when={(places() ?? []).length > 0}
         fallback={
           <div class="note">
             Nothing points at this file. It is in the vault because an install that
             used it is no longer registered. Link it into an install, or delete it
-            and get {fmt(row().bytes)} back.
+            and get {fmt(row().sizeBytes)} back.
           </div>
         }
       >
         <div class="reach">
-          <For each={row().places}>
+          <For each={places() ?? []}>
             {(place) => (
               <div class="r">
                 <div class="top">
@@ -504,14 +574,12 @@ function DrawerBody(props: { row: ContentRow }) {
       <div class="kv st">
         <span class="k">Path</span>
         <span class="v">
-          <Wrap
-            text={`${app.vault()?.root ?? ""}\\${row().vaultRelPath.replace("/", "\\")}`}
-          />
+          <Wrap text={vaultPath()} />
         </span>
       </div>
       <div class="kv">
         <span class="k w96">Size</span>
-        <span class="v">{fmtExactMB(row().bytes)}</span>
+        <span class="v">{fmtExactMB(row().sizeBytes)}</span>
       </div>
       <div class="kv">
         <span class="k w96">SHA-256</span>
@@ -522,8 +590,8 @@ function DrawerBody(props: { row: ContentRow }) {
       <div class="kv st">
         <span class="k">Added to the vault</span>
         <span class="v">
-          {row().inVaultSince
-            ? dayMonth(row().inVaultSince!)
+          {row().addedAt
+            ? dayMonth(row().addedAt!)
             : "not yet, this plan has not been applied"}
         </span>
       </div>
@@ -545,10 +613,19 @@ function DrawerBody(props: { row: ContentRow }) {
             <Show
               when={result().used}
               fallback={
-                <div class="note">
-                  This filename appears in{" "}
-                  <span class="emph">no saved workflow file</span>.
-                </div>
+                <Show
+                  when={!nothingWasSearched(result())}
+                  fallback={
+                    <div class="note">
+                      Nothing was checked for this model.
+                    </div>
+                  }
+                >
+                  <div class="note">
+                    This filename appears in{" "}
+                    <span class="emph">no saved workflow file</span>.
+                  </div>
+                </Show>
               }
             >
               <div class="note">
@@ -570,20 +647,22 @@ function DrawerBody(props: { row: ContentRow }) {
               </For>
             </Show>
             <div class="note up">{result().method}</div>
-            <div class="note">
-              A workflow you never saved lives in the browser, where ComfyVault
-              cannot see it, so this is not proof that nothing uses the model.
-            </div>
+            <Show when={!nothingWasSearched(result())}>
+              <div class="note">
+                A workflow you never saved lives in the browser, where ComfyVault
+                cannot see it, so this is not proof that nothing uses the model.
+              </div>
+            </Show>
           </>
         )}
       </Show>
 
-      <Show when={row().allNames.length > 1}>
+      <Show when={row().aliases.length > 0}>
         <div class="sec secgap plain">
           <span class="t">Other names for these bytes</span>
-          <span class="n">{row().allNames.length}</span>
+          <span class="n">{row().aliases.length + 1}</span>
         </div>
-        <For each={row().allNames}>
+        <For each={[row().name, ...row().aliases]}>
           {(name) => (
             <div class="kv namerow">
               <span class="v">
@@ -602,10 +681,8 @@ function DrawerBody(props: { row: ContentRow }) {
         </div>
       </Show>
 
-      <Show when={row().places.length > 0}>
-        <ThumbnailNoteForModel
-          installIds={row().places.map((p) => p.installId)}
-        />
+      <Show when={row().installIds.length > 0}>
+        <ThumbnailNoteForModel installIds={row().installIds} />
       </Show>
 
       <div class="sec secgap plain">

@@ -36,6 +36,7 @@ export async function createEngine(): Promise<Engine> {
     reset: (empty = false) => engine.devReset(empty),
     breakLinks: (count = 1) => engine.devBreakLinks(count),
     forgetVersions: () => engine.devForgetVersions(),
+    noWorkflows: () => engine.devSetWorkflowsOnDisk(0),
   };
   return engine;
 }

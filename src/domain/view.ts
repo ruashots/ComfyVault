@@ -12,12 +12,11 @@ import type {
   BlockedRow,
   ConsolidationPlan,
   Install,
-  ModelMetadata,
+  Link,
   NameGroup,
   PlanGroup,
   ScanTotals,
   UsageResult,
-  VaultFile,
 } from "~/ipc/contract";
 
 // ── the Consolidate view ────────────────────────────────────────────────────
@@ -37,6 +36,8 @@ export interface CountedNeverMoved {
 
 export interface PlanView {
   readonly plan: ConsolidationPlan;
+  /** What the listed blocked rows add up to, so the count matches the list. */
+  readonly blockedBytes: number;
   /** Groups that give space back, biggest win first. */
   readonly duplicates: readonly PlanGroup[];
   /** Groups that move into the vault and free nothing. */
@@ -90,6 +91,7 @@ export function buildPlanView(
 
   return {
     plan,
+    blockedBytes: blocked.reduce((sum, row) => sum + row.sizeBytes, 0),
     duplicates,
     singles,
     clashes,
@@ -143,7 +145,7 @@ export function chosenBecauseText(
   }
 }
 
-// ── the Library view ────────────────────────────────────────────────────────
+// ── the Library drawer ──────────────────────────────────────────────────────
 
 export type PlaceKind = "source" | "willLink" | "isLink" | "stays";
 
@@ -158,158 +160,64 @@ export interface Place {
   blocked: BlockedRow | null;
 }
 
-export interface ContentRow {
-  sha256: string;
-  /** The name the vault uses, or will use. */
-  name: string;
-  category: string;
-  bytes: number;
-  vaultRelPath: string;
-  /** Every place these bytes are reachable today. */
-  places: readonly Place[];
-  /** Other names the content carries. */
-  aliases: readonly string[];
-  /** Every name, the vault's own first. */
-  allNames: readonly string[];
-  /** Set once the vault holds it. */
-  inVaultSince: string | null;
-  linkCount: number;
-  metadata: ModelMetadata | null;
-  /** Nothing points at it and the vault holds it alone. */
-  isOrphan: boolean;
-  /** The group that will act on it, when the plan has one. */
-  groupId: string | null;
-}
-
 /**
- * One row per unique content, whether the vault holds it or it is still out in
- * the installs. Vault files and plan groups are two views of the same content,
- * so a content present in both is merged into one row.
+ * Every place one content is reachable from, for the drawer.
+ *
+ * The list itself comes from the engine one row per content. This fills in the
+ * paths for the one row the person opened, from the plan for what is still out
+ * in the installs and from the vault's own links for what is already in.
  */
-export function buildLibrary(
+export function placesOf(
+  sha256: string,
   plan: ConsolidationPlan | null,
-  vaultFiles: readonly VaultFile[],
-): ContentRow[] {
-  const rows = new Map<string, ContentRow>();
+  links: readonly Link[],
+  installLabels: ReadonlyMap<string, string>,
+): Place[] {
+  const label = (id: string) => installLabels.get(id) ?? id;
+  const places: Place[] = links.map((link) => ({
+    installId: link.installId,
+    installLabel: label(link.installId),
+    absPath: link.absPath,
+    relPath: link.relPath,
+    name: link.linkName,
+    kind: "isLink",
+    blocked: null,
+  }));
+  const seen = new Set(places.map((p) => p.absPath.toLowerCase()));
 
-  for (const file of vaultFiles) {
-    rows.set(file.sha256, {
-      sha256: file.sha256,
-      name: file.canonicalName,
-      category: file.category,
-      bytes: file.sizeBytes,
-      vaultRelPath: file.vaultRelPath,
-      places: file.links.map((link) => ({
+  const group = plan?.groups.find((g) => g.sha256 === sha256);
+  if (group) {
+    for (const link of group.links) {
+      if (seen.has(link.absPath.toLowerCase())) continue;
+      seen.add(link.absPath.toLowerCase());
+      places.push({
         installId: link.installId,
-        installLabel: link.installId,
+        installLabel: link.installLabel,
         absPath: link.absPath,
         relPath: link.relPath,
         name: link.linkName,
-        kind: "isLink" as const,
+        kind: link.isSource ? "source" : "willLink",
         blocked: null,
-      })),
-      aliases: file.aliases,
-      allNames: [file.canonicalName, ...file.aliases],
-      inVaultSince: file.addedAt,
-      linkCount: file.linkCount,
-      metadata: file.metadata,
-      isOrphan: file.linkCount === 0,
-      groupId: null,
+      });
+    }
+  }
+
+  for (const row of plan?.blocked ?? []) {
+    if (row.sha256 !== sha256 || isSkippedByDesign(row.reason)) continue;
+    if (seen.has(row.absPath.toLowerCase())) continue;
+    seen.add(row.absPath.toLowerCase());
+    places.push({
+      installId: row.installId ?? "",
+      installLabel: row.installLabel ?? "",
+      absPath: row.absPath,
+      relPath: row.absPath,
+      name: fileNameOf(row.absPath),
+      kind: "stays",
+      blocked: row,
     });
   }
 
-  if (plan) {
-    const blockedBySha = new Map<string, BlockedRow[]>();
-    for (const row of plan.blocked) {
-      if (!row.sha256 || isSkippedByDesign(row.reason)) continue;
-      const list = blockedBySha.get(row.sha256);
-      if (list) list.push(row);
-      else blockedBySha.set(row.sha256, [row]);
-    }
-
-    for (const group of plan.groups) {
-      // Every path the group covers is in links, the one the file moves out of
-      // included. Adding the source separately would list it twice.
-      const places: Place[] = [
-        ...group.links.map((link) => ({
-          installId: link.installId,
-          installLabel: link.installLabel,
-          absPath: link.absPath,
-          relPath: link.relPath,
-          name: link.linkName,
-          kind:
-            link.absPath === group.source.absPath
-              ? ("source" as const)
-              : ("willLink" as const),
-          blocked: null,
-        })),
-        ...(blockedBySha.get(group.sha256) ?? []).map((row) => ({
-          installId: row.installId ?? "",
-          installLabel: row.installLabel ?? "",
-          absPath: row.absPath,
-          relPath: row.absPath,
-          name: fileNameOf(row.absPath),
-          kind: "stays" as const,
-          blocked: row,
-        })),
-      ];
-
-      const name = fileNameOf(group.vaultRelPath);
-      const names = [...new Set(places.map((p) => p.name))];
-      const existing = rows.get(group.sha256);
-      rows.set(group.sha256, {
-        sha256: group.sha256,
-        name,
-        category: group.category,
-        bytes: group.sizeBytes,
-        vaultRelPath: group.vaultRelPath,
-        places: [...(existing?.places ?? []), ...places],
-        aliases: names.filter((n) => n !== name),
-        allNames: [name, ...names.filter((n) => n !== name)],
-        inVaultSince: existing?.inVaultSince ?? null,
-        linkCount: existing?.linkCount ?? 0,
-        metadata: existing?.metadata ?? null,
-        isOrphan: false,
-        groupId: group.groupId,
-      });
-    }
-
-    // A file that cannot move and belongs to no group still has to be findable.
-    for (const [sha, blockedRows] of blockedBySha) {
-      if (rows.has(sha)) continue;
-      const first = blockedRows[0]!;
-      rows.set(sha, {
-        sha256: sha,
-        name: fileNameOf(first.absPath),
-        category: "",
-        bytes: first.sizeBytes,
-        vaultRelPath: "",
-        places: blockedRows.map((row) => ({
-          installId: row.installId ?? "",
-          installLabel: row.installLabel ?? "",
-          absPath: row.absPath,
-          relPath: row.absPath,
-          name: fileNameOf(row.absPath),
-          kind: "stays" as const,
-          blocked: row,
-        })),
-        aliases: [],
-        allNames: [fileNameOf(first.absPath)],
-        inVaultSince: null,
-        linkCount: 0,
-        metadata: null,
-        isOrphan: false,
-        groupId: null,
-      });
-    }
-  }
-
-  return [...rows.values()];
-}
-
-/** Every category present, for the Library's folder filter. */
-export function categoriesOf(rows: readonly ContentRow[]): string[] {
-  return [...new Set(rows.map((r) => r.category).filter(Boolean))].sort();
+  return places;
 }
 
 // ── installs ────────────────────────────────────────────────────────────────

@@ -14,6 +14,8 @@ import type {
   ApplyResult,
   AppState,
   ConsolidationPlan,
+  ContentFilter,
+  ContentPage,
   DirectoryListing,
   Engine,
   Install,
@@ -45,6 +47,7 @@ import {
   VAULT_TOTAL_BYTES,
   VAULT_VOLUME,
   buildWorld,
+  contentRowsOf,
   nameGroupsOf,
   planOf,
   scanEntriesOf,
@@ -66,6 +69,10 @@ const SYMLINK_GUIDANCE =
 
 const USAGE_METHOD =
   "The file name was searched for as plain text inside saved workflow files.";
+
+const NOTHING_SEARCHED =
+  "No saved workflow files were found, so nothing was searched. A workflow " +
+  "that was never saved lives in the browser, where this app cannot see it.";
 
 // ── the fake disk the folder picker walks ───────────────────────────────────
 
@@ -270,6 +277,11 @@ export class FixtureEngine implements Engine {
       totalStoredBytes: stored,
       schemaVersion: 1,
     };
+  }
+
+  async getVaultInfo(): Promise<VaultInfo> {
+    if (!this.vaultOpen) throw error("notInitialized", "No vault is open.");
+    return this.selectVault(VAULT_ROOT);
   }
 
   async getSettings(): Promise<Settings> {
@@ -851,6 +863,58 @@ export class FixtureEngine implements Engine {
     };
   }
 
+  async listContents(args: {
+    offset: number;
+    limit: number;
+    filter?: ContentFilter;
+    sort?: "name" | "size" | "addedAt" | "linkCount" | "occurrences";
+    descending?: boolean;
+  }): Promise<ContentPage> {
+    const filter = args.filter ?? {};
+    let rows = contentRowsOf(this.world);
+    if (filter.inVault !== undefined) {
+      rows = rows.filter((r) => r.inVault === filter.inVault);
+    }
+    if (filter.category) rows = rows.filter((r) => r.category === filter.category);
+    if (filter.minSizeBytes !== undefined) {
+      rows = rows.filter((r) => r.sizeBytes >= filter.minSizeBytes!);
+    }
+    if (filter.nameContains) {
+      const needle = filter.nameContains.toLowerCase();
+      rows = rows.filter((r) =>
+        [r.name, ...r.aliases].some((n) => n.toLowerCase().includes(needle)),
+      );
+    }
+    if (filter.withAliasesOnly) rows = rows.filter((r) => r.aliases.length > 0);
+    // A model still sitting in an install is not an orphan: it is there.
+    if (filter.orphansOnly) {
+      rows = rows.filter((r) => r.inVault && r.occurrenceCount === 0);
+    }
+
+    const descending = args.descending ?? true;
+    const by = args.sort ?? "size";
+    rows.sort((a, b) => {
+      const order =
+        by === "name"
+          ? a.name.localeCompare(b.name)
+          : by === "addedAt"
+            ? (a.addedAt ?? "").localeCompare(b.addedAt ?? "")
+            : by === "linkCount"
+              ? a.linkCount - b.linkCount
+              : by === "occurrences"
+                ? a.occurrenceCount - b.occurrenceCount
+                : a.sizeBytes - b.sizeBytes;
+      return descending ? -order : order;
+    });
+
+    return {
+      total: rows.length,
+      offset: args.offset,
+      rows: rows.slice(args.offset, args.offset + Math.min(args.limit, 1000)),
+      scanId: this.lastScan?.scanId ?? null,
+    };
+  }
+
   async listNameGroups(): Promise<NameGroup[]> {
     return nameGroupsOf(this.world);
   }
@@ -936,6 +1000,14 @@ export class FixtureEngine implements Engine {
   // ── usage and metadata ────────────────────────────────────────────────────
 
   async checkModelUsage(names: string[]): Promise<UsageResult[]> {
+    if (this.world.workflowsOnDisk === 0) {
+      return names.map((name) => ({
+        name,
+        used: false,
+        matches: [],
+        method: NOTHING_SEARCHED,
+      }));
+    }
     return names.map((name) => {
       const content = this.world.contents.find(
         (c) => c.filename === name || c.copies.some((copy) => copy.name === name),
@@ -1036,6 +1108,11 @@ export class FixtureEngine implements Engine {
     }
     for (const sha of broken) this.world.vault.delete(sha);
     return this.world.links.filter((l) => broken.has(l.sha256)).length;
+  }
+
+  /** Nobody ever pressed Save, so there is nothing on disk to search. */
+  devSetWorkflowsOnDisk(count: number): void {
+    this.world.workflowsOnDisk = count;
   }
 
   /** An install too old to record its version, which many really are. */

@@ -17,6 +17,7 @@ import type {
   BlockReason,
   BlockedRow,
   ConsolidationPlan,
+  ContentRow,
   Install,
   InstallScanTotals,
   Link,
@@ -196,6 +197,8 @@ export interface World {
   running: string[];
   symlinksSupported: boolean;
   metadataLookupsEnabled: boolean;
+  /** Saved workflow files there are to search. Zero means nothing was searched. */
+  workflowsOnDisk: number;
 }
 
 /** A stable stand-in for a real SHA-256, so identifiers never move. */
@@ -348,6 +351,7 @@ export function buildWorld(): World {
     running: ["prod"],
     symlinksSupported: false,
     metadataLookupsEnabled: true,
+    workflowsOnDisk: 42,
   };
 }
 
@@ -503,22 +507,8 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
     if (usable.length === 0) continue;
 
     // The plan is still built when links are unavailable, so the person can read
-    // what would happen before turning Developer Mode on. Every row it would
-    // touch is also marked blocked, which is what holds Apply back.
-    if (!world.symlinksSupported) {
-      for (const copy of usable) {
-        blocked.push({
-          absPath: copy.absPath,
-          installId: copy.installId,
-          installLabel: installLabel(copy.installId),
-          sizeBytes: content.bytes,
-          sha256: content.sha256,
-          reason: "symlinkUnsupported",
-          detail: "This system cannot create symbolic links right now.",
-        });
-      }
-    }
-
+    // what would happen before turning Developer Mode on. One blocked row says
+    // so, added below: the reason is a fact about the computer, not any file.
     const sorted = [...usable].sort((a, b) => a.absPath.localeCompare(b.absPath));
     const onVaultVolume = sorted.find((c) => c.volume === VAULT_VOLUME);
     const sourceCopy = onVaultVolume ?? sorted[0]!;
@@ -545,6 +535,8 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       chosenBecause,
     };
 
+    // Every place that held the file gets a link, the one the bytes move out
+    // of included, so this is always `occurrences` long.
     const links: PlanLink[] = sorted.map((copy) => ({
       installId: copy.installId,
       installLabel: installLabel(copy.installId),
@@ -552,6 +544,7 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       relPath: copy.relPath,
       linkName: copy.name,
       nameDiffersFromVault: copy.name !== vaultName,
+      isSource: copy.absPath === sourceCopy.absPath,
     }));
 
     groups.push({
@@ -568,6 +561,18 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       bytesFreed: (sorted.length - 1) * content.bytes,
       singleCopy: sorted.length === 1,
       crossVolume: sorted.some((c) => c.volume !== VAULT_VOLUME),
+    });
+  }
+
+  if (!world.symlinksSupported) {
+    blocked.push({
+      absPath: VAULT_ROOT,
+      installId: null,
+      installLabel: null,
+      sizeBytes: 0,
+      sha256: null,
+      reason: "symlinkUnsupported",
+      detail: "This computer cannot create symbolic links right now.",
     });
   }
 
@@ -602,6 +607,7 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
     scanId,
     createdAt: new Date().toISOString(),
     vaultRoot: VAULT_ROOT,
+    symlinksSupported: world.symlinksSupported,
     groups,
     blocked,
     totals: {
@@ -639,6 +645,34 @@ export function vaultFilesOf(world: World): VaultFile[] {
       present: true,
     };
   });
+}
+
+/** One row per unique content, across the vault and the installs. */
+export function contentRowsOf(world: World): ContentRow[] {
+  const rows: ContentRow[] = [];
+  for (const content of world.contents) {
+    const entry = world.vault.get(content.sha256);
+    const links = world.links.filter((l) => l.sha256 === content.sha256);
+    if (content.copies.length === 0 && !entry) continue;
+    rows.push({
+      sha256: content.sha256,
+      name: entry?.canonicalName ?? content.filename,
+      category: content.category,
+      sizeBytes: content.bytes,
+      aliases: entry?.aliases ?? [
+        ...new Set(
+          content.copies.map((c) => c.name).filter((n) => n !== content.filename),
+        ),
+      ],
+      occurrenceCount: content.copies.length,
+      linkCount: links.length,
+      inVault: entry !== undefined,
+      installIds: [...new Set(content.copies.map((c) => c.installId))],
+      addedAt: entry?.addedAt ?? null,
+      metadata: world.metadataLookupsEnabled ? content.metadata : null,
+    });
+  }
+  return rows;
 }
 
 export function nameGroupsOf(world: World): NameGroup[] {
