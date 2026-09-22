@@ -82,6 +82,27 @@ impl SymlinkCapability {
 /// The sentence the interface shows when links cannot be created on Windows.
 pub const DEVELOPER_MODE_GUIDANCE: &str = "Windows needs Developer Mode to create the links this app uses. Open Settings, go to System, then For developers, and turn Developer Mode on. You do not need to restart.";
 
+/// What this computer is, and what it can do, as the contract defines it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformReport {
+    pub os: String,
+    pub symlinks: SymlinkCapability,
+    /// Windows only. `None` on every other system.
+    pub long_paths_enabled: Option<bool>,
+}
+
+/// The name the contract uses for this operating system.
+pub fn os_name() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
 /// Whether another program holds a file open.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

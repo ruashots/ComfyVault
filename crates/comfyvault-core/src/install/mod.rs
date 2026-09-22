@@ -32,6 +32,9 @@ pub struct Install {
     pub output_model_dirs: Vec<OutputModelDir>,
     pub added_at: crate::time_util::Timestamp,
     pub last_scan_at: Option<crate::time_util::Timestamp>,
+    /// What the last scan found in this install. `None` until it is scanned.
+    #[serde(default)]
+    pub last_scan_totals: Option<crate::store::InstallScanTotals>,
 }
 
 impl Install {
@@ -60,6 +63,7 @@ impl Install {
             output_model_dirs: c.output_model_dirs.clone(),
             added_at: crate::time_util::Timestamp::now(),
             last_scan_at: None,
+            last_scan_totals: None,
         })
     }
 
