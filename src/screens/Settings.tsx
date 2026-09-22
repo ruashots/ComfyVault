@@ -441,13 +441,18 @@ export function SettingsScreen() {
                 class="btn sm"
                 onClick={() =>
                   void (async () => {
-                    const health = await app.engine.checkVaultHealth();
+                    // Refresh so the whole interface learns what the check found,
+                    // not just this toast: a broken link has a panel of its own.
+                    await app.actions.refresh();
+                    const health = app.health();
+                    const broken = app.danglingLinks().length;
                     app.actions.showToast(
-                      health.ok
-                        ? `Checked ${health.checkedLinks} links and ${health.checkedFiles} files \u00b7 all well`
-                        : `${health.danglingLinks.length} links point at a file that is not there`,
-                      health.ok ? "ok" : "bad",
+                      broken > 0
+                        ? `${broken} ${broken === 1 ? "link points" : "links point"} at a file that is not there \u00b7 see Cleanup`
+                        : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files \u00b7 all well`,
+                      broken > 0 ? "bad" : "ok",
                     );
+                    if (broken > 0) app.actions.go("cleanup");
                   })()
                 }
               >

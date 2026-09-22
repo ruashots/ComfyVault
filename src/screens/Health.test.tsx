@@ -1,0 +1,139 @@
+import { screen } from "@solidjs/testing-library";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ConfirmModalView } from "~/modals/confirm";
+import { CleanupScreen } from "~/screens/Cleanup";
+import { HomeScreen } from "~/screens/Home";
+import { LibraryScreen } from "~/screens/Library";
+import { FixtureEngine } from "~/ipc/fixture/engine";
+import { renderWithApp, waitFor, type Harness } from "~/test/render";
+
+let harness: Harness | null = null;
+
+afterEach(() => {
+  harness?.unmount();
+  harness = null;
+});
+
+/** Run once, then take a file out of the vault from underneath its links. */
+async function withBrokenLinks(screenUnderTest: () => ReturnType<typeof HomeScreen>) {
+  const engine = new FixtureEngine({ speed: 200 });
+  engine.devSetSymlinksSupported(true);
+  engine.devSetComfyRunning(false);
+  const scan = (await engine.getLastScan())!;
+  const plan = await engine.buildPlan(scan.scanId);
+  await engine.startApply({
+    planId: plan.planId,
+    groupIds: plan.groups.slice(0, 3).map((g) => g.groupId),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const broken = engine.devBreakLinks(1);
+  expect(broken).toBeGreaterThan(0);
+
+  harness = await renderWithApp(
+    () => (
+      <>
+        {screenUnderTest()}
+        <ConfirmModalView />
+      </>
+    ),
+    { engine },
+  );
+  await waitFor(() => harness!.app.danglingLinks().length > 0);
+  return harness;
+}
+
+describe("a link that points at a file that is not there", () => {
+  it(
+    "is the first thing Home says, and offers to remove it",
+    async () => {
+      const { app } = await withBrokenLinks(() => <HomeScreen />);
+      const panel = document.querySelector(".blk")!;
+      expect(panel.textContent).toContain("at a file that is not there");
+      expect(panel.textContent).toContain(
+        "ComfyUI will list each of these in its model dropdown and then fail to load it",
+      );
+      expect(panel.textContent).toContain(
+        "write straight through the broken link",
+      );
+      // It comes before the figures.
+      const scroll = document.querySelector(".scroll")!;
+      expect(scroll.firstElementChild).toBe(panel);
+      expect(screen.getAllByRole("button", { name: /Remove/ }).length).toBeGreaterThan(0);
+      expect(app.danglingLinks().length).toBeGreaterThan(0);
+    },
+    15_000,
+  );
+
+  it(
+    "goes away once the broken link is removed",
+    async () => {
+      const { app } = await withBrokenLinks(() => <CleanupScreen />);
+      const before = app.danglingLinks().length;
+      await userEvent.click(
+        screen.getAllByRole("button", { name: "Remove this one" })[0]!,
+      );
+      await waitFor(() => app.danglingLinks().length === before - 1);
+      expect(app.danglingLinks().length).toBe(before - 1);
+    },
+    15_000,
+  );
+
+  it(
+    "removes every one of them when asked, and says nothing is lost",
+    async () => {
+      const { app } = await withBrokenLinks(() => <CleanupScreen />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /Remove (it|them all)/ }),
+      );
+      await waitFor(() => document.querySelector(".modal") !== null);
+      const modal = document.querySelector(".modal")!;
+      expect(modal.textContent).toContain("no model file is deleted");
+      expect(modal.textContent).toContain("points at nothing");
+      await userEvent.click(screen.getByRole("button", { name: /^Remove \d+ links$/ }));
+      await waitFor(() => app.danglingLinks().length === 0);
+      expect(document.querySelector(".blk")).toBeNull();
+    },
+    15_000,
+  );
+});
+
+describe("what the workflow check actually did", () => {
+  it("is said next to the list of models nothing names", async () => {
+    const engine = new FixtureEngine();
+    harness = await renderWithApp(() => <LibraryScreen />, { engine });
+    await waitFor(() => harness!.app.usage().size > 0);
+    harness.app.setLib("unusedOnly", true);
+    await waitFor(() => document.querySelector(".lib-method") !== null);
+    const note = document.querySelector(".lib-method")!;
+    expect(note.textContent).toContain(
+      "The file name was searched for as plain text inside saved workflow files.",
+    );
+    expect(note.textContent).toContain("not a list of models that are safe to delete");
+  });
+
+  it("is said next to the answer for one model", async () => {
+    const engine = new FixtureEngine();
+    harness = await renderWithApp(() => <LibraryScreen />, { engine });
+    await waitFor(() => harness!.app.usage().size > 0);
+    const row = harness.app.library()[0]!;
+    harness.app.setLib({ selected: row.sha256, drawerOpen: true });
+    await waitFor(() => document.querySelector(".drawer") !== null);
+    expect(document.querySelector(".drawer")!.textContent).toContain(
+      "The file name was searched for as plain text inside saved workflow files.",
+    );
+  });
+});
+
+describe("a ComfyUI that will not show a picture for a linked model", () => {
+  it("says so on the screen where the person decides", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetSymlinksSupported(true);
+    harness = await renderWithApp(() => <HomeScreen />, { engine });
+    await waitFor(() => harness!.app.plan() !== null);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("will not show a preview thumbnail");
+    expect(text).toContain("Loading the model and running a workflow are not affected");
+  });
+});

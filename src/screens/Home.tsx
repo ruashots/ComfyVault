@@ -1,6 +1,7 @@
 import { For, Show, createMemo } from "solid-js";
 
 import { Icon, Mark } from "~/components/Icon";
+import { DanglingLinks } from "~/components/DanglingLinks";
 import { Header, Warnbar } from "~/components/Shell";
 import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
 import { openInstallPicker } from "~/modals/picker";
@@ -83,6 +84,7 @@ function HomeReport() {
       <div class="screen">
         <Warnbar />
         <div class="scroll">
+          <DanglingLinks />
           <Show when={totals()} fallback={<NotScannedYet />}>
             {(t) => (
               <>

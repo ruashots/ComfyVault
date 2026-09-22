@@ -34,6 +34,7 @@ export async function createEngine(): Promise<Engine> {
     symlinks: (on: boolean) => engine.devSetSymlinksSupported(on),
     comfyRunning: (on: boolean) => engine.devSetComfyRunning(on),
     reset: (empty = false) => engine.devReset(empty),
+    breakLinks: (count = 1) => engine.devBreakLinks(count),
   };
   return engine;
 }

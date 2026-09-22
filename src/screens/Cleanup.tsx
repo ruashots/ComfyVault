@@ -1,6 +1,7 @@
 import { For, Show, createMemo } from "solid-js";
 
 import { Icon } from "~/components/Icon";
+import { DanglingLinks, ReplacedLinks } from "~/components/DanglingLinks";
 import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
 import { dayMonth, fmt } from "~/domain/format";
@@ -44,10 +45,15 @@ function CleanupBody() {
     <>
       <Header
         title="Cleanup"
-        sub={`${groups().length} name groups · ${app.orphans().length} unused vault files`}
+        sub={
+          app.danglingLinks().length > 0
+            ? `${app.danglingLinks().length} broken links · ${groups().length} name groups · ${app.orphans().length} unused vault files`
+            : `${groups().length} name groups · ${app.orphans().length} unused vault files`
+        }
       />
       <div class="screen">
         <div class="scroll">
+          <DanglingLinks />
           <div class="sec">
             <span class="t">One model, more than one name</span>
             <span class="n">{groups().length} groups</span>
@@ -93,6 +99,7 @@ function CleanupBody() {
             </div>
             <For each={app.orphans()}>{(file) => <OrphanRow file={file} />}</For>
           </Show>
+          <ReplacedLinks />
         </div>
       </div>
     </>

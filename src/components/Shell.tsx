@@ -63,7 +63,11 @@ export function Rail() {
       return app.planView()?.duplicates.length || null;
     }
     if (key === "cleanup") {
-      return app.nameGroups().length + app.orphans().length || null;
+      return (
+        app.danglingLinks().length +
+          app.nameGroups().length +
+          app.orphans().length || null
+      );
     }
     return null;
   };
@@ -208,6 +212,10 @@ export function Warnbar() {
   const blockers = () => gateBlockers(app.gate());
 
   const message = createMemo(() => {
+    const dangling = app.danglingLinks().length;
+    if (dangling > 0) {
+      return `${dangling} ${dangling === 1 ? "link points" : "links point"} at a file that is not there`;
+    }
     const list = blockers();
     if (list.length > 1) return `${list.length} things block Apply`;
     const first = list[0];
@@ -224,14 +232,19 @@ export function Warnbar() {
     }
   });
 
+  const showing = () =>
+    app.hasInstalls() && (blockers().length > 0 || app.danglingLinks().length > 0);
+  /** A broken link is settled in Cleanup; everything else in Consolidate. */
+  const goesTo = () => (app.danglingLinks().length > 0 ? "cleanup" : "consolidate");
+
   return (
-    <Show when={app.hasInstalls() && blockers().length > 0}>
+    <Show when={showing()}>
       <div class="warnbar" role="status">
         <Icon name="warn" size={13} />
         <span>{message()}</span>
         <span class="sp" />
-        <Show when={app.screen() !== "consolidate"}>
-          <button class="btn sm dng" onClick={() => app.actions.go("consolidate")}>
+        <Show when={app.screen() !== goesTo()}>
+          <button class="btn sm dng" onClick={() => app.actions.go(goesTo())}>
             See what to fix
           </button>
         </Show>

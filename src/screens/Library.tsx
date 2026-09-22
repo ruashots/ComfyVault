@@ -196,6 +196,15 @@ function LibraryList() {
               <span class="h-go" />
             </div>
 
+            <Show when={app.lib.unusedOnly && app.usageMethod()}>
+              {(method) => (
+                <div class="lib-method" role="note">
+                  {method()} A workflow you never saved lives in the browser,
+                  where ComfyVault cannot see it, so this list is not a list of
+                  models that are safe to delete.
+                </div>
+              )}
+            </Show>
             <For each={rows()}>
               {(row) => {
                 const used = () => app.usage().get(row.name)?.used;
@@ -589,6 +598,22 @@ function DrawerBody(props: { row: ContentRow }) {
         <div class="note up">
           The same file is stored under more than one name. Cleanup can settle on
           one.
+        </div>
+      </Show>
+
+      <Show
+        when={
+          row().places.length > 0 &&
+          app
+            .installViews()
+            .filter((v) => v.thumbnailsAffected)
+            .some((v) => row().places.some((p) => p.installId === v.install.id))
+        }
+      >
+        <div class="note up">
+          Once this model is reached through a link, ComfyUI will not show a
+          picture for it in the model browser. It still loads, and workflows that
+          use it are not affected.
         </div>
       </Show>
 

@@ -628,3 +628,9 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+/* the sentence that says what the workflow check actually did */
+.lib-method{
+  padding:8px 12px;font-size:9.5px;line-height:1.55;color:var(--t-dim);
+  border-bottom:1px solid var(--div);background:rgba(172,163,138,.022);
+}

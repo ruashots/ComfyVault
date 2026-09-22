@@ -54,6 +54,7 @@ import {
 } from "~/ipc/fixture/world";
 
 const MB = 1024 * 1024;
+/** How long a fake scan and a fake run take. Tests shorten them. */
 const SCAN_MS = 16_000;
 const APPLY_MS = 10_000;
 const TICK_MS = 100;
@@ -178,9 +179,23 @@ export class FixtureEngine implements Engine {
   private revertDoneEvent = new Emitter<ApplyResult>();
   private revertErrorEvent = new Emitter<VaultError>();
 
-  constructor(options: { empty?: boolean } = {}) {
+  /** Everything is this many times faster. Tests pass a large number. */
+  private readonly speed: number;
+
+  constructor(options: { empty?: boolean; speed?: number } = {}) {
+    this.speed = options.speed ?? 1;
     if (options.empty === true) this.emptyWorld();
     else this.recordScan("scan-1");
+  }
+
+  private get scanMs(): number {
+    return SCAN_MS / this.speed;
+  }
+  private get applyMs(): number {
+    return APPLY_MS / this.speed;
+  }
+  private get tickMs(): number {
+    return Math.max(1, Math.round(TICK_MS / this.speed));
   }
 
   private emptyWorld(): void {
@@ -452,7 +467,7 @@ export class FixtureEngine implements Engine {
 
     this.scanTimer = setInterval(() => {
       const elapsed = Date.now() - started;
-      const overall = Math.min(1, elapsed / SCAN_MS);
+      const overall = Math.min(1, elapsed / this.scanMs);
       const phase: ScanProgress["phase"] =
         overall < 0.2 ? "enumerating" : overall < 0.95 ? "hashing" : "finalizing";
       const hashed = Math.max(0, Math.min(1, (overall - 0.2) / 0.75));
@@ -477,7 +492,7 @@ export class FixtureEngine implements Engine {
         bytesFromCache: 0,
         currentPath: phase === "hashing" ? (entry?.absPath ?? null) : null,
         elapsedMs: elapsed,
-        etaMs: Math.max(0, SCAN_MS - elapsed),
+        etaMs: Math.max(0, this.scanMs - elapsed),
       });
 
       if (overall >= 1) {
@@ -485,7 +500,7 @@ export class FixtureEngine implements Engine {
         this.busy = null;
         this.scanDoneEvent.emit(this.recordScan(scanId));
       }
-    }, TICK_MS);
+    }, this.tickMs);
 
     return { scanId };
   }
@@ -567,7 +582,7 @@ export class FixtureEngine implements Engine {
 
     this.applyTimer = setInterval(() => {
       const elapsed = Date.now() - started;
-      const span = this.applyCancelling ? APPLY_MS * 0.35 : APPLY_MS;
+      const span = this.applyCancelling ? this.applyMs * 0.35 : this.applyMs;
       const overall = Math.min(1, elapsed / span);
       const upto = Math.min(groups.length, Math.floor(overall * groups.length));
 
@@ -634,7 +649,7 @@ export class FixtureEngine implements Engine {
         this.recordScan(this.lastScan?.scanId ?? "scan-1");
         this.applyDoneEvent.emit(result);
       }
-    }, TICK_MS);
+    }, this.tickMs);
 
     return { applyId };
   }
@@ -875,14 +890,28 @@ export class FixtureEngine implements Engine {
   }
 
   async checkVaultHealth(): Promise<VaultHealth> {
+    // A link dangles when the vault no longer holds what it points at. The
+    // engine verifies each recorded link on disk; here the world is the disk.
+    const danglingLinks = this.world.links.filter(
+      (link) => !this.world.vault.has(link.sha256),
+    );
+    const replacedLinks = this.world.links.filter((link) => {
+      const content = this.world.contents.find((c) => c.sha256 === link.sha256);
+      const copy = content?.copies.find((x) => x.absPath === link.absPath);
+      return copy !== undefined && !copy.isLink;
+    });
+    const missingVaultFiles = vaultFilesOf(this.world).filter((f) => !f.present);
     return {
       checkedLinks: this.world.links.length,
       checkedFiles: this.world.vault.size,
-      danglingLinks: [],
-      replacedLinks: [],
-      missingVaultFiles: [],
+      danglingLinks,
+      replacedLinks,
+      missingVaultFiles,
       foreignFiles: [],
-      ok: true,
+      ok:
+        danglingLinks.length === 0 &&
+        replacedLinks.length === 0 &&
+        missingVaultFiles.length === 0,
     };
   }
 
@@ -975,6 +1004,20 @@ export class FixtureEngine implements Engine {
       }
     }
     this.recordScan(this.lastScan?.scanId ?? "scan-1");
+  }
+
+  /**
+   * Take a file out of the vault from underneath its links, the way something
+   * outside ComfyVault would. Every link to it then points at nothing.
+   */
+  devBreakLinks(count = 1): number {
+    const broken = new Set<string>();
+    for (const link of this.world.links) {
+      if (broken.size >= count) break;
+      broken.add(link.sha256);
+    }
+    for (const sha of broken) this.world.vault.delete(sha);
+    return this.world.links.filter((l) => broken.has(l.sha256)).length;
   }
 
   devReset(empty: boolean): void {

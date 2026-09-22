@@ -44,12 +44,14 @@ import type {
   Install,
   InstallCandidate,
   InterruptedApply,
+  Link,
   NameGroup,
   RunningComfy,
   ScanProgress,
   ScanResult,
   UsageResult,
   VaultFile,
+  VaultHealth,
   VaultInfo,
 } from "~/ipc/contract";
 
@@ -134,6 +136,14 @@ export interface AppStore {
   readonly vaultFiles: Accessor<readonly VaultFile[]>;
   readonly nameGroups: Accessor<readonly NameGroup[]>;
   readonly orphans: Accessor<readonly VaultFile[]>;
+  readonly health: Accessor<VaultHealth | null>;
+  /**
+   * Links that point at a file that is not there. ComfyUI lists one in its
+   * dropdown and then fails to load it, and a node that re-downloads the
+   * "missing" model writes straight through it into the vault, so this is the
+   * first thing the interface says.
+   */
+  readonly danglingLinks: Accessor<readonly Link[]>;
   readonly running: Accessor<readonly RunningComfy[]>;
   readonly interrupted: Accessor<readonly InterruptedApply[]>;
   readonly lastApply: Accessor<ApplyResult | null>;
@@ -211,6 +221,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [vaultFiles, setVaultFiles] = createSignal<readonly VaultFile[]>([]);
   const [nameGroups, setNameGroups] = createSignal<readonly NameGroup[]>([]);
   const [orphans, setOrphans] = createSignal<readonly VaultFile[]>([]);
+  const [health, setHealth] = createSignal<VaultHealth | null>(null);
   const [running, setRunning] = createSignal<readonly RunningComfy[]>([]);
   const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
   const [lastApply, setLastApply] = createSignal<ApplyResult | null>(null);
@@ -284,6 +295,10 @@ export function createAppStore(engine: Engine): AppStore {
 
   const hasInstalls = createMemo(() => installs().length > 0);
 
+  const danglingLinks = createMemo<readonly Link[]>(
+    () => health()?.danglingLinks ?? [],
+  );
+
   const unusedCount = createMemo(() => {
     const answers = usage();
     if (answers.size === 0) return 0;
@@ -334,13 +349,19 @@ export function createAppStore(engine: Engine): AppStore {
           ? await engine.buildPlan(lastScan.scanId)
           : null;
 
-      const [files, groups, orphanList] = state.vaultInitialized
+      const [files, groups, orphanList, vaultHealth] = state.vaultInitialized
         ? await Promise.all([
             engine.listVaultFiles({ offset: 0, limit: 1000 }),
             engine.listNameGroups(),
             engine.listOrphans(),
+            engine.checkVaultHealth(),
           ])
-        : [{ total: 0, offset: 0, files: [] as VaultFile[] }, [], []];
+        : [
+            { total: 0, offset: 0, files: [] as VaultFile[] },
+            [],
+            [],
+            null,
+          ];
 
       batch(() => {
         setAppState(state);
@@ -351,6 +372,7 @@ export function createAppStore(engine: Engine): AppStore {
         setVaultFiles(files.files);
         setNameGroups(groups);
         setOrphans(orphanList);
+        setHealth(vaultHealth);
         setRunning(runningList);
         setInterrupted(interruptedList);
         setLastApply(applies.find((a) => a.state !== "reverted") ?? null);
@@ -468,6 +490,8 @@ export function createAppStore(engine: Engine): AppStore {
     vaultFiles,
     nameGroups,
     orphans,
+    health,
+    danglingLinks,
     running,
     interrupted,
     lastApply,
