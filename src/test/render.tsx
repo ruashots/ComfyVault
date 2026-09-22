@@ -1,0 +1,50 @@
+import { render } from "@solidjs/testing-library";
+import type { JSX } from "solid-js";
+
+import { FixtureEngine } from "~/ipc/fixture/engine";
+import { AppProvider, createAppState, type AppState } from "~/state/store";
+
+export interface Harness {
+  app: AppState;
+  engine: FixtureEngine;
+  unmount: () => void;
+  container: HTMLElement;
+}
+
+/**
+ * Mount a piece of the interface over the fixture engine and wait until the
+ * first read of the engine has landed, so tests never look at a half-filled
+ * screen.
+ */
+export async function renderWithApp(
+  ui: () => JSX.Element,
+  options: { engine?: FixtureEngine } = {},
+): Promise<Harness> {
+  const engine = options.engine ?? new FixtureEngine();
+  let app!: AppState;
+  const result = render(() => {
+    app = createAppState(engine);
+    return <AppProvider value={app}>{ui()}</AppProvider>;
+  });
+  await waitFor(() => app.ready());
+  return {
+    app,
+    engine,
+    unmount: result.unmount,
+    container: result.container as HTMLElement,
+  };
+}
+
+/** Wait for a condition, checking after every microtask flush. */
+export async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error("waitFor gave up");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
