@@ -31,9 +31,17 @@
 
 pub mod error;
 pub mod install;
+pub mod metadata;
 pub mod paths;
+pub mod plan;
 pub mod platform;
 pub mod progress;
+pub mod scan;
+pub mod settings;
+pub mod store;
 pub mod time_util;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testkit;
 
 pub use error::{ErrorCode, Result, VaultError};
