@@ -2,6 +2,7 @@ import { For, Show, createMemo } from "solid-js";
 
 import { Icon, Mark } from "~/components/Icon";
 import { DanglingLinks } from "~/components/DanglingLinks";
+import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
 import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
 import { openInstallPicker } from "~/modals/picker";
@@ -173,18 +174,7 @@ function HomeReport() {
             )}
           </For>
 
-          <Show when={app.installViews().some((v) => v.thumbnailsAffected)}>
-            <div class="note up">
-              {app
-                .installViews()
-                .filter((v) => v.thumbnailsAffected)
-                .map((v) => v.install.label)
-                .join(" and ")}{" "}
-              runs ComfyUI 0.28.0 or newer, which will not show a preview thumbnail
-              for a model reached through a link. Loading the model and running a
-              workflow are not affected.
-            </div>
-          </Show>
+          <ThumbnailNote />
 
           <div class="sec secgap">
             <span class="t">Recent</span>

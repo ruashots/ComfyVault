@@ -8,6 +8,7 @@ import {
   chosenBecauseText,
   fileNameOf,
   isAtLeast,
+  thumbnailStateOf,
 } from "~/domain/view";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import type {
@@ -331,16 +332,37 @@ describe("which ComfyUI versions lose model thumbnails", () => {
     expect(isAtLeast("v0.28.0", [0, 28, 0])).toBe(true);
     expect(isAtLeast("0.27.9", [0, 28, 0])).toBe(false);
     expect(isAtLeast("0.9.7", [0, 28, 0])).toBe(false);
-    expect(isAtLeast(null, [0, 28, 0])).toBe(false);
-    expect(isAtLeast("not a version", [0, 28, 0])).toBe(false);
+  });
+
+  it("never calls an install fine when it does not say which version it runs", () => {
+    // ComfyUI only began recording its version in 0.3.11, so an older install
+    // cannot answer. Not knowing is not the same as knowing it is fine.
+    expect(thumbnailStateOf(null)).toBe("unknown");
+    expect(thumbnailStateOf("")).toBe("unknown");
+    expect(thumbnailStateOf("not a version")).toBe("unknown");
+    expect(thumbnailStateOf("0.28.0")).toBe("affected");
+    expect(thumbnailStateOf("v0.37.0")).toBe("affected");
+    expect(thumbnailStateOf("0.27.4")).toBe("unaffected");
+    expect(thumbnailStateOf("0.3.10")).toBe("unaffected");
   });
 
   it("flags the install that runs one", async () => {
     const engine = new FixtureEngine();
     const installs: Install[] = await engine.listInstalls();
     const views = buildInstallViews(installs, null, new Set());
-    expect(views.find((v) => v.install.id === "prod")!.thumbnailsAffected).toBe(true);
-    expect(views.find((v) => v.install.id === "norm")!.thumbnailsAffected).toBe(false);
+    expect(views.find((v) => v.install.id === "prod")!.thumbnails).toBe("affected");
+    expect(views.find((v) => v.install.id === "norm")!.thumbnails).toBe("unaffected");
+  });
+
+  it("carries the unknown answer through to the view", async () => {
+    const engine = new FixtureEngine();
+    const installs = (await engine.listInstalls()).map((i) => ({
+      ...i,
+      version: null,
+      versionSource: null,
+    }));
+    const views = buildInstallViews(installs, null, new Set());
+    for (const view of views) expect(view.thumbnails).toBe("unknown");
   });
 });
 

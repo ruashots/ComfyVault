@@ -124,7 +124,12 @@ export interface InstallCandidate {
   contentCheckPassed: boolean;
   otherCandidates: string[];
   version: string | null;
-  versionSource: "comfyui_version.py" | "pyproject.toml" | "git" | null;
+  /**
+   * Null when the install does not record its version. ComfyUI only began
+   * writing it to disk in 0.3.11, so an older install has no answer and the
+   * interface must say unknown rather than guess.
+   */
+  versionSource: "comfyui_version.py" | "pyproject.toml" | null;
   modelsDir: string | null;
   modelsDirExists: boolean;
   extraPathsFile: string | null;
@@ -549,21 +554,23 @@ export interface LockState {
 
 // ── walking folders, for the picker ─────────────────────────────────────────
 
-/**
- * One folder in the picker's tree.
- *
- * The person never types a path, so the picker has to walk the disk. The
- * contract has no command for this yet: comfyvault-core has been asked either
- * to add `list_directory` and `create_directory`, or to grant the Tauri file
- * system plugin permission to read directories, which is what the client does
- * today. Either way it is one file to change.
- */
+/** One folder inside another, as the picker browses. */
 export interface DirectoryEntry {
-  path: string;
   name: string;
-  isDrive: boolean;
-  readable: boolean;
-  hasChildren: boolean;
+  path: string;
+  isDirectory: boolean;
+  /** Following it may leave the folder being browsed. */
+  isSymlink: boolean;
+}
+
+/**
+ * What is inside one folder. A folder that cannot be read is a refusal
+ * carrying the path, never an empty listing, so the picker can say why.
+ */
+export interface DirectoryListing {
+  path: string;
+  parent: string | null;
+  entries: DirectoryEntry[];
 }
 
 // ── the port ────────────────────────────────────────────────────────────────
@@ -594,10 +601,11 @@ export interface Engine {
   ): Promise<{ removed: true; linksLeftInPlace: number }>;
   listInstallModelDirs(id: string): Promise<ModelDirNode[]>;
 
-  // walking folders, for the picker
-  /** Children of a folder. Pass null for the drives. */
-  listDirectory(path: string | null): Promise<DirectoryEntry[]>;
-  createDirectory(parent: string, name: string): Promise<{ path: string }>;
+  // the folder picker
+  /** What is inside a folder. Pass null for the roots. */
+  listDirectory(path: string | null): Promise<DirectoryListing>;
+  /** Create a folder anywhere. `created` is false when it was already there. */
+  createDirectory(path: string): Promise<{ path: string; created: boolean }>;
 
   // scan
   startScan(installIds?: string[]): Promise<{ scanId: string }>;

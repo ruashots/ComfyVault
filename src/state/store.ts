@@ -83,6 +83,12 @@ export interface TreeNode extends DirectoryEntry {
   depth: number;
   /** The person created it in this picker a moment ago. */
   isNew: boolean;
+  /** A drive root, which takes a different glyph. */
+  isDrive: boolean;
+  /** Null until the engine has been asked what is inside. */
+  hasChildren: boolean | null;
+  /** Why the engine refused to open it, once it has. */
+  refusal: string | null;
 }
 
 export interface NewFolderDraft {

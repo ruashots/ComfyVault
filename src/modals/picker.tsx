@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { fmt, leafOf } from "~/domain/format";
+import { fmt, joinPath, leafOf } from "~/domain/format";
 import { folderNameError } from "~/domain/foldername";
 import {
   messageOf,
@@ -23,7 +23,7 @@ async function openPicker(
   app.setModal({
     kind: "picker",
     purpose,
-    nodes: roots.map((entry) => toNode(entry, 0)),
+    nodes: roots.entries.map((entry) => toNode(entry, 0)),
     expanded: [],
     loading: [],
     picked: null,
@@ -40,8 +40,17 @@ export const openVaultPicker = (app: AppStore) => openPicker(app, "vault");
 export const openLinkPicker = (app: AppStore, sha256: string) =>
   openPicker(app, "link", { sha256 });
 
+const DRIVE_ROOT = /^[A-Za-z]:\\$/;
+
 function toNode(entry: DirectoryEntry, depth: number): TreeNode {
-  return { ...entry, depth, isNew: false };
+  return {
+    ...entry,
+    depth,
+    isNew: false,
+    isDrive: DRIVE_ROOT.test(entry.path),
+    hasChildren: null,
+    refusal: null,
+  };
 }
 
 // ── the modal ───────────────────────────────────────────────────────────────
@@ -95,17 +104,33 @@ export function PickerModalView() {
     app.patchModal((m) => {
       if (m.kind === "picker") m.loading = [...m.loading, node.path];
     });
-    const children = await app.engine.listDirectory(node.path);
+    let entries: DirectoryEntry[];
+    try {
+      entries = (await app.engine.listDirectory(node.path)).entries;
+    } catch (failure) {
+      // A folder that cannot be read is a refusal, not an empty folder. Say so
+      // on the row rather than leaving it looking like there is nothing inside.
+      app.patchModal((m) => {
+        if (m.kind !== "picker") return;
+        m.loading = m.loading.filter((p) => p !== node.path);
+        const at = m.nodes.findIndex((n) => n.path === node.path);
+        if (at < 0) return;
+        m.nodes[at]!.refusal = messageOf(failure);
+        m.nodes[at]!.hasChildren = false;
+      });
+      return;
+    }
     app.patchModal((m) => {
       if (m.kind !== "picker") return;
       m.loading = m.loading.filter((p) => p !== node.path);
       m.expanded = [...m.expanded, node.path];
       const at = m.nodes.findIndex((n) => n.path === node.path);
       if (at < 0) return;
-      m.nodes[at]!.hasChildren = children.length > 0;
+      m.nodes[at]!.hasChildren = entries.length > 0;
+      m.nodes[at]!.refusal = null;
       m.nodes = [
         ...m.nodes.slice(0, at + 1),
-        ...children.map((child) => toNode(child, node.depth + 1)),
+        ...entries.map((child) => toNode(child, node.depth + 1)),
         ...m.nodes.slice(at + 1),
       ];
     });
@@ -113,7 +138,7 @@ export function PickerModalView() {
 
   const toggle = async (node: TreeNode) => {
     const current = modal();
-    if (!current || !node.readable) return;
+    if (!current) return;
     if (current.expanded.includes(node.path)) collapse(node);
     else await expand(node);
   };
@@ -209,9 +234,13 @@ export function PickerModalView() {
       }
     });
     let created: string;
+    let isNew: boolean;
     try {
-      created = (await app.engine.createDirectory(draft.parent, draft.name.trim()))
-        .path;
+      const result = await app.engine.createDirectory(
+        joinPath(draft.parent, draft.name.trim()),
+      );
+      created = result.path;
+      isNew = result.created;
     } catch (failure) {
       app.patchModal((m) => {
         if (m.kind === "picker" && m.newFolder) {
@@ -233,11 +262,13 @@ export function PickerModalView() {
           {
             path: created,
             name: leafOf(created),
+            isDirectory: true,
+            isSymlink: false,
             isDrive: false,
-            readable: true,
             hasChildren: false,
+            refusal: null,
             depth: parent.depth + 1,
-            isNew: true,
+            isNew: isNew,
           },
           ...m.nodes.slice(at),
         ];
@@ -247,7 +278,9 @@ export function PickerModalView() {
       }
       m.newFolder = null;
     });
-    app.actions.showToast(`Created ${created}`);
+    app.actions.showToast(
+      isNew ? `Created ${created}` : `${created} was already there`,
+    );
     const node = modal()?.nodes.find((n) => n.path === created);
     if (node) await pick(node);
   };
@@ -362,10 +395,7 @@ export function PickerModalView() {
                         <button
                           class="tnode"
                           classList={{ on: current().picked === node.path }}
-                          disabled={!node.readable}
-                          title={
-                            node.readable ? node.path : `${node.path} cannot be opened`
-                          }
+                          title={node.refusal ?? node.path}
                           onClick={() => void pick(node)}
                         >
                           <Icon name={node.isDrive ? "drive" : "folder"} size={12} />
@@ -373,11 +403,26 @@ export function PickerModalView() {
                           <Show when={node.isNew}>
                             <span class="tnew-tag">new</span>
                           </Show>
-                          <Show when={!node.readable}>
-                            <span class="hint">cannot be opened</span>
+                          <Show when={node.isSymlink}>
+                            <span class="hint">a link to somewhere else</span>
+                          </Show>
+                          <Show when={node.refusal}>
+                            <span class="hint red">cannot be opened</span>
                           </Show>
                         </button>
                       </div>
+                      <Show when={node.refusal}>
+                        {(why) => (
+                          <div
+                            class="tnew-err"
+                            role="alert"
+                            style={{ "padding-left": `${7 + node.depth * 16}px` }}
+                          >
+                            <Icon name="warn" size={11} />
+                            <span>{why()}</span>
+                          </div>
+                        )}
+                      </Show>
                       <Show
                         when={
                           current().newFolder?.parent === node.path
@@ -526,7 +571,7 @@ function Twist(props: {
 }) {
   return (
     <Show
-      when={props.node.readable && props.node.hasChildren !== false}
+      when={props.node.hasChildren !== false}
       fallback={<span class="twist leaf" />}
     >
       <button

@@ -11,6 +11,7 @@ import {
 import { fmt } from "~/domain/format";
 import { chosenBecauseText, fileNameOf } from "~/domain/view";
 import { gateBlockers } from "~/domain/selection";
+import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openInstallPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
@@ -173,19 +174,7 @@ function DryRun() {
             Every file stays reachable at the path it has today, so no workflow and
             no setting in ComfyUI needs changing.
           </div>
-          <Show when={app.installViews().some((v) => v.thumbnailsAffected)}>
-            <div class="note up">
-              One thing does change.{" "}
-              {app
-                .installViews()
-                .filter((v) => v.thumbnailsAffected)
-                .map((v) => v.install.label)
-                .join(" and ")}{" "}
-              runs a ComfyUI that will not show a picture for a model reached
-              through a link, so consolidated models lose their thumbnail in the
-              model browser. Loading them and running workflows are not affected.
-            </div>
-          </Show>
+          <ThumbnailNote where="plan" />
 
           <div class="sec secgap">
             <span class="t">Duplicates: this is your easy win</span>

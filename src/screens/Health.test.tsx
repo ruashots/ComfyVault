@@ -128,12 +128,28 @@ describe("what the workflow check actually did", () => {
 
 describe("a ComfyUI that will not show a picture for a linked model", () => {
   it("says so on the screen where the person decides", async () => {
-    const engine = new FixtureEngine();
+    const engine = new FixtureEngine({ speed: 200 });
     engine.devSetSymlinksSupported(true);
     harness = await renderWithApp(() => <HomeScreen />, { engine });
     await waitFor(() => harness!.app.plan() !== null);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("will not show a preview thumbnail");
-    expect(text).toContain("Loading the model and running a workflow are not affected");
+    expect(text).toContain("will not show a preview thumbnail for a model reached");
+    expect(text).toContain("Loading a model and running a workflow are not affected");
+  });
+
+  it("never reads as not affected when the version is unknown", async () => {
+    const engine = new FixtureEngine({ speed: 200 });
+    engine.devSetSymlinksSupported(true);
+    engine.devForgetVersions();
+    harness = await renderWithApp(() => <HomeScreen />, { engine });
+    await waitFor(() => harness!.app.plan() !== null);
+    await waitFor(() =>
+      harness!.app.installViews().every((v) => v.thumbnails === "unknown"),
+    );
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("do not record which ComfyUI version they run");
+    expect(text).toContain("so this is unknown there");
+    // The fact must be on screen, not silently absent.
+    expect(text).not.toContain("0.28.0 or newer, which will not show");
   });
 });

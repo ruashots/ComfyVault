@@ -634,3 +634,4 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   padding:8px 12px;font-size:9.5px;line-height:1.55;color:var(--t-dim);
   border-bottom:1px solid var(--div);background:rgba(172,163,138,.022);
 }
+.tnode .hint.red{color:var(--red-br)}

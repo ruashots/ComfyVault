@@ -35,6 +35,7 @@ export async function createEngine(): Promise<Engine> {
     comfyRunning: (on: boolean) => engine.devSetComfyRunning(on),
     reset: (empty = false) => engine.devReset(empty),
     breakLinks: (count = 1) => engine.devBreakLinks(count),
+    forgetVersions: () => engine.devForgetVersions(),
   };
   return engine;
 }

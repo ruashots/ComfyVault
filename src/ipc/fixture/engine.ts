@@ -8,13 +8,13 @@
  */
 
 import { fileNameOf } from "~/domain/view";
-import { joinPath, leafOf } from "~/domain/format";
+import { leafOf } from "~/domain/format";
 import type {
   ApplyProgress,
   ApplyResult,
   AppState,
   ConsolidationPlan,
-  DirectoryEntry,
+  DirectoryListing,
   Engine,
   Install,
   InstallCandidate,
@@ -413,45 +413,63 @@ export class FixtureEngine implements Engine {
 
   // ── directories, for the folder picker ────────────────────────────────────
 
-  async listDirectory(path: string | null): Promise<DirectoryEntry[]> {
+  async listDirectory(path: string | null): Promise<DirectoryListing> {
     if (path === null) {
-      return this.disk
-        .filter((f) => /^[A-Za-z]:\\$/.test(f.path))
-        .map((f) => ({
-          path: f.path,
-          name: f.path,
-          isDrive: true,
-          readable: true,
-          hasChildren: f.children.length > 0,
-        }));
+      return {
+        path: "",
+        parent: null,
+        entries: this.disk
+          .filter((f) => /^[A-Za-z]:\\$/.test(f.path))
+          .map((f) => ({
+            name: f.path,
+            path: f.path,
+            isDirectory: true,
+            isSymlink: false,
+          })),
+      };
     }
     const folder = this.disk.find((f) => f.path === path);
-    if (!folder || folder.readable === false) return [];
-    return folder.children.map((child) => {
-      const node = this.disk.find((f) => f.path === child);
-      return {
-        path: child,
-        name: leafOf(child),
-        isDrive: false,
-        readable: node?.readable !== false,
-        hasChildren: (node?.children.length ?? 0) > 0,
+    if (!folder) {
+      throw { ...error("notFound", "That folder is not there any more."), path };
+    }
+    // A folder that cannot be read is a refusal carrying the path, never an
+    // empty listing, so the picker can say why rather than look empty.
+    if (folder.readable === false) {
+      throw {
+        ...error("permissionDenied", "Windows will not let ComfyVault open that folder."),
+        path,
       };
-    });
+    }
+    return {
+      path,
+      parent: parentOf(path),
+      entries: folder.children.map((child) => ({
+        name: leafOf(child),
+        path: child,
+        isDirectory: true,
+        isSymlink: false,
+      })),
+    };
   }
 
-  async createDirectory(parent: string, name: string): Promise<{ path: string }> {
-    const folder = this.disk.find((f) => f.path === parent);
-    if (!folder) throw error("notFound", "That folder is not there any more.");
-    if (folder.readable === false) {
-      throw error("permissionDenied", "Windows refused to write there.");
-    }
-    const path = joinPath(parent, name);
+  async createDirectory(path: string): Promise<{ path: string; created: boolean }> {
     if (this.disk.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
-      throw error("conflict", `There is already a folder called ${name} here.`);
+      return { path, created: false };
+    }
+    const parent = parentOf(path);
+    const folder = parent ? this.disk.find((f) => f.path === parent) : undefined;
+    if (!folder) {
+      throw { ...error("notFound", "That folder is not there any more."), path };
+    }
+    if (folder.readable === false) {
+      throw {
+        ...error("permissionDenied", "Windows refused to write there."),
+        path,
+      };
     }
     folder.children.push(path);
     this.disk.push({ path, children: [] });
-    return { path };
+    return { path, created: true };
   }
 
   // ── scan ──────────────────────────────────────────────────────────────────
@@ -1020,6 +1038,15 @@ export class FixtureEngine implements Engine {
     return this.world.links.filter((l) => broken.has(l.sha256)).length;
   }
 
+  /** An install too old to record its version, which many really are. */
+  devForgetVersions(): void {
+    this.world.installs = this.world.installs.map((i) => ({
+      ...i,
+      version: null,
+      versionSource: null,
+    }));
+  }
+
   devReset(empty: boolean): void {
     this.stopScanTimer();
     this.stopApplyTimer();
@@ -1053,6 +1080,16 @@ function invalidCandidate(reason: string): InstallCandidate {
     outputModelDirs: [],
     reason,
   };
+}
+
+/** "C:\\Users\\alex" -> "C:\\Users". A drive root has no parent. */
+function parentOf(path: string): string | null {
+  if (/^[A-Za-z]:\\$/.test(path)) return null;
+  const trimmed = path.endsWith("\\") ? path.slice(0, -1) : path;
+  const at = trimmed.lastIndexOf("\\");
+  if (at < 0) return null;
+  const parent = trimmed.slice(0, at);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
 }
 
 function error(code: VaultError["code"], message: string): VaultError {

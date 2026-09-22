@@ -55,11 +55,8 @@ Beyond the commands in `docs/IPC-CONTRACT.md`:
 - `tauri-plugin-opener`, with `opener:allow-open-url` and
   `opener:allow-reveal-item-in-dir`. Used to open the Windows Developer Mode
   settings page and to show the vault folder in Explorer.
-- `tauri-plugin-fs`, with permission to read directories and create one. The
-  folder picker walks the disk itself, because the person never types a path and
-  the contract has no command for listing folders yet. If comfyvault-core would
-  rather own it, `listDirectory` and `createDirectory` in
-  `src/ipc/contract.ts` are the two methods to repoint, and `src/ipc/tauri.ts`
-  is the only file that changes.
+- Nothing else. The folder picker browses through `list_directory` and
+  `create_directory` from section 15 of the contract, so the window needs no
+  file system access of its own.
 - A window of 1000 x 660 with `decorations: false`. The interface draws its own
   title bar, and the drag region is already marked.

@@ -89,12 +89,15 @@ describe("registering an install", () => {
     expect(button("Add this install")).toBeDisabled();
   });
 
-  it("refuses a folder Windows will not open", async () => {
+  it("says why, in the engine's own words, when a folder will not open", async () => {
     await mountPicker((h) => openInstallPicker(h.app));
     await openDrive();
-    const locked = node("Program Files");
-    expect(locked).toBeDisabled();
-    expect(locked.textContent).toContain("cannot be opened");
+    await userEvent.click(expander("Program Files"));
+    await waitFor(() => document.querySelector(".tnew-err") !== null);
+    expect(document.querySelector(".tnew-err")!.textContent).toContain(
+      "Windows will not let ComfyVault open that folder.",
+    );
+    expect(node("Program Files").textContent).toContain("cannot be opened");
   });
 
   it("accepts a real install and says what it found", async () => {
@@ -217,7 +220,7 @@ describe("making a new folder", () => {
     let asked = false;
     h.app.engine.createDirectory = async () => {
       asked = true;
-      return { path: "" };
+      return { path: "", created: true };
     };
     await userEvent.click(button("Create"));
     await waitFor(() => document.querySelector(".tnew-err") !== null);
@@ -232,7 +235,7 @@ describe("making a new folder", () => {
     let asked = false;
     h.app.engine.createDirectory = async () => {
       asked = true;
-      return { path: "" };
+      return { path: "", created: true };
     };
     await userEvent.type(screen.getByLabelText("Name for the new folder"), "wan\\new");
     await userEvent.click(button("Create"));
@@ -248,7 +251,7 @@ describe("making a new folder", () => {
     let asked = false;
     h.app.engine.createDirectory = async () => {
       asked = true;
-      return { path: "" };
+      return { path: "", created: true };
     };
     await userEvent.type(screen.getByLabelText("Name for the new folder"), "loras");
     await userEvent.click(button("Create"));

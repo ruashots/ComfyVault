@@ -6,6 +6,7 @@ import { Wrap } from "~/components/Wrap";
 import { blockedShort, blockedWhy } from "~/domain/blocked";
 import { dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
 import { categoriesOf, type ContentRow } from "~/domain/view";
+import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openLinkPicker } from "~/modals/picker";
 import { useApp, type LibrarySort } from "~/state/store";
@@ -601,20 +602,10 @@ function DrawerBody(props: { row: ContentRow }) {
         </div>
       </Show>
 
-      <Show
-        when={
-          row().places.length > 0 &&
-          app
-            .installViews()
-            .filter((v) => v.thumbnailsAffected)
-            .some((v) => row().places.some((p) => p.installId === v.install.id))
-        }
-      >
-        <div class="note up">
-          Once this model is reached through a link, ComfyUI will not show a
-          picture for it in the model browser. It still loads, and workflows that
-          use it are not affected.
-        </div>
+      <Show when={row().places.length > 0}>
+        <ThumbnailNoteForModel
+          installIds={row().places.map((p) => p.installId)}
+        />
       </Show>
 
       <div class="sec secgap plain">

@@ -8,22 +8,21 @@
  * Opening a folder in Explorer and opening a Windows settings page are not
  * engine commands. They come from Tauri's opener plugin, which the Rust app
  * must register with the permissions `opener:allow-open-url` and
- * `opener:allow-reveal-item-in-dir`.
+ * `opener:allow-reveal-item-in-dir`. That is the only capability the window
+ * needs of its own: browsing folders goes through the engine.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { mkdir, readDir } from "@tauri-apps/plugin-fs";
 
-import { joinPath } from "~/domain/format";
 import type {
   ApplyProgress,
   ApplyResult,
   AppState,
   ConsolidationPlan,
-  DirectoryEntry,
+  DirectoryListing,
   Engine,
   Install,
   InstallCandidate,
@@ -72,50 +71,6 @@ function subscribe<T>(event: string, fn: (payload: T) => void): Unsubscribe {
   };
 }
 
-/**
- * Walk the disk for the folder picker. Windows has no single root, so a null
- * path lists the drives. The engine judges a folder once it is picked; this
- * only says what is there.
- */
-async function listDirectory(path: string | null): Promise<DirectoryEntry[]> {
-  if (path === null) {
-    const drives: DirectoryEntry[] = [];
-    for (const letter of "CDEFGHIJKLMNOPQRSTUVWXYZ") {
-      const root = `${letter}:\\`;
-      try {
-        await readDir(root);
-        drives.push({
-          path: root,
-          name: root,
-          isDrive: true,
-          readable: true,
-          hasChildren: true,
-        });
-      } catch {
-        // The drive is not there, or Windows will not open it. Skip it.
-      }
-    }
-    return drives;
-  }
-  try {
-    const entries = await readDir(path);
-    return entries
-      .filter((entry) => entry.isDirectory)
-      .map((entry) => ({
-        path: joinPath(path, entry.name),
-        name: entry.name,
-        isDrive: false,
-        readable: true,
-        // Reading every child to answer this would be slow on a big drive, so
-        // the row offers to expand and finds out when it is asked.
-        hasChildren: true,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch {
-    return [];
-  }
-}
-
 export function createTauriEngine(): Engine {
   const appWindow = getCurrentWindow();
 
@@ -139,12 +94,10 @@ export function createTauriEngine(): Engine {
     listInstallModelDirs: (id) =>
       call<ModelDirNode[]>("list_install_model_dirs", { id }),
 
-    listDirectory: (path) => listDirectory(path),
-    createDirectory: async (parent, name) => {
-      const path = joinPath(parent, name);
-      await mkdir(path);
-      return { path };
-    },
+    listDirectory: (path) =>
+      call<DirectoryListing>("list_directory", path === null ? {} : { path }),
+    createDirectory: (path) =>
+      call<{ path: string; created: boolean }>("create_directory", { path }),
 
     startScan: (installIds) =>
       call<{ scanId: string }>("start_scan", installIds ? { installIds } : {}),

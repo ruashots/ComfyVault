@@ -3,6 +3,7 @@ import { For, Show, createMemo } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import { dayMonth, driveOf, fmt } from "~/domain/format";
+import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
@@ -83,14 +84,11 @@ export function SettingsScreen() {
                   <div class="it">
                     <div class="nm">
                       {view.install.label}
-                      <Show when={view.install.version}>
-                        {(version) => (
-                          <span class="faint" style={{ "font-weight": 400 }}>
-                            {" "}
-                            &middot; {version()}
-                          </span>
-                        )}
-                      </Show>
+                      <span class="faint" style={{ "font-weight": 400 }}>
+                        {" "}
+                        &middot;{" "}
+                        {view.install.version ?? "version unknown"}
+                      </span>
                     </div>
                     <div class="pp">
                       {view.install.root}
@@ -148,19 +146,7 @@ export function SettingsScreen() {
               </button>
             </div>
           </Show>
-          <Show when={app.installViews().some((v) => v.thumbnailsAffected)}>
-            <div class="note up">
-              {app
-                .installViews()
-                .filter((v) => v.thumbnailsAffected)
-                .map((v) => v.install.label)
-                .join(" and ")}{" "}
-              runs ComfyUI 0.28.0 or newer. That version refuses to serve a preview
-              thumbnail for a model reached through a link, so consolidated models
-              will show no picture in the model browser. Loading them and running
-              workflows are not affected.
-            </div>
-          </Show>
+          <ThumbnailNote />
 
           <div class="sec secgap">
             <span class="t">The vault folder</span>

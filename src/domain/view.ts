@@ -327,10 +327,16 @@ export interface InstallView {
   stuckBytes: number;
   /**
    * ComfyUI 0.28.0 and later refuse to serve a preview thumbnail through a
-   * per-file link. Loading a model is unaffected.
+   * per-file link. Loading a model is unaffected either way.
+   *
+   * "unknown" is its own answer. ComfyUI only began recording its version on
+   * disk in 0.3.11, so an older install cannot say, and an install that cannot
+   * say is not an install that is known to be fine.
    */
-  thumbnailsAffected: boolean;
+  thumbnails: ThumbnailState;
 }
+
+export type ThumbnailState = "affected" | "unaffected" | "unknown";
 
 export function buildInstallViews(
   installs: readonly Install[],
@@ -375,9 +381,25 @@ export function buildInstallViews(
       movingBytes: m.bytes,
       stuck: s.files,
       stuckBytes: s.bytes,
-      thumbnailsAffected: isAtLeast(install.version, [0, 28, 0]),
+      thumbnails: thumbnailStateOf(install.version),
     };
   });
+}
+
+/** The first ComfyUI that will not serve a thumbnail through a link. */
+const THUMBNAILS_LOST_AT: readonly [number, number, number] = [0, 28, 0];
+
+/**
+ * Whether this install loses model thumbnails. An install that does not record
+ * its version cannot be called fine, so it gets its own answer.
+ */
+export function thumbnailStateOf(version: string | null): ThumbnailState {
+  if (!version) return "unknown";
+  const parsed = version.replace(/^v/i, "").split(".");
+  if (parsed.some((part) => Number.isNaN(Number.parseInt(part, 10)))) {
+    return "unknown";
+  }
+  return isAtLeast(version, THUMBNAILS_LOST_AT) ? "affected" : "unaffected";
 }
 
 /** True when a version string is at least the given release. */
