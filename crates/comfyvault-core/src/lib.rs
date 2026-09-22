@@ -31,6 +31,7 @@
 
 pub mod error;
 pub mod paths;
+pub mod platform;
 pub mod progress;
 pub mod time_util;
 
