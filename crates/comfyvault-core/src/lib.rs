@@ -32,6 +32,7 @@
 pub mod apply;
 pub mod error;
 pub mod install;
+pub mod links;
 pub mod metadata;
 pub mod paths;
 pub mod plan;
@@ -41,6 +42,8 @@ pub mod scan;
 pub mod settings;
 pub mod store;
 pub mod time_util;
+pub mod usage;
+pub mod vault;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testkit;

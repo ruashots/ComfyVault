@@ -309,12 +309,6 @@ pub enum JournalStep {
     },
     /// A link removed. Undone by creating it again.
     RemoveLink { link: PathBuf, target: PathBuf },
-    /// One vault name swapped for another. Undone by swapping back.
-    SwapCanonical {
-        sha256: String,
-        from_name: String,
-        to_name: String,
-    },
 }
 
 /// One row of the journal.
@@ -415,11 +409,6 @@ mod tests {
             JournalStep::RemoveLink {
                 link: "/i/c.safetensors".into(),
                 target: "/v/loras/a.safetensors".into(),
-            },
-            JournalStep::SwapCanonical {
-                sha256: "AA".into(),
-                from_name: "a.safetensors".into(),
-                to_name: "b.safetensors".into(),
             },
         ];
         for s in steps {

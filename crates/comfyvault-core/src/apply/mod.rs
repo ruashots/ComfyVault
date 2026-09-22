@@ -621,7 +621,6 @@ impl<'a> Applier<'a> {
                 }
                 self.platform.create_file_symlink(link, target)
             }
-            JournalStep::SwapCanonical { .. } => Ok(()),
         }
     }
 
@@ -948,7 +947,6 @@ fn step_path(step: &JournalStep) -> Option<PathBuf> {
         JournalStep::CreateLink { link, .. } => Some(link.clone()),
         JournalStep::DeleteStash { original, .. } => Some(original.clone()),
         JournalStep::RemoveLink { link, .. } => Some(link.clone()),
-        JournalStep::SwapCanonical { .. } => None,
     }
 }
 
