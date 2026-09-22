@@ -36,9 +36,11 @@ fn config_path(app: &tauri::AppHandle) -> PathBuf {
 }
 
 pub fn run() {
+    // Only the opener plugin is registered. Browsing the disk goes through the
+    // engine's own list_directory and create_directory, so the window holds no
+    // file system permission of its own.
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let engine = Engine::new(config_path(&app.handle().clone()));
 
