@@ -1,0 +1,33 @@
+[package]
+name = "comfyvault"
+description = "ComfyVault: one copy of every model weight, a link everywhere it used to be."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# The desktop application is a library plus a thin binary, which is what lets
+# the same code run on every platform Tauri supports.
+name = "comfyvault_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+comfyvault-core = { path = "../crates/comfyvault-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = []
+# Without this, Tauri does NOT embed the built frontend: the application falls
+# back to the development server URL and shows an empty window. The Tauri CLI
+# turns it on for `tauri build`, so a hand-rolled `cargo build` of a shipping
+# binary has to pass it too. Do not remove it.
+custom-protocol = ["tauri/custom-protocol"]

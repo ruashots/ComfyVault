@@ -1404,3 +1404,59 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `clear_metadata_cache` | 10.4 |
 | `get_running_comfy` | 11.1 |
 | `check_locked_files` | 11.2 |
+| `close_vault` | 2.3 |
+| `remove_dangling_links` | 8.8 |
+| `list_directory` | 15.1 |
+| `create_directory` | 15.2 |
+
+---
+
+## 15. The folder picker
+
+The interface lets the person choose a vault folder and an install folder by
+browsing, because nobody types a path. These two commands exist so the browsing
+goes through the engine, and the window needs no file system access of its own.
+
+### 15.1 `list_directory`
+
+Lists the folders inside one folder. Only folders come back, because the picker
+only ever chooses a folder. Hidden folders are left out.
+
+Arguments:
+
+```ts
+{ path?: string }      // absent or empty means the drive root
+```
+
+Returns:
+
+```ts
+type DirectoryListing = {
+  path: string
+  parent: string | null
+  entries: Array<{
+    name: string
+    path: string
+    isDirectory: boolean
+    isSymlink: boolean      // following it may leave the folder being browsed
+  }>
+}
+```
+
+A folder that cannot be read is an error carrying the path, not an empty list.
+
+### 15.2 `create_directory`
+
+Creates a folder the person named in the picker. This is how a new vault folder
+is made.
+
+Arguments: `{ path: string }`.
+
+Returns: `{ path: string, created: boolean }`.
+
+`created` is `false` when the folder was already there.
+
+This command is deliberately not limited to an install, because a vault can
+live anywhere. `select_vault` separately refuses a vault inside a registered
+install. To create a folder **inside** an install, use `create_model_folder`
+from section 7.3, which checks that the folder is somewhere ComfyUI reads.
