@@ -1153,9 +1153,18 @@ type UsageMatch = {
 
 Returns `UsageResult[]`, one per requested name.
 
-`method` is always this sentence:
+`method` is one of exactly two sentences. When workflow files were searched:
 
 > The file name was searched for as plain text inside saved workflow files.
+
+When there were no saved workflow files to search at all:
+
+> No saved workflow files were found, so nothing was searched. A workflow that
+> was never saved lives in the browser, where this app cannot see it.
+
+The second sentence matters. A person whose workflows only ever lived in the
+browser would otherwise read "not used" for every model they own and believe
+the app had checked.
 
 **This check is deliberately shallow.** The engine looks for the file name as
 text inside the JSON. It does not parse the graph. It does not resolve node

@@ -24,7 +24,7 @@ use comfyvault_core::platform::{LockState, PlatformReport, RunningComfy};
 use comfyvault_core::scan::ScanProgress;
 use comfyvault_core::settings::{Settings, SettingsPatch};
 use comfyvault_core::store::{ApplyRecord, LinkRecord, LinkState, ScanRecord};
-use comfyvault_core::usage::UsageReport;
+use comfyvault_core::usage::UsageResult;
 use comfyvault_core::vault::{NameGroup, VaultFile, VaultFilter, VaultHealth, VaultPage, VaultSort};
 use comfyvault_core::{ErrorCode, VaultError};
 use serde::{Deserialize, Serialize};
@@ -648,13 +648,19 @@ pub struct UsageArgs {
     pub install_ids: Option<Vec<String>>,
 }
 
+/// Returns one answer per requested name, as the contract defines it.
+///
+/// The report the engine produces also says how many workflow files were
+/// searched. That does not fit a flat list, so when nothing could be searched
+/// the engine puts it in the `method` sentence instead, which the interface
+/// already shows beside every answer.
 #[tauri::command]
 pub async fn check_model_usage(
     state: State<'_, AppEngine>,
     args: UsageArgs,
-) -> Reply<UsageReport> {
+) -> Reply<Vec<UsageResult>> {
     let e = engine(&state);
-    blocking(move || e.check_usage(&args.names, args.install_ids)).await
+    blocking(move || Ok(e.check_usage(&args.names, args.install_ids)?.results)).await
 }
 
 // ---------------------------------------------------------------------------

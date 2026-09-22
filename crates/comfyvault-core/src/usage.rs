@@ -27,6 +27,15 @@ use crate::install::Install;
 pub const METHOD: &str =
     "The file name was searched for as plain text inside saved workflow files.";
 
+/// The sentence used when there was nothing at all to search.
+///
+/// The contract's result shape is a flat list, so how much was searched has
+/// nowhere else to travel. Without this, a person whose workflows only ever
+/// lived in the browser would read "not used" for every model they own and
+/// believe the app had checked.
+pub const METHOD_NOTHING_SEARCHED: &str =
+    "No saved workflow files were found, so nothing was searched. A workflow that was never saved lives in the browser, where this app cannot see it.";
+
 /// Workflow files larger than this are skipped and reported.
 pub const MAX_WORKFLOW_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -60,7 +69,8 @@ pub struct UsageResult {
     pub name: String,
     pub used: bool,
     pub matches: Vec<UsageMatch>,
-    /// Always [`METHOD`]. The interface shows it beside the result.
+    /// [`METHOD`], or [`METHOD_NOTHING_SEARCHED`] when there were no saved
+    /// workflow files to search. The interface shows it beside the result.
     pub method: String,
 }
 
@@ -179,11 +189,21 @@ pub fn check(installs: &[Install], names: &[String]) -> Result<UsageReport> {
 
     skipped.sort();
     skipped.dedup();
+
+    // How much was searched reaches the person only through this sentence,
+    // because the contract's result shape is a flat list with nowhere else to
+    // put it. "Nothing was searched" and "nothing was found" are not the same
+    // answer, and the difference decides whether a model is safe to remove.
+    let method = if searched == 0 { METHOD_NOTHING_SEARCHED } else { METHOD };
+    for r in &mut results {
+        r.method = method.to_string();
+    }
+
     Ok(UsageReport {
         results,
         workflows_searched: searched,
         workflows_skipped: skipped,
-        method: METHOD.to_string(),
+        method: method.to_string(),
     })
 }
 
@@ -249,6 +269,8 @@ mod tests {
         // as "safe to delete", which this check does not prove.
         let w = TestWorld::new();
         let i = w.add_install("A");
+        write_workflow(&i.root, "user/default/workflows/w.json", &workflow_naming("x.safetensors"));
+
         let report = check(&[i], &["anything.safetensors".into()]).unwrap();
         assert_eq!(report.method, METHOD);
         assert_eq!(report.results[0].method, METHOD);
@@ -389,14 +411,48 @@ mod tests {
     }
 
     #[test]
-    fn an_install_with_no_saved_workflows_answers_not_found_without_failing() {
-        // A person who has never pressed Save has nothing on the disk. The
-        // interface has to say that, rather than showing a confident "unused".
+    fn an_install_with_no_saved_workflows_says_nothing_was_searched() {
+        // A person who has never pressed Save has nothing on the disk.
+        // Answering a confident "not used" there would be a lie, so the
+        // sentence the interface shows says that nothing was searched at all.
         let w = TestWorld::new();
         let i = w.add_install("A");
         let report = check(&[i], &["m.safetensors".into()]).unwrap();
+
         assert!(!report.results[0].used);
         assert_eq!(report.workflows_searched, 0);
+        assert_eq!(report.results[0].method, METHOD_NOTHING_SEARCHED);
+        assert_eq!(report.method, METHOD_NOTHING_SEARCHED);
+        assert!(report.results[0].method.contains("nothing was searched"));
+        assert!(
+            report.results[0].method.contains("browser"),
+            "the person has to be told where their unsaved workflows live"
+        );
+    }
+
+    #[test]
+    fn the_two_sentences_are_never_mixed_up() {
+        // "Nothing was searched" and "nothing was found" are different answers,
+        // and only one of them means a model might be safe to remove.
+        let w = TestWorld::new();
+        let empty = w.add_install("Empty");
+        let searched = w.add_install("Searched");
+        write_workflow(
+            &searched.root,
+            "user/default/workflows/w.json",
+            &workflow_naming("other.safetensors"),
+        );
+
+        let nothing = check(&[empty], &["m.safetensors".into()]).unwrap();
+        assert_eq!(nothing.results[0].method, METHOD_NOTHING_SEARCHED);
+
+        let did_search = check(&[searched], &["m.safetensors".into()]).unwrap();
+        assert_eq!(did_search.workflows_searched, 1);
+        assert_eq!(
+            did_search.results[0].method, METHOD,
+            "a real search must not claim that nothing was searched"
+        );
+        assert!(!did_search.results[0].used, "and it still found nothing, which is different");
     }
 
     #[test]
