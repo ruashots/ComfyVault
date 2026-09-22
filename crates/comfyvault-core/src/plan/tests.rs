@@ -800,3 +800,117 @@ fn the_plan_is_derived_fresh_every_time_and_never_cached() {
     assert_eq!(free.totals.bytes_freed, weights("m").len() as u64);
     assert_ne!(locked.totals.bytes_freed, free.totals.bytes_freed);
 }
+
+// ---------------------------------------------------------------------------
+// A category name decides a folder inside the vault, and it comes from a file
+// the person edits by hand. Nothing downstream may trust it.
+// ---------------------------------------------------------------------------
+
+/// Builds scan entries directly, so the planner can be tested against a
+/// category that the parser would now refuse. A record written by an older
+/// build, or a future refactor that skips the parser, arrives exactly like this.
+fn entry_with_category(install: &crate::install::Install, category: &str, abs: &Path) -> ScanEntryRecord {
+    let meta = std::fs::metadata(abs).unwrap();
+    ScanEntryRecord {
+        abs_path: abs.to_path_buf(),
+        rel_path: abs.strip_prefix(&install.root).unwrap_or(abs).to_path_buf(),
+        install_id: install.id.clone(),
+        category: category.to_string(),
+        size_bytes: meta.len(),
+        sha256: Some(crate::scan::hash::hash_file(abs).unwrap()),
+        mtime_nanos: crate::time_util::Timestamp::mtime_nanos(&meta),
+        classification: crate::store::Classification::Movable,
+        link_target: None,
+    }
+}
+
+#[test]
+fn a_category_that_would_leave_the_vault_is_blocked_by_the_planner() {
+    // The belt behind the parser. Containment is proved at the write, not
+    // assumed from a value that travelled through four modules to get here.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+
+    for hostile in [
+        "../../ESCAPED",
+        "..",
+        "a/b",
+        "a\\b",
+        "CON",
+        "",
+    ] {
+        let entries = vec![entry_with_category(&a, hostile, &p)];
+        let plan = w
+            .planner()
+            .build("p", "scan", &entries, std::slice::from_ref(&a))
+            .unwrap();
+
+        assert!(
+            plan.groups.is_empty(),
+            "category {hostile:?} was planned into the vault: {:?}",
+            plan.groups.first().map(|g| &g.vault_rel_path)
+        );
+        assert_eq!(
+            plan.blocked.len(),
+            1,
+            "category {hostile:?} was dropped silently instead of reported"
+        );
+        assert_eq!(plan.blocked[0].reason, BlockReason::UnsafeVaultPath);
+    }
+}
+
+#[test]
+fn an_absolute_category_cannot_replace_the_vault_root() {
+    // Path::join with an absolute right-hand side discards the left. This is
+    // the route that does not need ".." at all, and it is the one that stays
+    // open on Windows where a verbatim path does not normalize "..".
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let elsewhere = w.path().join("ANYWHERE");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+
+    let entries = vec![entry_with_category(&a, &elsewhere.to_string_lossy(), &p)];
+    let plan = w.planner().build("p", "scan", &entries, std::slice::from_ref(&a)).unwrap();
+
+    assert!(plan.groups.is_empty());
+    assert_eq!(plan.blocked[0].reason, BlockReason::UnsafeVaultPath);
+    assert!(
+        std::fs::read_dir(&elsewhere).unwrap().next().is_none(),
+        "the planner named a path outside the vault"
+    );
+}
+
+#[test]
+fn an_ordinary_category_still_plans_normally() {
+    // The control. Without it the test above could pass by blocking everything.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+
+    let entries = vec![entry_with_category(&a, "loras", &p)];
+    let plan = w.planner().build("p", "scan", &entries, std::slice::from_ref(&a)).unwrap();
+
+    assert_eq!(plan.groups.len(), 1);
+    assert_eq!(plan.groups[0].vault_rel_path, PathBuf::from("loras").join("m.safetensors"));
+    assert!(plan.blocked.is_empty());
+}
+
+#[test]
+fn a_file_already_sitting_at_the_vault_path_blocks_the_row() {
+    // Left by an earlier crash, or copied in by hand. Apply would refuse it,
+    // so the plan must not promise it.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+
+    let occupied = w.vault_root.join("loras/m.safetensors");
+    std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+    std::fs::write(&occupied, b"someone else's file").unwrap();
+
+    let plan = w.plan(&[a]);
+    assert!(plan.groups.is_empty());
+    assert_eq!(blocked_for(&plan, "m.safetensors").reason, BlockReason::TargetExistsNotLink);
+    assert_eq!(std::fs::read(&occupied).unwrap(), b"someone else's file");
+}

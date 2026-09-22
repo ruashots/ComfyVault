@@ -51,6 +51,11 @@ pub enum BlockReason {
     VaultInsideInstall,
     /// Something that is not a link already sits at the vault path.
     TargetExistsNotLink,
+    /// The vault path this row would use lands outside the vault.
+    ///
+    /// The folder name comes from a category in `extra_model_paths.yaml`, which
+    /// a person edits by hand and which launchers and node packs also write.
+    UnsafeVaultPath,
     NotEnoughSpace,
     ReadError,
 }
@@ -71,6 +76,7 @@ impl BlockReason {
             Self::SymlinkUnsupported => "This computer cannot create the links this app uses. Turn Developer Mode on.",
             Self::VaultInsideInstall => "The vault folder is inside this install, which would make the app move files into themselves.",
             Self::TargetExistsNotLink => "A different file already sits at the vault path this would use.",
+            Self::UnsafeVaultPath => "This model's folder name would put it outside the vault, so it was left alone. Check the model folder names in extra_model_paths.yaml.",
             Self::NotEnoughSpace => "The vault drive does not have room for this file.",
             Self::ReadError => "This file could not be read.",
         }
@@ -399,11 +405,44 @@ impl<'a> Planner<'a> {
                 .collect();
 
             let occurrences = members.len() as u64;
+            // Prove the vault path lands inside the vault, here, against the
+            // real resolved location. The category came from a YAML key four
+            // modules ago, so trusting it at the write would be trusting a
+            // value that travelled. Every alias is proved the same way.
+            let vault_rel_path = PathBuf::from(&category).join(&vault_name);
+            let every_vault_path: Vec<PathBuf> = std::iter::once(vault_rel_path.clone())
+                .chain(aliases.iter().map(|a| PathBuf::from(&category).join(a)))
+                .collect();
+            let install_label = Some(label_of(&by_install, &source_entry.install_id));
+
+            // Two things must hold, and containment alone is not enough. A
+            // category of `a/b` stays inside the vault but builds a folder
+            // inside a folder, and the whole vault layout is one level:
+            // category, then file. So the category must also be one safe path
+            // component, which is what the parser now requires of it.
+            let unsafe_path = crate::paths::validate_file_name(&category).is_err()
+                || every_vault_path
+                    .iter()
+                    .any(|rel| crate::paths::resolve_new_path_within(&vault_root, rel).is_err());
+            if unsafe_path {
+                blocked.push(row(source_entry, install_label, BlockReason::UnsafeVaultPath));
+                continue;
+            }
+
+            // A file already sitting at the vault path that the database does
+            // not know about, left by an earlier crash or copied in by hand.
+            // Apply would refuse it, so the plan must not promise it.
+            let settled = vault_root.join(&vault_rel_path);
+            if std::fs::symlink_metadata(&settled).is_ok() {
+                blocked.push(row(source_entry, install_label, BlockReason::TargetExistsNotLink));
+                continue;
+            }
+
             groups.push(PlanGroup {
                 group_id: format!("g-{sha}"),
                 sha256: sha.to_string(),
                 size_bytes,
-                vault_rel_path: PathBuf::from(&category).join(&vault_name),
+                vault_rel_path,
                 category,
                 vault_name_adjusted: adjusted,
                 clashes_with,

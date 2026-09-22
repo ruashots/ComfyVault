@@ -192,6 +192,20 @@ pub fn parse(text: &str, ctx: &ResolveContext) -> Result<ExtraPathsFile> {
                 continue;
             };
 
+            // A category names a folder inside the vault, so it must be one
+            // safe path component. ComfyUI accepts any key here, and this file
+            // is edited by hand and written by launchers and node packs, so a
+            // key like "..\\..\\x" or a pasted Windows path reaches the engine
+            // as a folder name. Without this, that name is joined onto the
+            // vault root and the person's weights land anywhere they can write.
+            if let Err(e) = crate::paths::validate_file_name(&raw_category) {
+                out.problems.push(format!(
+                    "In section \"{section}\", \"{raw_category}\" cannot be a model folder name, so it was skipped. {}",
+                    e.message
+                ));
+                continue;
+            }
+
             let category = map_legacy(&raw_category).to_string();
 
             for line in raw_value.split('\n') {
@@ -593,6 +607,75 @@ nobase:
         let vae = f.entries.iter().find(|e| e.category == "vae").unwrap();
         assert!(loras.exists, "an existing folder must be marked as present");
         assert!(!vae.exists, "a missing folder must be marked as absent");
+    }
+
+    #[test]
+    fn a_category_that_is_not_a_safe_folder_name_is_refused_and_reported() {
+        // A category names a folder inside the vault. ComfyUI accepts any key
+        // here, and this file is edited by hand and written by launchers and
+        // node packs, so a key like "..\\..\\x" or a pasted Windows path
+        // arrives as a folder name and gets joined onto the vault root.
+        // Single-quoted in the YAML, because a double-quoted scalar processes
+        // backslash escapes and would turn "a\\b" into a backspace character
+        // rather than the two characters being tested.
+        for hostile in [
+            "../../ESCAPED",
+            "..",
+            ".",
+            "a/b",
+            "a\\b",
+            "/tmp/ANYWHERE",
+            "C:\\Users\\Public",
+            "CON",
+            "trailing ",
+        ] {
+            let yaml = format!("pack:\n    base_path: /opt/comfy\n    '{hostile}': models/x\n");
+            let f = parse(&yaml, &ctx(Posix, "/etc")).unwrap();
+
+            assert!(
+                f.entries.is_empty(),
+                "{hostile:?} became a model folder: {:?}",
+                f.entries.first().map(|e| &e.category)
+            );
+            assert_eq!(f.problems.len(), 1, "{hostile:?} was dropped without telling anyone");
+            assert!(
+                f.problems[0].contains(hostile),
+                "the person cannot fix what the message does not name: {}",
+                f.problems[0]
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_category_does_not_take_the_good_ones_with_it() {
+        // One wrong line in a hand-edited file must not lose the rest.
+        let yaml = "
+comfyui:
+    base_path: /opt/comfy
+    loras: models/loras
+    \"../escape\": models/x
+    checkpoints: models/checkpoints
+";
+        let f = parse(yaml, &ctx(Posix, "/etc")).unwrap();
+        assert_eq!(paths_for(&f, "loras"), vec!["/opt/comfy/models/loras"]);
+        assert_eq!(paths_for(&f, "checkpoints"), vec!["/opt/comfy/models/checkpoints"]);
+        assert_eq!(f.entries.len(), 2);
+        assert_eq!(f.problems.len(), 1);
+    }
+
+    #[test]
+    fn an_ordinary_category_is_still_accepted() {
+        // The control, so the test above cannot pass by refusing everything.
+        let yaml = "
+comfyui:
+    base_path: /opt/comfy
+    loras: models/loras
+    diffusion_models: models/unet
+    some_pack_category: models/pack
+";
+        let f = parse(yaml, &ctx(Posix, "/etc")).unwrap();
+        assert_eq!(f.entries.len(), 3);
+        assert!(f.problems.is_empty());
     }
 
     #[test]

@@ -233,8 +233,23 @@ pub fn validate_file_name(name: &str) -> Result<()> {
     if name.contains('/') || name.contains('\\') {
         return Err(VaultError::invalid("A file name cannot contain a folder separator."));
     }
-    if name.contains('\0') {
-        return Err(VaultError::invalid("That name contains a character the disk cannot store."));
+    // Windows forbids these outright in a file name, and so does every
+    // sensible reading of one. A control character reaches here from a YAML
+    // escape such as `\b`, and `:` reaches here from a pasted drive letter.
+    // Allowing them means a name that looks fine on Linux and fails on the
+    // machine this product runs on.
+    if let Some(bad) = name
+        .chars()
+        .find(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        return Err(VaultError::invalid(format!(
+            "That name contains {}, which Windows cannot store in a file name.",
+            if bad.is_control() {
+                "a control character".to_string()
+            } else {
+                format!("\"{bad}\"")
+            }
+        )));
     }
     // Windows refuses these device names in any folder, with or without an
     // extension. Creating one silently fails or opens a device.

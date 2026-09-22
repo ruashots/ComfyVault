@@ -446,8 +446,8 @@ pub struct ScanRoot {
     pub origin: RootOrigin,
 }
 
-#[cfg(test)]
-pub(crate) mod fixtures {
+#[cfg(any(test, feature = "testing"))]
+pub mod fixtures {
     use super::*;
 
     /// Builds a folder that passes the install test.

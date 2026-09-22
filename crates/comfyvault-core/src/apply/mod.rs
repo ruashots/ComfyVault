@@ -285,8 +285,22 @@ impl<'a> Applier<'a> {
         total: usize,
     ) -> Result<()> {
         let vault_root = self.store.vault_root().to_path_buf();
-        let vault_path = vault_root.join(&group.vault_rel_path);
         let temp_dir = self.store.temp_dir();
+
+        // Proved here, at the write, not assumed from a plan that was built
+        // earlier and stored. The folder name inside a vault path comes from a
+        // category in extra_model_paths.yaml, so it is a value that travelled
+        // through four modules before arriving. A stored plan from an older
+        // build could still carry a bad one.
+        let vault_path = crate::paths::resolve_new_path_within(&vault_root, &group.vault_rel_path)
+            .map_err(|e| {
+                VaultError::new(
+                    ErrorCode::PathOutsideBoundary,
+                    BlockReason::UnsafeVaultPath.message(),
+                )
+                .with_detail(e.message)
+                .with_path(&group.vault_rel_path)
+            })?;
 
         // --- check everything before touching anything --------------------
         // A group that cannot complete must not start, or the person is left
@@ -405,7 +419,19 @@ impl<'a> Applier<'a> {
             //    the vault file, so the vault shows every name it was known by.
             for alias in &group.vault_aliases {
                 cancel.check()?;
-                let alias_path = vault_root.join(&group.category).join(alias);
+                // Proved the same way as the vault path itself: an alias is a
+                // second name for the same content, and its folder comes from
+                // the same untrusted category.
+                let alias_rel = PathBuf::from(&group.category).join(alias);
+                let alias_path =
+                    crate::paths::resolve_new_path_within(&vault_root, &alias_rel).map_err(|e| {
+                        VaultError::new(
+                            ErrorCode::PathOutsideBoundary,
+                            BlockReason::UnsafeVaultPath.message(),
+                        )
+                        .with_detail(e.message)
+                        .with_path(&alias_rel)
+                    })?;
                 if alias_path.exists() || self.platform.is_symlink(&alias_path) {
                     continue;
                 }

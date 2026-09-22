@@ -172,6 +172,24 @@ impl<'a> Vault<'a> {
         Self { store, platform }
     }
 
+    /// Turns a stored vault-relative path into a real one, and proves it stays
+    /// inside the vault.
+    ///
+    /// Every rename and every delete in this module goes through it. The
+    /// folder name inside a stored path came from a category in
+    /// `extra_model_paths.yaml`, so a record written by an older build can
+    /// still point outside. Such a record must fail closed, never delete.
+    fn inside(&self, rel: &Path) -> Result<PathBuf> {
+        crate::paths::resolve_new_path_within(self.store.vault_root(), rel).map_err(|e| {
+            VaultError::new(
+                ErrorCode::PathOutsideBoundary,
+                "That model's recorded folder is outside the vault, so nothing was changed. Scan again to rebuild the record.",
+            )
+            .with_detail(e.message)
+            .with_path(rel)
+        })
+    }
+
     fn links(&self) -> Links<'a> {
         Links::new(self.store, self.platform)
     }
@@ -493,9 +511,8 @@ impl<'a> Vault<'a> {
             ));
         }
 
-        let root = self.store.vault_root();
-        let old_path = root.join(&record.category).join(&record.canonical_name);
-        let new_path = root.join(&record.category).join(name);
+        let old_path = self.inside(&PathBuf::from(&record.category).join(&record.canonical_name))?;
+        let new_path = self.inside(&PathBuf::from(&record.category).join(name))?;
 
         if !old_path.is_file() {
             return Err(VaultError::new(
@@ -627,7 +644,7 @@ impl<'a> Vault<'a> {
             .with_detail(where_));
         }
 
-        let path = self.store.vault_root().join(&rel);
+        let path = self.inside(&rel)?;
         if self.platform.is_symlink(&path) {
             self.platform.remove_symlink(&path)?;
         } else if path.exists() {
@@ -688,16 +705,22 @@ impl<'a> Vault<'a> {
             ));
         }
 
-        let root = self.store.vault_root();
+        // Every path is proved inside the vault before anything is removed, so
+        // a record that points outside fails closed instead of deleting there.
+        let path = self.inside(&record.vault_rel_path())?;
+        let alias_paths: Vec<PathBuf> = record
+            .aliases
+            .iter()
+            .map(|a| self.inside(&PathBuf::from(&record.category).join(a)))
+            .collect::<Result<Vec<_>>>()?;
+
         // The names go first, so a failure part way leaves no name pointing at
         // a file that is about to disappear.
-        for alias in &record.aliases {
-            let p = root.join(&record.category).join(alias);
-            if self.platform.is_symlink(&p) {
-                self.platform.remove_symlink(&p)?;
+        for p in &alias_paths {
+            if self.platform.is_symlink(p) {
+                self.platform.remove_symlink(p)?;
             }
         }
-        let path = root.join(record.vault_rel_path());
         let freed = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(record.size_bytes);
         if path.exists() {
             std::fs::remove_file(&path)
