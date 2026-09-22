@@ -610,3 +610,143 @@ fn a_hugging_face_folder_that_is_not_there_is_skipped_quietly() {
     assert_eq!(out.entries.len(), 1);
     assert!(out.record.errors.is_empty(), "a cache that is not there is not a problem");
 }
+
+// ---------------------------------------------------------------------------
+// A file must really live inside a folder the install declared.
+//
+// The walk follows links because ComfyUI does. Moving what it finds behind one
+// is a different question, and the answer is no.
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn link_dir(target: &Path, at: &Path) {
+    std::os::unix::fs::symlink(target, at).unwrap();
+}
+#[cfg(windows)]
+fn link_dir(target: &Path, at: &Path) {
+    std::os::windows::fs::symlink_dir(target, at).unwrap();
+}
+
+#[test]
+fn a_file_behind_a_folder_link_that_leaves_the_install_is_never_movable() {
+    // One directory link inside a model folder is enough, and it needs no
+    // attacker: a model pack, an old junction, or a person who moved a folder
+    // to another drive all leave one. Without this the engine moves and
+    // deletes files in a folder the plan never names.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let theirs = w.path().join("SomeOtherApp");
+    std::fs::create_dir_all(&theirs).unwrap();
+    std::fs::write(theirs.join("their-data.bin"), weights("theirs")).unwrap();
+
+    std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+    link_dir(&theirs, &i.root.join("models/loras/pack"));
+
+    let out = w.scan(&[i.clone()]);
+    let e = entry(&out, "their-data.bin");
+    assert_eq!(
+        e.classification,
+        Classification::ExternalLink,
+        "a file that lives outside every declared folder must never be movable"
+    );
+    assert!(
+        e.link_target.is_some(),
+        "the interface has to be able to show where the file really lives"
+    );
+    assert!(e.link_target.as_ref().unwrap().starts_with(&theirs));
+
+    // And the planner refuses it, so nothing can act on it.
+    let plan = w.planner().build("p", &out.record.scan_id, &out.entries, &[i]).unwrap();
+    assert!(plan.groups.is_empty());
+    assert_eq!(std::fs::read(theirs.join("their-data.bin")).unwrap(), weights("theirs"));
+}
+
+#[test]
+fn a_whole_models_folder_moved_to_another_drive_still_works() {
+    // The control, and the reason the rule cannot be "the file must sit under
+    // the literal path". Linking the whole models folder to a second drive is
+    // exactly what people do, and it is the setup this product exists for.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let elsewhere = w.path().join("D-drive-models");
+    std::fs::create_dir_all(elsewhere.join("loras")).unwrap();
+    std::fs::write(elsewhere.join("loras/m.safetensors"), weights("m")).unwrap();
+
+    std::fs::remove_dir_all(i.root.join("models")).unwrap();
+    link_dir(&elsewhere, &i.root.join("models"));
+    let i = w.refresh(&i);
+
+    let out = w.scan(&[i.clone()]);
+    let e = entry(&out, "m.safetensors");
+    assert_eq!(
+        e.classification,
+        Classification::Movable,
+        "a linked models folder is a normal setup and must keep working"
+    );
+    assert_eq!(e.category, "loras");
+
+    let plan = w.planner().build("p", &out.record.scan_id, &out.entries, &[i]).unwrap();
+    assert_eq!(plan.groups.len(), 1, "it has to be consolidatable");
+}
+
+#[test]
+fn a_folder_link_that_stays_inside_the_declared_folders_is_fine() {
+    // A link from one model folder to another declared one. Both routes reach
+    // the same file, it is counted once, and it stays movable.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let shared = w.path().join("shared-loras");
+    std::fs::create_dir_all(&shared).unwrap();
+    let i = w.add_extra_model_path(&i, "loras", &shared);
+    std::fs::write(shared.join("s.safetensors"), weights("s")).unwrap();
+
+    std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+    link_dir(&shared, &i.root.join("models/loras/also-here"));
+
+    let out = w.scan(&[i]);
+    let seen: Vec<&ScanEntryRecord> = out
+        .entries
+        .iter()
+        .filter(|e| e.abs_path.file_name().unwrap() == "s.safetensors")
+        .collect();
+    assert_eq!(seen.len(), 1, "one physical file, counted once");
+    assert_eq!(
+        seen[0].classification,
+        Classification::Movable,
+        "it really does live in a folder the install declared"
+    );
+}
+
+#[test]
+fn the_interface_is_told_where_a_file_really_lives_whenever_a_link_was_followed() {
+    // Without this the plan reads as being about the model folder while the
+    // engine acts somewhere else, and nothing on screen could warn anyone.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let real = w.path().join("real-home");
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::write(real.join("x.safetensors"), weights("x")).unwrap();
+
+    std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+    link_dir(&real, &i.root.join("models/loras/linked"));
+
+    let out = w.scan(&[i.clone()]);
+    let e = entry(&out, "x.safetensors");
+
+    // Two different places, and the entry carries both: where it was reached,
+    // and where it actually is.
+    assert_eq!(
+        e.abs_path,
+        i.root.join("models/loras/linked/x.safetensors"),
+        "reached through the model folder"
+    );
+    assert_eq!(
+        e.link_target.as_deref(),
+        Some(real.join("x.safetensors").as_path()),
+        "and the real location travels with it"
+    );
+    assert_ne!(
+        e.abs_path, real.join("x.safetensors"),
+        "if these were the same the test would prove nothing"
+    );
+}

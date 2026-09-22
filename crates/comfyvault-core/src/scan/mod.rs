@@ -203,6 +203,7 @@ impl<'a> Scanner<'a> {
                     None,
                     RootOrigin::HuggingFaceCache,
                     &[],
+                    &[],
                     &mut candidates,
                     &mut seen_real,
                     &errors,
@@ -467,6 +468,15 @@ impl<'a> Scanner<'a> {
             self.settings.follow_extra_model_paths,
             self.settings.scan_output_model_dirs,
         );
+        // Where each declared model folder really is. A whole models folder
+        // linked to another drive is a normal, supported setup, so the rule
+        // cannot be "the file must sit under the literal path": it has to be
+        // "the file must sit under where that folder really is".
+        let allowed: Vec<PathBuf> = roots
+            .iter()
+            .filter_map(|r| crate::paths::canonicalize_clean(&r.path).ok())
+            .collect();
+
         // Anything under custom_nodes is counted, never moved, even when an
         // extra model path points straight into it.
         let custom_nodes = install.custom_nodes_dir();
@@ -486,6 +496,7 @@ impl<'a> Scanner<'a> {
                 root.category.as_deref(),
                 root.origin,
                 &excluded,
+                &allowed,
                 out,
                 seen_real,
                 errors,
@@ -504,6 +515,7 @@ impl<'a> Scanner<'a> {
                 None,
                 RootOrigin::CustomNodes,
                 &excluded,
+                &allowed,
                 out,
                 seen_real,
                 errors,
@@ -522,6 +534,7 @@ impl<'a> Scanner<'a> {
         root_category: Option<&str>,
         origin: RootOrigin,
         excluded: &[PathBuf],
+        allowed: &[PathBuf],
         out: &mut Vec<Candidate>,
         seen_real: &mut HashSet<PathBuf>,
         errors: &Mutex<Vec<ScanError>>,
@@ -594,8 +607,21 @@ impl<'a> Scanner<'a> {
                 continue;
             }
 
-            let is_link = self.platform.is_symlink(&abs_path);
-            let link_target = is_link.then(|| real_path.clone());
+            // Reached through a link somewhere in the chain, whether the file
+            // itself is one or a folder above it is. The interface needs this
+            // either way, or a plan can name a model folder while the engine
+            // acts on somewhere else entirely.
+            let reached_through_link = real_path != abs_path;
+            let link_target = reached_through_link.then(|| real_path.clone());
+
+            // A file must really live inside one of the folders this install
+            // declared. A directory link inside models/ pointing at an
+            // unrelated folder is how the engine ends up moving and deleting a
+            // person's files from somewhere they never mentioned. The walk
+            // still follows links, because ComfyUI does and the two have to
+            // agree about which models exist. Only moving them is refused.
+            let lives_where_it_was_found =
+                allowed.is_empty() || allowed.iter().any(|a| real_path.starts_with(a));
 
             let classification = match origin {
                 RootOrigin::CustomNodes => Classification::CustomNodes,
@@ -608,8 +634,13 @@ impl<'a> Scanner<'a> {
                 _ if excluded.iter().any(|e| abs_path.starts_with(e) || real_path.starts_with(e)) => {
                     Classification::CustomNodes
                 }
-                _ if is_link && real_path.starts_with(&vault_root) => Classification::AlreadyInVault,
-                _ if is_link => Classification::ExternalLink,
+                _ if reached_through_link && real_path.starts_with(&vault_root) => {
+                    Classification::AlreadyInVault
+                }
+                _ if !lives_where_it_was_found => Classification::ExternalLink,
+                _ if reached_through_link && self.platform.is_symlink(&abs_path) => {
+                    Classification::ExternalLink
+                }
                 _ => Classification::Movable,
             };
 
