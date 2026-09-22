@@ -448,7 +448,7 @@ impl<'a> Applier<'a> {
             aliases: group.vault_aliases.clone(),
         })?;
 
-        let mut record_link = |install_id: &str, abs: &Path, name: &str| -> Result<()> {
+        let record_link = |install_id: &str, abs: &Path, name: &str| -> Result<()> {
             let rel = installs
                 .iter()
                 .find(|i| i.id == install_id)

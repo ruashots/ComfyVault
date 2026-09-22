@@ -176,7 +176,7 @@ mod tests {
     fn hashing_a_missing_file_gives_a_clear_error() {
         let d = tempfile::tempdir().unwrap();
         let err = hash_file(&d.path().join("gone.safetensors")).unwrap_err();
-        assert_eq!(err.code, ErrorCode::NotFound);
+        assert_eq!(err.code, crate::ErrorCode::NotFound);
         assert!(err.path.is_some());
     }
 
@@ -189,7 +189,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         let err = hash_file_cancellable(&p, &cancel).unwrap_err();
-        assert_eq!(err.code, ErrorCode::Cancelled);
+        assert_eq!(err.code, crate::ErrorCode::Cancelled);
     }
 
     #[test]
