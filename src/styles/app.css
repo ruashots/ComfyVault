@@ -639,6 +639,13 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .bnd .readout{margin-top:8px}
 .bnd .btn{margin-top:9px}
 
+/* the drives, listed while the vault folder is still being chosen */
+.rail-drive{display:flex;align-items:baseline;gap:8px;margin-top:7px;font-size:11px}
+.rail-drive .dl{width:14px;flex:none;color:var(--t-faint);font-size:9.5px;letter-spacing:.6px}
+.rail-drive .dv{color:var(--t-body)}
+.rail-drive .dv b{color:var(--t-emph);font-weight:600}
+.rail-drive-sub{margin-left:22px;font-size:9.5px;color:var(--t-dim);margin-top:2px}
+
 /* the two things a person sets before anything works */
 .setup{
   display:flex;align-items:center;gap:12px;padding:11px 12px;margin-bottom:8px;

@@ -108,6 +108,23 @@ export function cacheDirsOf(settings: Settings): string[] | null | undefined {
   return settings.huggingFaceCacheDirs;
 }
 
+/**
+ * A drive on this computer, with how much room it has.
+ *
+ * `freeBytes` and `totalBytes` are null together when the drive cannot be
+ * read, which happens with an empty card reader or a network drive that has
+ * stopped answering. They are never zero to mean "not known": zero of zero
+ * reads as a completely full drive, which is a different and wrong statement.
+ */
+export interface DriveInfo {
+  /** For example "C:\\". */
+  root: string;
+  kind: "fixed" | "removable" | "network" | "optical" | "ramDisk" | "unknown";
+  /** The space this person may use, which a quota can make smaller. */
+  freeBytes: number | null;
+  totalBytes: number | null;
+}
+
 export interface AppState {
   vaultRoot: string | null;
   vaultInitialized: boolean;
@@ -736,6 +753,8 @@ export interface Engine {
   selectVault(path: string, createIfMissing: boolean): Promise<VaultInfo>;
   /** The open vault's facts, above all how much room its drive has left. */
   getVaultInfo(): Promise<VaultInfo>;
+  /** Every drive, of every kind. It answers before a vault exists. */
+  listDrives(): Promise<DriveInfo[]>;
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
 

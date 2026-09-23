@@ -171,6 +171,35 @@ export function Rail() {
         </div>
       </Show>
 
+      {/* Before a vault folder exists there is no drive to instrument, but the
+          drives themselves are known. Listing them is what makes the choice the
+          setup screen is asking for a good one. */}
+      <Show when={!app.hasVault()}>
+        <div class="rail-foot">
+          <div class="lbl">Drives</div>
+          <For each={app.drives()}>
+            {(drive) => (
+              <>
+                <div class="rail-drive">
+                  <span class="dl">{drive.root.replace(/\\$/, "")}</span>
+                  <span class="dv">
+                    <Show
+                      when={drive.freeBytes !== null}
+                      fallback={<>not readable</>}
+                    >
+                      <b>{fmt(drive.freeBytes!)}</b> free
+                    </Show>
+                  </span>
+                </div>
+                <Show when={drive.totalBytes !== null}>
+                  <div class="rail-drive-sub">of {fmt(drive.totalBytes!)}</div>
+                </Show>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
+
       <Show when={meter()}>
         {(m) => (
           <div class="rail-foot">

@@ -39,6 +39,7 @@ import type {
   ConsolidationPlan,
   ContentRow,
   DirectoryEntry,
+  DriveInfo,
   Engine,
   Install,
   InstallCandidate,
@@ -186,6 +187,12 @@ export interface AppStore {
    * the interface holds it until the vault folder is chosen and then registers
    * it. It lives only in this window until then.
    */
+  /**
+   * Every drive on this computer. Read before a vault exists, because which
+   * drives there are and what room each has is what makes the vault-folder
+   * choice an informed one.
+   */
+  readonly drives: Accessor<readonly DriveInfo[]>;
   readonly pendingInstall: Accessor<string | null>;
   readonly setPendingInstall: (path: string | null) => void;
   /** Both things a person has to set before any screen has anything to show. */
@@ -338,6 +345,7 @@ export function createAppStore(engine: Engine): AppStore {
     applyGate(machineFacts(), selection(), appState()?.busy ?? null),
   );
 
+  const [drives, setDrives] = createSignal<readonly DriveInfo[]>([]);
   const [pendingInstall, setPendingInstall] = createSignal<string | null>(null);
   const hasInstalls = createMemo(
     () => installs().length > 0 || pendingInstall() !== null,
@@ -423,6 +431,9 @@ export function createAppStore(engine: Engine): AppStore {
   const refresh = async () => {
     try {
       const state = await engine.getAppState();
+      // It answers whether or not a vault exists, and the first screen needs it
+      // most when one does not.
+      setDrives(await orNotYet(engine.listDrives(), []));
 
       // Before a vault folder exists there is nothing to read and every other
       // command refuses, so this is where the first run stops. Asking anyway
@@ -639,6 +650,7 @@ export function createAppStore(engine: Engine): AppStore {
     gate,
     hasInstalls,
     hasVault,
+    drives,
     pendingInstall,
     setPendingInstall,
     setupDone,

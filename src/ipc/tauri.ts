@@ -24,6 +24,7 @@ import type {
   ConsolidationPlan,
   ContentPage,
   DirectoryListing,
+  DriveInfo,
   Engine,
   Install,
   InstallCandidate,
@@ -82,6 +83,7 @@ export function createTauriEngine(): Engine {
     selectVault: (path, createIfMissing) =>
       call<VaultInfo>("select_vault", { path, createIfMissing }),
     getVaultInfo: () => callNoArgs<VaultInfo>("get_vault_info"),
+    listDrives: () => callNoArgs<DriveInfo[]>("list_drives"),
     getSettings: () => callNoArgs<Settings>("get_settings"),
     updateSettings: (patch) => call<Settings>("update_settings", { ...patch }),
 

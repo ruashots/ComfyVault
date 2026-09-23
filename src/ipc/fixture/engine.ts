@@ -17,6 +17,7 @@ import type {
   ContentFilter,
   ContentPage,
   DirectoryListing,
+  DriveInfo,
   Engine,
   ExtraPath,
   Install,
@@ -331,6 +332,20 @@ export class FixtureEngine implements Engine {
       totalStoredBytes: stored,
       schemaVersion: 1,
     };
+  }
+
+  /**
+   * Both drives this fake computer has, of the kinds a real one reports. It
+   * answers before a vault exists, because it is what the first screen shows
+   * while asking where the vault should go.
+   */
+  async listDrives(): Promise<DriveInfo[]> {
+    return [
+      { root: "C:\\", kind: "fixed", freeBytes: this.world.freeBytes, totalBytes: VAULT_TOTAL_BYTES },
+      { root: "D:\\", kind: "fixed", freeBytes: 442_381_631_488, totalBytes: 1_024_209_543_168 },
+      // An empty card reader: it is there, and it cannot say how big it is.
+      { root: "E:\\", kind: "removable", freeBytes: null, totalBytes: null },
+    ];
   }
 
   async getVaultInfo(): Promise<VaultInfo> {

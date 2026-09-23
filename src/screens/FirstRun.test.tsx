@@ -298,3 +298,39 @@ describe("what the interface says about an install it has not registered", () =>
     expect(text).not.toContain("are registered");
   });
 });
+
+describe("the rail while the vault folder is still being chosen", () => {
+  it("lists the drives with their real numbers, and no meter", async () => {
+    const { app } = await firstRun();
+    expect(app.drives().length).toBeGreaterThan(1);
+
+    const rail = document.querySelector(".rail")!.textContent ?? "";
+    expect(rail).toContain("Drives");
+    expect(rail).toContain("C:");
+    expect(rail).toContain("D:");
+    expect(rail).toContain("free");
+    // Nothing is measured against a drive nobody has chosen.
+    expect(document.querySelector(".rail .meter")).toBeNull();
+    expect(rail).not.toContain("0 MB free");
+  });
+
+  it("says a drive it cannot read is not readable, rather than empty", async () => {
+    await firstRun();
+    const rail = document.querySelector(".rail")!.textContent ?? "";
+    // An empty card reader has no size. Zero of zero would read as full.
+    expect(rail).toContain("not readable");
+    expect(rail).not.toContain("0 B free");
+  });
+
+  it("collapses to the vault's own drive once one is chosen", async () => {
+    const { app } = await firstRun();
+    await chooseVault();
+    await pickFolder("ComfyVault", "Use this folder");
+    await waitFor(() => app.hasVault());
+
+    const rail = document.querySelector(".rail")!.textContent ?? "";
+    expect(rail).not.toContain("Drives");
+    expect(rail).toContain("Drive C:");
+    expect(document.querySelector(".rail .meter")).not.toBeNull();
+  });
+});
