@@ -14,7 +14,11 @@ npm install
 npm run tauri build
 ```
 
-The installer lands in `src-tauri/target/release/bundle/nsis/`.
+The installer lands in `target/release/bundle/nsis/`.
+
+That path is the workspace's own `target/`, at the top of the repository.
+`src-tauri` is a workspace member, so cargo writes its output there and not into
+`src-tauri/target/`.
 
 `npm run tauri build` runs the interface build first, then the Rust build with
 the right feature turned on. Prefer it over a hand-rolled `cargo build`.
@@ -174,4 +178,8 @@ honestly rather than guessing:
 | `crates/comfyvault-core/` | The engine. All the rules. No Tauri. |
 | `src-tauri/` | The command layer, the window, and the build settings. |
 | `src/` | The interface. |
+| `design/mock/comfyvault.html` | The design the interface was built from. Open it in a browser. |
 | `docs/IPC-CONTRACT.md` | Every command, payload and event. |
+| `docs/HOW-IT-WORKS.md` | What the scan reads, how the plan is decided, what Apply does. |
+| `docs/FRONTEND.md` | Running the interface on its own, against a development engine. |
+| `docs/TROUBLESHOOTING.md` | The stuck states, and what to do about each one. |

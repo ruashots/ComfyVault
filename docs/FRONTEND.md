@@ -2,6 +2,9 @@
 
 Solid and TypeScript, built by Vite, drawn into the Tauri window.
 
+This document is for working on the interface itself. To build the whole
+application, see [BUILD.md](BUILD.md).
+
 ## Run it
 
 Node 22 or newer is required. Node 20 cannot install this dependency set.

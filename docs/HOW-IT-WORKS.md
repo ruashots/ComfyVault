@@ -1,0 +1,384 @@
+# How ComfyVault works
+
+This document is for the person who wants to know exactly what happens to their
+model files before they let a program move them. It follows the work in order:
+what the scan reads, how the plan is decided, what Apply does step by step, and
+what the vault holds afterwards.
+
+Every rule below is enforced by the engine in `crates/comfyvault-core` and
+covered by its tests.
+
+---
+
+## 1. What a symbolic link is, and why this works
+
+A symbolic link is an entry in a folder that points at a file somewhere else.
+Windows has had them for years. To a program that opens the file, a link behaves
+like the file: it has the same path, the same name, and reading it returns the
+same bytes.
+
+ComfyUI follows symbolic links when it lists and loads models. So a link left
+where a model used to be is, from ComfyUI's point of view, the model.
+
+This is why no workflow needs changing. The path did not move. Only the bytes
+did.
+
+Windows refuses to create a symbolic link for a program that is not elevated,
+unless Developer Mode is on. That is the one system setting ComfyVault needs.
+
+---
+
+## 2. Registering an install
+
+ComfyVault has to be sure a folder really is a ComfyUI install before it reads
+anything from it.
+
+It looks for these seven entries and requires at least five of them in one
+folder:
+
+```
+main.py   nodes.py   folder_paths.py   execution.py   server.py   comfy/   comfy_extras/
+```
+
+It then opens `folder_paths.py` and requires the text `folder_names_and_paths`
+to appear in it. That content check removes false positives, for example a
+backup folder that happens to hold a few of the same file names.
+
+If the folder you chose fails the test, ComfyVault searches down to three levels
+for a folder that passes, and offers the shallowest one it finds. This handles a
+launcher layout, where the real install sits at something like
+`C:\Something\ComfyUI-Easy-Install\ComfyUI\`.
+
+It also reads the install's version, from `comfyui_version.py` and then from
+`pyproject.toml`. ComfyUI only started recording its version in 0.3.11, so an
+older install records it nowhere. A missing version is normal, and it never
+stops an install being registered. It is reported as unknown, never as fine.
+
+### `extra_model_paths.yaml`
+
+If the install has one, ComfyVault reads it and follows the folders it names,
+because ComfyUI does. The reader reproduces ComfyUI's own parsing rules,
+including the parts people get wrong:
+
+- A tilde expands on `base_path` only. A `~` written in a category value stays a
+  literal folder named `~`.
+- An absolute category path discards `base_path` entirely.
+- ComfyUI renames two categories on the way in. `unet` becomes
+  `diffusion_models`, and `clip` becomes `text_encoders`. ComfyVault applies the
+  same renaming and reports both names.
+
+A category name in that file becomes a folder name inside the vault, so
+ComfyVault checks that it is a single safe folder name. A category that is not
+one is skipped, and the reason appears in the install's details, so a broken
+hand edit shows up as a message rather than as a silently missing folder.
+
+---
+
+## 3. The scan
+
+A scan walks these places, for every install in the scan:
+
+| Place | What happens to it |
+|---|---|
+| `<root>\models` and everything under it | Read, and movable |
+| Every folder in `extra_model_paths.yaml` | Read, and movable |
+| `<root>\output\` for `checkpoints`, `clip`, `vae`, `diffusion_models`, `loras` | Read, and movable. ComfyUI registers those five as model search paths at startup |
+| `<root>\custom_nodes` and everything under it | Counted, **never moved** |
+| The Hugging Face cache | Counted, **never moved** |
+
+A file enters the scan when its extension is in the list and its size is over
+the floor. The defaults are:
+
+```
+.safetensors  .ckpt  .pt  .pth  .bin  .gguf  .onnx  .pt2  .sft  .pkl
+```
+
+and 1 MB. Both are settings.
+
+The first seven extensions are the common weight formats. The last three come
+from ComfyUI itself, which treats `.pt2`, `.sft` and `.pkl` as model weights.
+
+### Hashing
+
+ComfyVault computes a SHA-256 hash of the whole file. Two files are duplicates
+when their hashes match, whatever they are called and wherever they sit.
+
+A first scan therefore reads every byte of every model. On a terabyte of weights
+that takes a while. There is no shortcut that is also honest: file size and date
+can agree while the contents differ.
+
+Later scans are much faster. Each hash is cached against the file's path, its
+size, and its modification time. If all three match, the cached hash is reused
+and no bytes are read. Change any of the three and the file is read again. You
+can force a full read by turning the hash cache off in Settings.
+
+### Links the scan meets
+
+The scan follows symbolic links while it walks, because ComfyUI does, and the
+two must agree about which files exist. One physical file reached by two routes
+is counted once.
+
+A file that is already a link into the vault is recorded as already done. A link
+that points anywhere else is left alone: ComfyVault does not replace a link
+somebody else made.
+
+A file that is reached through a linked **folder**, and that really lives
+outside every folder the install declares, is not treated as movable either. It
+is reported with the path it actually lives at. A junction pointing at another
+drive is a normal thing to find on a Windows machine, and a plan must never move
+a file out of a folder it never named.
+
+---
+
+## 4. The plan
+
+The plan is a dry run. Building it changes nothing on disk.
+
+**One group per unique content.** Every file with the same SHA-256 becomes one
+group, whatever it is called and whatever folder it sits in. The same weight
+under `loras\awesome\` in one install and `loras\new\` in another is one group.
+
+**The vault path is the category plus the file name.** So
+`loras\awesome\lora1.safetensors` becomes `loras\lora1.safetensors`. The
+sub-folder disappears inside the vault. It stays in the install, because the
+link stays where the file was.
+
+**Which copy moves.** ComfyVault prefers a copy that already sits on the vault's
+own drive, because moving that one is a rename: it takes no time and no extra
+space. If no copy is on that drive, it takes the first copy by sorted path. The
+plan says which rule decided, for every group.
+
+**Every place gets a link, including the one that moved.** A group that covers
+four paths creates four links.
+
+**Two different files with the same name both survive.** The one held in more
+places keeps the plain name. The other takes its name plus the first eight
+characters of its hash, for example `lora1__3F9A2C17.safetensors`. Ties are
+broken by hash, so a plan built twice from one scan is identical.
+
+**A model that exists only once still moves into the vault.** It frees nothing,
+and the plan counts it separately, because the space number has to match the row
+count you are looking at.
+
+**A file that cannot move never appears in a group.** It appears in its own list
+with a reason and a sentence explaining what to do. The reasons include: another
+program has the file open, the file changed after the scan read it, the file is
+gone, permission was refused, the vault folder sits inside that install, there
+is not enough room on the vault's drive, and the name is already taken inside
+the vault by different content.
+
+### The plan is rebuilt, never patched
+
+Building a plan re-checks the machine. It asks again whether each file still
+matches what the scan read, and whether another program holds it open.
+
+So the plan changes as the machine changes, and it changes in the direction
+people expect. Close ComfyUI and build the plan again from the same scan, and
+the plan gets **bigger**: a file that was held open rejoins its group, and a
+content that looked like a single copy becomes a duplicate that saves space.
+
+---
+
+## 5. Apply, step by step
+
+Apply is sent the exact list of groups you left ticked. It reads the stored
+plan. It does not re-plan, and it does not widen the work.
+
+For each group:
+
+1. **Check every file again.** The size and the modification time are compared
+   against what the scan recorded. If either differs, that group stops, the
+   reason is recorded, and the run moves to the next group. On Windows the
+   engine also checks whether another program holds the file open, by opening it
+   the same way the move would.
+
+2. **Move the chosen copy into the vault.** On the same drive this is a rename,
+   which is instant. Across drives it is a copy: the bytes are written, flushed
+   to the disk, read back, hashed, and compared against the hash the scan
+   recorded. Only then is the original removed. A mismatch deletes the copy and
+   leaves the original untouched.
+
+3. **Put a link where that copy was.** Its old place is now empty, so it only
+   needs the link.
+
+4. **For every other copy: rename aside, link, verify, delete.** The file is
+   renamed to a temporary name next to itself. The link is created. The
+   duplicate's bytes are read one more time and hashed, and the hash is compared
+   against the copy being kept. Only if they match is the renamed file deleted.
+   If they do not match, the file is put back and the group is reported.
+
+That last re-read is the setting `verifyBeforeDelete`, and it is on by default.
+Deleting is the only step in the whole program that cannot be undone. Without
+the re-read, the proof that two files are identical is a hash from an earlier
+scan, which may itself have come from a cache row rather than from the file.
+Drives with coarse timestamps, which external model drives often have, can hide
+a difference from the size and the date alone.
+
+You can turn it off to go faster. That makes the delete a matter of trust rather
+than proof.
+
+### Two rules that hold throughout
+
+**Each group is all or nothing.** If any step in a group fails, every step
+already done in that group is undone, and the disk is left exactly as it was. A
+failure in one group never leaves another group half finished.
+
+**Nothing is ever overwritten.** If anything already sits where a file or a link
+would go, the engine refuses and reports it. This holds for the move, the link,
+the put-back, and the undo.
+
+---
+
+## 6. The journal, and what happens after a crash
+
+Before each step runs, ComfyVault writes what it is about to do into a journal
+in the vault database. The write reaches the disk before the step happens.
+
+So the journal is always at least as far along as the disk. If the power goes
+out, the app can read the journal, look at the disk, and see exactly where it
+stopped.
+
+The next time ComfyVault starts, it lists any run that did not finish and asks
+you to resolve it before anything else. You can:
+
+- **Finish it.** It re-checks every file it had not yet touched, and completes
+  only the groups you originally ticked. It never widens the work to the rest of
+  the plan.
+- **Undo it.** Every file goes back to where it came from.
+
+Because an interrupted duplicate is always under one name or the other, the
+renamed-aside name or its original name, its bytes are never in neither place.
+
+---
+
+## 7. Undo
+
+Undo walks the journal backwards and reverses every step.
+
+When the original bytes were deleted, they are copied back out of the vault,
+because the content is identical by hash. That means an undo needs free space on
+the install's drive. ComfyVault checks that first and refuses rather than half
+doing it.
+
+A run that was interrupted and then finished is undone as one run. Resuming
+continues the same journal rather than starting a new one, so the whole of it
+comes back.
+
+An undo is refused when something you did later still depends on the run. The
+common case is renaming a model inside the vault. ComfyVault names what is in
+the way, so you can undo the later change first.
+
+---
+
+## 8. The vault
+
+The vault is a plain folder. You choose where it goes, and it can be on any
+drive. It cannot be inside a ComfyUI install, and ComfyVault refuses that
+choice, because a file moved into it would still be inside the install it came
+from.
+
+```
+C:\ComfyVault\
+  checkpoints\
+  loras\
+  vae\
+  .comfyvault\
+    vault.redb
+```
+
+One folder per model category, and one real file per unique content.
+
+### Names
+
+The same file often arrives under two different names, because you downloaded it
+twice from different places. The vault keeps one of them as the real file, and
+the other as a link beside it. So every name a model was ever known by still
+works, and a saved workflow that names the old one still opens.
+
+The Cleanup screen shows these, and lets you pick which name the vault keeps.
+Doing that frees no disk space. What it gives you is one entry per model in
+ComfyUI's dropdown instead of two. Removing a name is a separate action, and it
+is refused while any install link still resolves through it.
+
+### The record
+
+`vault.redb` holds the whole record: which installs are registered, what each
+scan found, every plan, every run's journal, every link that was created, and
+the cached hashes.
+
+It lives inside the vault, not beside the application. Move the drive to another
+machine and the record of what was taken and from where moves with it. The only
+thing kept outside the vault is which vault folder to open.
+
+---
+
+## 9. What can go wrong later, and how the app finds it
+
+The Cleanup screen runs a health check over the vault and the links.
+
+**A link that points at a file that is not there** is the most serious result,
+and it is shown first. It happens when a vault file is deleted or the vault
+drive is unplugged. It matters for a reason that is not obvious: ComfyUI lists a
+broken link in its model dropdown and then fails to load it, and a custom node
+that re-downloads what it thinks is a missing model writes straight through the
+broken link and drops the file inside the vault. ComfyVault offers to remove
+broken links, singly or all at once. No model file is lost by removing one, since
+a broken link points at nothing.
+
+**A real file where a link belonged** means something replaced the link.
+ComfyVault reports it and does not touch it.
+
+**A vault file nothing points at** is listed in Cleanup. Deleting one does free
+space, and it cannot be undone, so it asks you to type the file's hash back.
+While any install still links to a file, deleting it is refused.
+
+**A file in the vault folder that the record does not know about** is reported
+as well, rather than quietly adopted.
+
+---
+
+## 10. Is a model used
+
+The Library can search your saved workflow files for a model's file name.
+
+Read what this check actually does, because the answer is easy to misread:
+
+> The file name is searched for as plain text inside saved workflow files.
+
+It does not parse the graph. It does not resolve node inputs. A match means the
+name appears in a file. It does not prove the model runs.
+
+It searches these places under each install root:
+
+```
+user\<any user>\workflows\**\*.json
+user\<any user>\subgraphs\**\*.json
+any file named workflow.json, outside models, custom_nodes, .git and virtual environments
+```
+
+Files over 50 MB are skipped and reported.
+
+A workflow only exists on disk once you pressed Save. A draft that lived in a
+browser tab is invisible to this check. When there is nothing on disk to search,
+ComfyVault says exactly that instead of reporting every model as unused:
+
+> No saved workflow files were found, so nothing was searched. A workflow that
+> was never saved lives in the browser, where this app cannot see it.
+
+**This is not a safe-to-delete list.** Treat it as a hint about which models to
+look at, and never as permission to delete one.
+
+---
+
+## 11. Model thumbnails
+
+ComfyUI 0.28.0 added a security check to the route that serves model preview
+images. That check rejects a file reached through a per-file symbolic link.
+
+The effect is limited to thumbnails in the model browser. Loading a model is not
+affected. Running a workflow is not affected.
+
+This will not be reverted, and it is the price of per-file links. ComfyVault
+reads each install's version and tells you which of your installs it affects. An
+install that does not record its version is reported as unknown, never as
+unaffected, because the app cannot check what the install does not say.
