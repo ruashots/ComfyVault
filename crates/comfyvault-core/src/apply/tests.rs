@@ -741,6 +741,7 @@ fn a_crash_between_moving_the_file_and_linking_it_is_recoverable() {
             started_at: crate::time_util::Timestamp::now(),
             finished_at: None,
             groups_requested: 1,
+            group_ids: vec![plan.groups[0].group_id.clone()],
             groups_applied: 0,
             groups_failed: 0,
             bytes_freed: 0,
@@ -822,6 +823,7 @@ fn a_crash_after_setting_a_duplicate_aside_is_recoverable() {
             started_at: crate::time_util::Timestamp::now(),
             finished_at: None,
             groups_requested: 1,
+            group_ids: vec![plan.groups[0].group_id.clone()],
             groups_applied: 0,
             groups_failed: 0,
             bytes_freed: 0,
@@ -878,6 +880,7 @@ fn a_crash_after_removing_a_duplicate_is_recovered_from_the_vault() {
             started_at: crate::time_util::Timestamp::now(),
             finished_at: None,
             groups_requested: 1,
+            group_ids: vec![plan.groups[0].group_id.clone()],
             groups_applied: 0,
             groups_failed: 0,
             bytes_freed: 0,
@@ -913,25 +916,32 @@ fn a_crash_after_removing_a_duplicate_is_recovered_from_the_vault() {
 }
 
 #[test]
-fn a_run_cut_short_after_one_of_two_groups_can_be_finished() {
+fn resume_finishes_only_what_the_person_ticked() {
+    // This test used to assert the opposite, and it was written from the
+    // implementation instead of from the contract. Section 6.1: "The engine
+    // never applies a group the caller did not name."
+    //
+    // The sequence it guards: tick three of five hundred, press Apply, lose
+    // power, press the recovery button. Resuming the whole plan would move all
+    // five hundred into the vault and delete every duplicate of all five
+    // hundred, at the moment the person is least likely to check.
     let w = TestWorld::new();
     let a = w.add_install("A");
     let b = w.add_install("B");
-    for tag in ["one", "two"] {
+    for tag in ["ticked", "untouched"] {
         w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
         w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
     }
     let plan = w.plan(&[a.clone(), b.clone()]);
+    let ticked = group_for(&plan, "ticked").group_id.clone();
 
-    // Apply only the first group, then make it look like the process died.
-    let first = plan.groups[0].group_id.clone();
     applier(&w)
         .apply(
             "ap-1",
             &plan,
             &ApplyRequest {
                 plan_id: plan.plan_id.clone(),
-                group_ids: vec![first.clone()],
+                group_ids: vec![ticked],
                 verify: VerifyModeArg::SizeAndMtime,
                 stop_on_error: false,
             },
@@ -940,21 +950,128 @@ fn a_run_cut_short_after_one_of_two_groups_can_be_finished() {
         )
         .unwrap();
     simulate_crash_after(&w, "ap-1", usize::MAX);
-
     assert_eq!(applier(&w).interrupted().unwrap().len(), 1);
 
     let record = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
     assert_eq!(record.state, ApplyState::Completed);
 
-    // Both contents are now in the vault and every old place reads through.
-    for tag in ["one", "two"] {
-        let vault_file = w.vault_root.join(format!("loras/{tag}.safetensors"));
-        assert!(vault_file.is_file(), "{tag} did not reach the vault");
+    // The ticked content is consolidated and reads through everywhere.
+    assert!(w.vault_root.join("loras/ticked.safetensors").is_file());
+    for install in [&a, &b] {
+        let p = install.root.join("models/loras/ticked.safetensors");
+        assert!(w.is_link(&p));
+        assert_eq!(w.read(&p), weights("ticked"));
+    }
+
+    // The one the person left alone is exactly as it was: two real files, both
+    // with their own bytes, and nothing in the vault.
+    assert!(
+        !w.vault_root.join("loras/untouched.safetensors").exists(),
+        "resume moved a group the person never ticked"
+    );
+    for install in [&a, &b] {
+        let p = install.root.join("models/loras/untouched.safetensors");
+        assert!(!w.is_link(&p), "{} became a link", p.display());
+        assert_eq!(
+            std::fs::read(&p).unwrap(),
+            weights("untouched"),
+            "{} lost its bytes",
+            p.display()
+        );
+    }
+}
+
+#[test]
+fn a_resumed_run_can_still_be_undone() {
+    // A resumed pass used to restart the journal at zero, overwriting the
+    // entries that described work already on disk. The journal is the only
+    // record of how to undo it, so the undo then reported success and left the
+    // tree consolidated.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    for tag in ["first", "second"] {
+        w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+    }
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    let both: Vec<String> = plan.groups.iter().map(|g| g.group_id.clone()).collect();
+
+    applier(&w)
+        .apply(
+            "ap-1",
+            &plan,
+            &ApplyRequest {
+                plan_id: plan.plan_id.clone(),
+                group_ids: both,
+                verify: VerifyModeArg::SizeAndMtime,
+                stop_on_error: false,
+            },
+            &CancelToken::new(),
+            &NullSink,
+        )
+        .unwrap();
+
+    let journal_before = w.store.journal("ap-1").unwrap().len();
+    simulate_crash_after(&w, "ap-1", usize::MAX);
+    applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+
+    assert!(
+        w.store.journal("ap-1").unwrap().len() >= journal_before,
+        "the resumed pass wrote over the first pass's journal"
+    );
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+
+    for tag in ["first", "second"] {
         for install in [&a, &b] {
             let p = install.root.join(format!("models/loras/{tag}.safetensors"));
-            assert!(w.is_link(&p), "{} is not a link", p.display());
-            assert_eq!(w.read(&p), weights(tag));
+            assert!(p.is_file(), "{} is missing after the undo", p.display());
+            assert!(!w.is_link(&p), "{} is still a link after the undo", p.display());
+            assert_eq!(std::fs::read(&p).unwrap(), weights(tag));
         }
+    }
+    assert!(!w.vault_root.join("loras/first.safetensors").exists());
+    assert!(!w.vault_root.join("loras/second.safetensors").exists());
+}
+
+#[test]
+fn a_record_with_no_stored_selection_resumes_nothing() {
+    // A record written by an older build has no selection. Guessing the whole
+    // plan is exactly the defect; doing nothing is the safe direction.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a.clone(), b.clone()]);
+
+    w.store
+        .put_apply(&ApplyRecord {
+            apply_id: "old".into(),
+            plan_id: plan.plan_id.clone(),
+            state: ApplyState::Running,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            groups_requested: 1,
+            group_ids: Vec::new(),
+            groups_applied: 0,
+            groups_failed: 0,
+            bytes_freed: 0,
+            files_moved: 0,
+            links_created: 0,
+            failures: vec![],
+            revertible: true,
+        })
+        .unwrap();
+
+    let record = applier(&w).resume("old", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.groups_applied, 0);
+    assert!(!w.vault_root.join("loras/m.safetensors").exists());
+    for install in [&a, &b] {
+        let p = install.root.join("models/loras/m.safetensors");
+        assert!(!w.is_link(&p));
+        assert_eq!(std::fs::read(&p).unwrap(), weights("m"));
     }
 }
 
@@ -1140,4 +1257,90 @@ fn a_second_apply_finds_nothing_left_to_do() {
     let second = w.plan(&[a, b]);
     assert!(second.groups.is_empty(), "there is nothing left to consolidate");
     assert!(second.blocked.is_empty(), "work already done is not a problem to report");
+}
+
+// ---------------------------------------------------------------------------
+// Deleting is the one irreversible step. The proof that a duplicate is
+// identical has to be bytes read now, not a hash from an earlier scan.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_wrong_cache_row_cannot_make_the_engine_delete_the_wrong_file() {
+    // The hash in a scan entry can come from the cache rather than from the
+    // file. A row that matches but is wrong is the only interesting question
+    // about a cache, and the answer must not be "delete the bytes".
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("a-content"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("b-content"));
+
+    // Plant a row claiming B's file holds A's content, which is what a stale
+    // row or a coarse-timestamp collision produces.
+    let meta = std::fs::metadata(&pb).unwrap();
+    w.store
+        .put_cached_hash(&crate::store::HashCacheRecord {
+            path: pb.clone(),
+            size_bytes: meta.len(),
+            mtime_nanos: crate::time_util::Timestamp::mtime_nanos(&meta),
+            sha256: weights_hash("a-content"),
+        })
+        .unwrap();
+
+    let plan = w.plan(&[a, b]);
+    assert_eq!(plan.groups.len(), 1, "the wrong row did group them, as it would");
+
+    let result = run_apply(&w, &plan);
+    assert_eq!(result.groups_applied, 0, "a group built on a wrong row must not complete");
+
+    // Both files still hold their own bytes.
+    assert_eq!(std::fs::read(&pa).unwrap(), weights("a-content"));
+    assert_eq!(
+        std::fs::read(&pb).unwrap(),
+        weights("b-content"),
+        "B's own weights were destroyed on the strength of a hash nothing read"
+    );
+    assert!(!w.is_link(&pb));
+}
+
+#[test]
+fn the_check_before_deleting_can_be_switched_off_knowingly() {
+    // It costs a full read of every duplicate, so it is a setting. The default
+    // is on, and this proves the setting is what decides it rather than luck.
+    let w = TestWorld::new();
+    let mut settings = w.settings.clone();
+    settings.verify_before_delete = false;
+    w.store.put_settings(&settings).unwrap();
+
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("a-content"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("b-content"));
+
+    let meta = std::fs::metadata(&pb).unwrap();
+    w.store
+        .put_cached_hash(&crate::store::HashCacheRecord {
+            path: pb.clone(),
+            size_bytes: meta.len(),
+            mtime_nanos: crate::time_util::Timestamp::mtime_nanos(&meta),
+            sha256: weights_hash("a-content"),
+        })
+        .unwrap();
+
+    let plan = w.plan(&[a, b]);
+    let result = run_apply(&w, &plan);
+
+    assert_eq!(
+        result.groups_applied, 1,
+        "with the check off the engine takes the row at its word, which is the point of the setting"
+    );
+    assert!(w.is_link(&pb));
+}
+
+#[test]
+fn the_default_is_to_check() {
+    assert!(
+        crate::settings::Settings::default().verify_before_delete,
+        "a fresh vault must prove a duplicate before deleting it"
+    );
 }

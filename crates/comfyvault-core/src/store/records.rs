@@ -252,6 +252,14 @@ pub struct ApplyRecord {
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
     pub groups_requested: u64,
+    /// Exactly the groups the caller named.
+    ///
+    /// Resume needs this. Without it a resumed run cannot know what was asked
+    /// for, and substituting the whole plan moves and deletes files the person
+    /// deliberately left unticked. A record from an older build has none, and
+    /// then a resume does nothing, which is the safe direction.
+    #[serde(default)]
+    pub group_ids: Vec<String>,
     pub groups_applied: u64,
     pub groups_failed: u64,
     pub bytes_freed: u64,

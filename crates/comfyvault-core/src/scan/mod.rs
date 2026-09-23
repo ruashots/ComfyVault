@@ -290,15 +290,45 @@ impl<'a> Scanner<'a> {
                         }
                     }
 
+                    // A cache row must describe the bytes that were actually
+                    // read. The enumeration happened first, and on a terabyte
+                    // the read happens hours later, so pairing the size and
+                    // time from enumeration with a hash from that later read
+                    // writes a row that is simply wrong, and it is then
+                    // trusted for as long as the vault exists.
+                    let before = stat_of(&c.abs_path);
                     let mut read = 0u64;
                     match hash::hash_file_counting(&c.abs_path, cancel, &mut read) {
                         Ok(sha) => {
-                            new_cache_rows.lock().unwrap().push(HashCacheRecord {
-                                path: c.abs_path.clone(),
-                                size_bytes: c.size_bytes,
-                                mtime_nanos: c.mtime_nanos,
-                                sha256: sha.clone(),
-                            });
+                            let after = stat_of(&c.abs_path);
+                            match (before, after) {
+                                // Unchanged across the whole read, so the hash
+                                // describes exactly this size and time.
+                                (Some(b), Some(a)) if b == a => {
+                                    new_cache_rows.lock().unwrap().push(HashCacheRecord {
+                                        path: c.abs_path.clone(),
+                                        size_bytes: b.0,
+                                        mtime_nanos: b.1,
+                                        sha256: sha.clone(),
+                                    });
+                                }
+                                // It moved while it was being read, so the
+                                // hash may be of a torn file. Remember nothing
+                                // rather than remember a lie.
+                                _ => {
+                                    errors.lock().unwrap().push(ScanError {
+                                        path: crate::paths::display_path(&c.abs_path),
+                                        install_id: Some(c.install_id.clone()),
+                                        code: crate::ErrorCode::FileChanged,
+                                        detail: "This file changed while it was being read, so it was not identified. Scan again."
+                                            .to_string(),
+                                    });
+                                    hashes.lock().unwrap().push((idx, None));
+                                    files_hashed.fetch_add(1, Ordering::Relaxed);
+                                    bytes_hashed.fetch_add(c.size_bytes, Ordering::Relaxed);
+                                    return;
+                                }
+                            }
                             hashes.lock().unwrap().push((idx, Some(sha)));
                             bytes_read.fetch_add(read, Ordering::Relaxed);
                         }
@@ -663,6 +693,13 @@ impl<'a> Scanner<'a> {
             });
         }
     }
+}
+
+/// The size and modification time of a file, as one comparable value.
+fn stat_of(path: &Path) -> Option<(u64, i128)> {
+    std::fs::metadata(path)
+        .ok()
+        .map(|m| (m.len(), Timestamp::mtime_nanos(&m)))
 }
 
 /// The category a file belongs to, taken from the first folder below the models

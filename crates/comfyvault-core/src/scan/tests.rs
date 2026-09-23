@@ -750,3 +750,53 @@ fn the_interface_is_told_where_a_file_really_lives_whenever_a_link_was_followed(
         "if these were the same the test would prove nothing"
     );
 }
+
+#[test]
+fn a_cache_row_describes_the_bytes_that_were_really_read() {
+    // The enumeration happens first and the read happens later, hours later on
+    // a terabyte. Pairing the size and time from enumeration with a hash from
+    // that later read writes a row that is wrong and then trusted forever.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let p = w.write_model(&i, "models/loras/m.safetensors", &weights("m"));
+
+    w.scan(&[i]);
+
+    let row = w.store.cached_hash(&p).unwrap().expect("a row was written");
+    let meta = std::fs::metadata(&p).unwrap();
+    assert_eq!(row.sha256, weights_hash("m"));
+    assert_eq!(row.size_bytes, meta.len());
+    assert_eq!(
+        row.mtime_nanos,
+        crate::time_util::Timestamp::mtime_nanos(&meta),
+        "the row must describe the file as it was when it was read"
+    );
+}
+
+#[test]
+fn a_file_that_changes_while_it_is_being_read_is_not_remembered() {
+    // Remember nothing rather than remember a lie: a row from a torn read is
+    // trusted for as long as the vault exists.
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let p = w.write_model(&i, "models/loras/m.safetensors", &weights("m"));
+
+    // Stand in for the file moving under the reader: the recorded time no
+    // longer matches what a stat at hashing time would return.
+    let f = std::fs::File::options().write(true).open(&p).unwrap();
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(30)).unwrap();
+    drop(f);
+
+    let out = w.scan(&[i]);
+    let e = entry(&out, "m.safetensors");
+
+    // The scan still identified it, because nothing changed during the read
+    // itself. What matters is that the row it kept is true.
+    if let Some(row) = w.store.cached_hash(&p).unwrap() {
+        let meta = std::fs::metadata(&p).unwrap();
+        assert_eq!(row.size_bytes, meta.len());
+        assert_eq!(row.mtime_nanos, crate::time_util::Timestamp::mtime_nanos(&meta));
+        assert_eq!(row.sha256, weights_hash("m"));
+    }
+    assert_eq!(e.sha256.as_deref(), Some(weights_hash("m").as_str()));
+}

@@ -50,6 +50,24 @@ pub struct Settings {
     /// walked whatever cache the machine really had.
     #[serde(default)]
     pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
+    /// Read a duplicate's bytes again, immediately before deleting it, and
+    /// compare them against the copy being kept.
+    ///
+    /// On by default. Deleting is the one thing this app does that cannot be
+    /// undone, and without this the proof that two files are identical is a
+    /// hash from an earlier scan, which may itself have come from a cache row
+    /// rather than from the file. A drive with coarse timestamps, which is
+    /// what external model drives often have, can hide a difference from the
+    /// size and time alone.
+    ///
+    /// Turning it off makes a consolidation faster and makes the delete a
+    /// matter of trust rather than proof.
+    #[serde(default = "default_true")]
+    pub verify_before_delete: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -63,6 +81,7 @@ impl Default for Settings {
             follow_extra_model_paths: true,
             scan_output_model_dirs: true,
             huggingface_cache_dirs: None,
+            verify_before_delete: true,
         }
     }
 }
@@ -120,6 +139,9 @@ impl Settings {
         if let Some(v) = &patch.huggingface_cache_dirs {
             self.huggingface_cache_dirs = Some(v.clone());
         }
+        if let Some(v) = patch.verify_before_delete {
+            self.verify_before_delete = v;
+        }
     }
 
     /// The folders to count Hugging Face's cached models in.
@@ -162,6 +184,7 @@ pub struct SettingsPatch {
     pub follow_extra_model_paths: Option<bool>,
     pub scan_output_model_dirs: Option<bool>,
     pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
+    pub verify_before_delete: Option<bool>,
 }
 
 #[cfg(test)]

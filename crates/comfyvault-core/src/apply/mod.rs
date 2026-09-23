@@ -151,6 +151,9 @@ struct Run {
     links_created: u64,
     groups_applied: u64,
     failures: Vec<ApplyFailure>,
+    /// Read a duplicate again before deleting it, rather than trusting a hash
+    /// from an earlier scan.
+    verify_before_delete: bool,
 }
 
 impl<'a> Applier<'a> {
@@ -169,6 +172,28 @@ impl<'a> Applier<'a> {
         cancel: &CancelToken,
         sink: &dyn ProgressSink<ApplyProgress>,
     ) -> Result<ApplyRecord> {
+        self.apply_from(apply_id, plan, req, 0, None, cancel, sink)
+    }
+
+    /// Applies, continuing an earlier pass when one is given.
+    ///
+    /// `start_seq` continues the journal instead of restarting it. A resumed
+    /// pass that began at zero overwrote the first pass's entries, and the
+    /// journal is the only record of how to undo work that already happened.
+    ///
+    /// `carry` is the first pass's record. Its totals are added to rather than
+    /// replaced, so the history says what really happened across both passes.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_from(
+        &self,
+        apply_id: &str,
+        plan: &ConsolidationPlan,
+        req: &ApplyRequest,
+        start_seq: u64,
+        carry: Option<ApplyRecord>,
+        cancel: &CancelToken,
+        sink: &dyn ProgressSink<ApplyProgress>,
+    ) -> Result<ApplyRecord> {
         // Named explicitly, never inferred. Apply must not quietly do more or
         // less than the person ticked.
         let groups: Vec<PlanGroup> = plan.select(&req.group_ids)?.into_iter().cloned().collect();
@@ -182,7 +207,7 @@ impl<'a> Applier<'a> {
 
         let mut run = Run {
             apply_id: apply_id.to_string(),
-            seq: 0,
+            seq: start_seq,
             clock: std::time::Instant::now(),
             throttle: Throttle::per_second(4),
             bytes_to_move: groups.iter().map(|g| g.size_bytes).sum(),
@@ -192,22 +217,32 @@ impl<'a> Applier<'a> {
             links_created: 0,
             groups_applied: 0,
             failures: Vec::new(),
+            verify_before_delete: self.store.settings()?.verify_before_delete,
         };
 
-        let mut record = ApplyRecord {
-            apply_id: apply_id.to_string(),
-            plan_id: plan.plan_id.clone(),
-            state: ApplyState::Running,
-            started_at: Timestamp::now(),
-            finished_at: None,
-            groups_requested: groups.len() as u64,
-            groups_applied: 0,
-            groups_failed: 0,
-            bytes_freed: 0,
-            files_moved: 0,
-            links_created: 0,
-            failures: Vec::new(),
-            revertible: true,
+        let mut record = match &carry {
+            // A resumed pass keeps the first pass's identity and its numbers.
+            Some(first) => ApplyRecord {
+                state: ApplyState::Running,
+                finished_at: None,
+                ..first.clone()
+            },
+            None => ApplyRecord {
+                apply_id: apply_id.to_string(),
+                plan_id: plan.plan_id.clone(),
+                state: ApplyState::Running,
+                started_at: Timestamp::now(),
+                finished_at: None,
+                groups_requested: groups.len() as u64,
+                group_ids: req.group_ids.clone(),
+                groups_applied: 0,
+                groups_failed: 0,
+                bytes_freed: 0,
+                files_moved: 0,
+                links_created: 0,
+                failures: Vec::new(),
+                revertible: true,
+            },
         };
         // Written before any work, so a crash leaves a record to recover from.
         self.store.put_apply(&record)?;
@@ -254,13 +289,16 @@ impl<'a> Applier<'a> {
             ApplyState::CompletedWithErrors
         };
         record.finished_at = Some(Timestamp::now());
-        record.groups_applied = run.groups_applied;
+        // Added to, not replaced. A resumed pass that overwrote these left the
+        // history claiming one group and half the bytes for work that did two.
+        let before = carry.as_ref();
+        record.groups_applied = before.map(|c| c.groups_applied).unwrap_or(0) + run.groups_applied;
         record.groups_failed = run.failures.len() as u64;
-        record.bytes_freed = run.bytes_freed;
-        record.files_moved = run.files_moved;
-        record.links_created = run.links_created;
+        record.bytes_freed = before.map(|c| c.bytes_freed).unwrap_or(0) + run.bytes_freed;
+        record.files_moved = before.map(|c| c.files_moved).unwrap_or(0) + run.files_moved;
+        record.links_created = before.map(|c| c.links_created).unwrap_or(0) + run.links_created;
         record.failures = run.failures.clone();
-        record.revertible = run.groups_applied > 0;
+        record.revertible = record.groups_applied > 0;
         self.store.put_apply(&record)?;
 
         run.throttle.force_next();
@@ -401,6 +439,22 @@ impl<'a> Applier<'a> {
 
                 self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
                     Some(group), ApplyStep::Cleaning, Some(&link.abs_path), false);
+                // Proved, not assumed. This is the only irreversible step in
+                // the whole run, and until now the proof that these bytes were
+                // a duplicate was a hash from an earlier scan, which may have
+                // come from a cache row rather than from the file itself.
+                if run.verify_before_delete {
+                    let actual = crate::scan::hash::hash_file_cancellable(&stash_path, cancel)?;
+                    if !actual.eq_ignore_ascii_case(&group.sha256) {
+                        return Err(VaultError::new(
+                            ErrorCode::FileChanged,
+                            "This file is not the same as the copy being kept, so it was not deleted. It has been put back.",
+                        )
+                        .with_detail(format!("expected {}, the file is {actual}", group.sha256))
+                        .with_path(&link.abs_path));
+                    }
+                }
+
                 let entry = self.step(run, group, JournalStep::DeleteStash {
                     stash: stash_path.clone(),
                     original: link.abs_path.clone(),
@@ -878,14 +932,27 @@ impl<'a> Applier<'a> {
 
         self.undo_entries(&mut incomplete, cancel)?;
 
-        let remaining: Vec<String> = plan
-            .groups
+        // Only what the person originally ticked, and only what is not done.
+        //
+        // Taking every group in the plan here was the worst defect in the
+        // engine: tick three of five hundred, crash, press the recovery
+        // button, and all five hundred move into the vault and every duplicate
+        // is deleted. A record from an older build carries no selection, and
+        // then nothing is resumed, which is the safe direction.
+        let remaining: Vec<String> = record
+            .group_ids
             .iter()
-            .map(|g| g.group_id.clone())
-            .filter(|id| !complete_groups.contains(id))
+            .filter(|id| !complete_groups.contains(*id))
+            .filter(|id| plan.group(id).is_some())
+            .cloned()
             .collect();
 
-        self.apply(
+        // Continue the journal where the first pass stopped. Restarting at
+        // zero overwrote the entries describing work that had already
+        // happened, which is the only record of how to undo it.
+        let next_seq = entries.iter().map(|e| e.seq).max().map(|m| m + 1).unwrap_or(0);
+
+        self.apply_from(
             apply_id,
             &plan,
             &ApplyRequest {
@@ -894,6 +961,8 @@ impl<'a> Applier<'a> {
                 verify: VerifyModeArg::SizeAndMtime,
                 stop_on_error: false,
             },
+            next_seq,
+            Some(record),
             cancel,
             sink,
         )
