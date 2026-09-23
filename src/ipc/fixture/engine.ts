@@ -194,6 +194,21 @@ export class FixtureEngine implements Engine {
   private world: World = buildWorld();
   private disk: FakeFolder[] = DISK.map((f) => ({ ...f, children: [...f.children] }));
   private vaultOpen = true;
+
+  /**
+   * Every command but `get_app_state` refuses before a vault is chosen, and
+   * the real engine has a test naming each one. The double refuses in the same
+   * places, because a double that answers where the engine refuses is how a
+   * first run reaches a person as a failure with a whole suite still green.
+   */
+  private requireVault(): void {
+    if (!this.vaultOpen) {
+      throw error(
+        "notInitialized",
+        "No vault folder is open yet. Choose a vault folder to continue.",
+      );
+    }
+  }
   private lastScan: ScanRecord | null = null;
   private plans = new Map<string, ConsolidationPlan>();
   private applies: ApplyRecord[] = [];
@@ -231,7 +246,12 @@ export class FixtureEngine implements Engine {
   ) {
     this.speed = options.speed ?? 1;
     this.manual = options.manual === true;
-    if (options.empty === true) this.emptyWorld();
+    if (options.empty === true) {
+      this.emptyWorld();
+      // A person who has never opened this program has no vault either, and
+      // the engine refuses everything but get_app_state until they choose one.
+      this.vaultOpen = false;
+    }
     else this.recordScan("scan-1");
   }
 
@@ -284,7 +304,7 @@ export class FixtureEngine implements Engine {
       vaultInitialized: this.vaultOpen,
       installCount: this.world.installs.length,
       platform: await this.getPlatformReport(),
-      settings: await this.getSettings(),
+      settings: this.settingsNow(),
       lastScanId: this.lastScan?.scanId ?? null,
       lastPlanId: [...this.plans.keys()].at(-1) ?? null,
       interruptedApplies: this.applies
@@ -314,13 +334,25 @@ export class FixtureEngine implements Engine {
   }
 
   async getVaultInfo(): Promise<VaultInfo> {
-    if (!this.vaultOpen) throw error("notInitialized", "No vault is open.");
+    this.requireVault();
     return this.selectVault(VAULT_ROOT);
   }
 
   async getSettings(): Promise<Settings> {
+    this.requireVault();
+    return this.settingsNow();
+  }
+
+  /**
+   * The settings as they stand. `get_app_state` reads them without a vault,
+   * where the engine hands back its defaults, and it is the one command that
+   * answers before a vault is chosen.
+   */
+  private settingsNow(): Settings {
     return {
-      metadataLookupsEnabled: this.world.metadataLookupsEnabled,
+      metadataLookupsEnabled: this.vaultOpen
+        ? this.world.metadataLookupsEnabled
+        : true,
       hashCacheEnabled: true,
       scanExtensions: [
         ".safetensors", ".ckpt", ".pt", ".pth", ".bin",
@@ -330,11 +362,12 @@ export class FixtureEngine implements Engine {
       followExtraModelPaths: true,
       scanOutputModelDirs: true,
       huggingFaceCacheDirs: null,
-      verifyBeforeDelete: this.world.verifyBeforeDelete,
+      verifyBeforeDelete: this.vaultOpen ? this.world.verifyBeforeDelete : true,
     };
   }
 
   async updateSettings(patch: Partial<Settings>): Promise<Settings> {
+    this.requireVault();
     if (patch.metadataLookupsEnabled !== undefined) {
       this.world.metadataLookupsEnabled = patch.metadataLookupsEnabled;
     }
@@ -394,6 +427,7 @@ export class FixtureEngine implements Engine {
   }
 
   async registerInstall(path: string, label?: string): Promise<Install> {
+    this.requireVault();
     const candidate = await this.validateInstallPath(path);
     if (!candidate.valid) {
       throw error("notAComfyInstall", candidate.reason ?? "Not a ComfyUI install.");
@@ -420,6 +454,7 @@ export class FixtureEngine implements Engine {
   }
 
   async listInstalls(): Promise<Install[]> {
+    this.requireVault();
     return this.world.installs;
   }
 
@@ -536,6 +571,7 @@ export class FixtureEngine implements Engine {
   // ── scan ──────────────────────────────────────────────────────────────────
 
   async startScan(): Promise<{ scanId: string }> {
+    this.requireVault();
     if (this.busy) throw error("vaultBusy", "Something is already running.");
     const scanId = `scan-${Date.now()}`;
     this.busy = { kind: "scan", id: scanId };
@@ -603,6 +639,7 @@ export class FixtureEngine implements Engine {
   }
 
   async getLastScan(): Promise<ScanRecord | null> {
+    this.requireVault();
     return this.lastScan;
   }
 
@@ -611,6 +648,7 @@ export class FixtureEngine implements Engine {
     offset: number;
     limit: number;
   }): Promise<ScanEntryPage> {
+    this.requireVault();
     const all = scanEntriesOf(this.world);
     return {
       total: all.length,
@@ -632,6 +670,7 @@ export class FixtureEngine implements Engine {
   // ── plan ──────────────────────────────────────────────────────────────────
 
   async buildPlan(scanId: string): Promise<ConsolidationPlan> {
+    this.requireVault();
     const planId = `plan-${scanId}-${this.world.symlinksSupported ? "links" : "nolinks"}-${this.world.vault.size}`;
     const plan = planOf(this.world, planId, scanId);
     this.plans.set(planId, plan);
@@ -650,6 +689,7 @@ export class FixtureEngine implements Engine {
     planId: string;
     groupIds: string[];
   }): Promise<{ applyId: string }> {
+    this.requireVault();
     if (this.busy) throw error("vaultBusy", "Something is already running.");
     const plan = await this.getPlan(args.planId);
     const groups = plan.groups.filter((g) => args.groupIds.includes(g.groupId));
@@ -809,10 +849,12 @@ export class FixtureEngine implements Engine {
   }
 
   async listApplies(): Promise<ApplyRecord[]> {
+    this.requireVault();
     return this.applies;
   }
 
   async getInterruptedApplies(): Promise<InterruptedApply[]> {
+    this.requireVault();
     return this.applies
       .filter((a) => a.state === "interrupted")
       .map((a) => ({
@@ -922,6 +964,7 @@ export class FixtureEngine implements Engine {
   }
 
   async listLinks(filter?: { sha256?: string }): Promise<LinkWithState[]> {
+    this.requireVault();
     const links = filter?.sha256
       ? this.world.links.filter((l) => l.sha256 === filter.sha256)
       : this.world.links;
@@ -944,6 +987,7 @@ export class FixtureEngine implements Engine {
     offset: number;
     limit: number;
   }): Promise<VaultFilePage> {
+    this.requireVault();
     const all = vaultFilesOf(this.world);
     return {
       total: all.length,
@@ -959,6 +1003,7 @@ export class FixtureEngine implements Engine {
     sort?: "name" | "size" | "addedAt" | "linkCount" | "occurrences";
     descending?: boolean;
   }): Promise<ContentPage> {
+    this.requireVault();
     const filter = args.filter ?? {};
     let rows = contentRowsOf(this.world);
     if (filter.inVault !== undefined) {
@@ -1005,6 +1050,7 @@ export class FixtureEngine implements Engine {
   }
 
   async listNameGroups(): Promise<NameGroup[]> {
+    this.requireVault();
     return nameGroupsOf(this.world);
   }
 
@@ -1044,6 +1090,7 @@ export class FixtureEngine implements Engine {
   }
 
   async listOrphans(): Promise<VaultFile[]> {
+    this.requireVault();
     return vaultFilesOf(this.world).filter((f) => f.linkCount === 0);
   }
 
@@ -1065,6 +1112,7 @@ export class FixtureEngine implements Engine {
   }
 
   async checkVaultHealth(): Promise<VaultHealth> {
+    this.requireVault();
     // A link dangles when the vault no longer holds what it points at. The
     // engine verifies each recorded link on disk; here the world is the disk.
     const danglingLinks = this.world.links.filter(
@@ -1093,6 +1141,7 @@ export class FixtureEngine implements Engine {
   // ── usage and metadata ────────────────────────────────────────────────────
 
   async checkModelUsage(names: string[]): Promise<UsageResult[]> {
+    this.requireVault();
     if (this.world.workflowsOnDisk === 0) {
       return names.map((name) => ({
         name,
@@ -1123,11 +1172,13 @@ export class FixtureEngine implements Engine {
   }
 
   async getMetadata(sha256: string): Promise<ModelMetadata | null> {
+    this.requireVault();
     if (!this.world.metadataLookupsEnabled) return null;
     return this.world.contents.find((c) => c.sha256 === sha256)?.metadata ?? null;
   }
 
   async fetchMetadataBatch(hashes: string[]): Promise<ModelMetadata[]> {
+    this.requireVault();
     const out: ModelMetadata[] = [];
     for (const sha of hashes) {
       const found = await this.getMetadata(sha);
@@ -1139,6 +1190,7 @@ export class FixtureEngine implements Engine {
   // ── running programs ──────────────────────────────────────────────────────
 
   async getRunningComfy(): Promise<RunningComfy[]> {
+    this.requireVault();
     return this.world.running.map((installId, i) => {
       const root = this.world.installs.find((x) => x.id === installId)?.root ?? null;
       return {
@@ -1261,6 +1313,7 @@ export class FixtureEngine implements Engine {
   }
 
   devReset(empty: boolean): void {
+    this.vaultOpen = !empty;
     this.stopScanTimer();
     this.stopApplyTimer();
     this.world = buildWorld();

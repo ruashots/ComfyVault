@@ -365,6 +365,35 @@ export function createAppStore(engine: Engine): AppStore {
   const refresh = async () => {
     try {
       const state = await engine.getAppState();
+
+      // Before a vault folder exists there is nothing to read and every other
+      // command refuses, so this is where the first run stops. Asking anyway
+      // is what greeted a new person with a failure screen on a program they
+      // had not used yet.
+      if (!state.vaultInitialized) {
+        batch(() => {
+          setAppState(state);
+          setVault(null);
+          setInstalls([]);
+          setScan(null);
+          setPlan(null);
+          setVaultFiles([]);
+          setNameGroups([]);
+          setOrphans([]);
+          setHealth(null);
+          setLibrary([]);
+          setLibraryTotal(0);
+          setRunning([]);
+          setInterrupted([]);
+          setLastApply(null);
+          setUsage(new Map());
+          setNothingSearched(false);
+          setFailure(null);
+          setReady(true);
+        });
+        return;
+      }
+
       const [installList, lastScan, interruptedList, applies, runningList] =
         await Promise.all([
           engine.listInstalls(),
@@ -374,29 +403,20 @@ export function createAppStore(engine: Engine): AppStore {
           engine.getRunningComfy(),
         ]);
 
-      const vaultInfo = state.vaultInitialized ? await engine.getVaultInfo() : null;
+      const vaultInfo = await engine.getVaultInfo();
 
       const nextPlan =
         lastScan && !lastScan.cancelled
           ? await engine.buildPlan(lastScan.scanId)
           : null;
 
-      const [files, groups, orphanList, vaultHealth, contents] =
-        state.vaultInitialized
-          ? await Promise.all([
-              engine.listVaultFiles({ offset: 0, limit: 1000 }),
-              engine.listNameGroups(),
-              engine.listOrphans(),
-              engine.checkVaultHealth(),
-              engine.listContents({ offset: 0, limit: 1000, sort: "size" }),
-            ])
-          : [
-              { total: 0, offset: 0, files: [] as VaultFile[] },
-              [],
-              [],
-              null,
-              { total: 0, offset: 0, rows: [] as ContentRow[], scanId: null },
-            ];
+      const [files, groups, orphanList, vaultHealth, contents] = await Promise.all([
+        engine.listVaultFiles({ offset: 0, limit: 1000 }),
+        engine.listNameGroups(),
+        engine.listOrphans(),
+        engine.checkVaultHealth(),
+        engine.listContents({ offset: 0, limit: 1000, sort: "size" }),
+      ]);
 
       batch(() => {
         setAppState(state);
@@ -420,7 +440,12 @@ export function createAppStore(engine: Engine): AppStore {
       await loadUsage(contents.rows);
     } catch (error) {
       batch(() => {
-        setFailure(messageOf(error));
+        // "No vault folder is open yet" is not a failure. It is what a program
+        // nobody has used yet says, and the answer to it is the setup screen,
+        // not an apology with a button that cannot do anything.
+        setFailure(isVaultError(error) && error.code === "notInitialized"
+          ? null
+          : messageOf(error));
         setReady(true);
       });
     }

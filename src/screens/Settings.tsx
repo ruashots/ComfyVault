@@ -13,6 +13,9 @@ import { cacheDirsOf, type Install } from "~/ipc/contract";
 /** What a settings row says when the engine sent no answer for it. */
 const UNKNOWN = "not known";
 
+/** Where the vault goes when nobody chooses somewhere else. */
+const DEFAULT_VAULT = "C:\\ComfyVault";
+
 /**
  * A yes or a no from the engine, or nothing at all. A field the engine did not
  * send is not a "no": saying "ignored" when nobody said so is a claim about
@@ -217,6 +220,39 @@ export function SettingsScreen() {
               </>
             )}
           </Show>
+          <Show when={!vault()}>
+            <div class="card row-card">
+              <Icon name="vault" size={16} />
+              <div class="it" style={{ flex: 1, "min-width": 0 }}>
+                <div
+                  class="nm"
+                  style={{ "font-size": "11.5px", color: "var(--t-bright)" }}
+                >
+                  {DEFAULT_VAULT}
+                </div>
+                <div
+                  class="pp"
+                  style={{
+                    "font-size": "9.5px",
+                    color: "var(--t-dim)",
+                    "margin-top": "2px",
+                  }}
+                >
+                  not created yet
+                </div>
+              </div>
+              <button class="btn sm" onClick={() => void openVaultPicker(app)}>
+                <Icon name="folder" size={11} />
+                Choose
+              </button>
+            </div>
+            <div class="note up">
+              ComfyVault creates the vault when the first scan runs, at{" "}
+              <span class="emph">{DEFAULT_VAULT}</span> unless another folder is
+              chosen here. Put it on the drive the installs are on and files move
+              instead of being copied, so the space comes back straight away.
+            </div>
+          </Show>
 
           <div class="sec secgap">
             <span class="t">What Windows allows</span>
@@ -305,12 +341,31 @@ export function SettingsScreen() {
                   </button>
                 </div>
                 <div class="chk">
-                  <Icon name="check" size={13} />
+                  <Show
+                    when={vault()}
+                    fallback={<Icon name="clock" size={13} />}
+                  >
+                    <Icon name="check" size={13} />
+                  </Show>
                   <span class="lb">Free space</span>
                   <span class="sp dim">
-                    {fmt(vault()?.freeBytes ?? 0)} free &middot; a file that is
-                    already on this drive is renamed into the vault, so it needs
-                    none of it
+                    <Show
+                      when={vault()}
+                      fallback={
+                        <>
+                          not known until a vault folder is chosen, because free
+                          space is a fact about the drive it goes on
+                        </>
+                      }
+                    >
+                      {(info) => (
+                        <>
+                          {fmt(info().freeBytes)} free &middot; a file that is
+                          already on this drive is renamed into the vault, so it
+                          needs none of it
+                        </>
+                      )}
+                    </Show>
                   </span>
                 </div>
                 <Show when={report().longPathsEnabled === false}>
