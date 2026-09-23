@@ -127,6 +127,10 @@ pub struct PlanLink {
     /// This copy's bytes become the vault file. Its old place gets a link like
     /// every other, but nothing is deleted here: the file moved.
     pub is_source: bool,
+    /// This path is a second name for a file already counted in this group,
+    /// so removing it returns no space. Two hard links are two names for one
+    /// set of bytes, and the bytes stay while any name remains.
+    pub shares_bytes_with_another: bool,
     pub size_bytes: u64,
     pub mtime_nanos: i128,
 }
@@ -153,6 +157,9 @@ pub struct PlanGroup {
     /// `occurrences` long.
     pub links: Vec<PlanLink>,
     pub occurrences: u64,
+    /// How many real files the group's paths actually are. Lower than
+    /// `occurrences` when some of them are hard links to each other.
+    pub distinct_files: u64,
     pub bytes_freed: u64,
     /// One copy only. It moves into the vault and frees nothing.
     pub single_copy: bool,
@@ -397,6 +404,30 @@ impl<'a> Planner<'a> {
                 mtime_nanos: source_entry.mtime_nanos,
             };
 
+            // Which of these paths are actually the same file. Two hard links
+            // are two names for one set of bytes, so removing one returns
+            // nothing. Counting them as reclaimable overstates the one number
+            // the person presses Apply for and checks afterwards, and it is
+            // better to come in under than over.
+            let mut seen_files: Vec<crate::platform::FileIdentity> = Vec::new();
+            let mut shares: Vec<bool> = Vec::with_capacity(members.len());
+            for m in &members {
+                match self.platform.file_identity(&m.abs_path) {
+                    Some(id) => {
+                        let already = seen_files.contains(&id);
+                        if !already {
+                            seen_files.push(id);
+                        }
+                        shares.push(already);
+                    }
+                    // The system could not say, so count it as its own file.
+                    // That is the conservative direction for a space figure.
+                    None => shares.push(false),
+                }
+            }
+            let distinct_files =
+                shares.iter().filter(|s| !**s).count().max(1) as u64;
+
             // Every copy, the source included: a link takes the place of each
             // file that was there, so the count the person reads is the count
             // of places that change.
@@ -406,6 +437,7 @@ impl<'a> Planner<'a> {
                 .map(|(i, m)| {
                     let name = file_name_of(&m.abs_path);
                     PlanLink {
+                        shares_bytes_with_another: shares[i],
                         install_id: m.install_id.clone(),
                         install_label: label_of(&by_install, &m.install_id),
                         abs_path: m.abs_path.clone(),
@@ -465,7 +497,8 @@ impl<'a> Planner<'a> {
                 source,
                 links,
                 occurrences,
-                bytes_freed: size_bytes * (occurrences - 1),
+                distinct_files,
+                bytes_freed: size_bytes * (distinct_files - 1),
                 single_copy: occurrences == 1,
                 cross_volume: !same_volume,
             });

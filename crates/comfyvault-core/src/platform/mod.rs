@@ -135,6 +135,15 @@ impl LockState {
     }
 }
 
+/// Identifies one physical file, however many names point at it.
+///
+/// Two hard links are two names for one set of bytes. Removing one of them
+/// frees nothing, because the bytes stay while any name remains. Without this
+/// the headline "space you get back" counts those bytes twice, and that number
+/// is the one the person presses Apply for and checks afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FileIdentity(pub String);
+
 /// Identifies the volume a path sits on, so the engine knows whether a move is a
 /// rename or a copy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -188,6 +197,13 @@ pub trait Platform: Send + Sync {
     fn symlink_capability(&self) -> SymlinkCapability;
     fn lock_state(&self, path: &Path) -> LockState;
     fn volume_id(&self, path: &Path) -> Result<VolumeId>;
+
+    /// Which physical file this path names.
+    ///
+    /// `None` when the system cannot say, and then the caller must treat every
+    /// path as its own file, which counts space conservatively rather than
+    /// optimistically.
+    fn file_identity(&self, path: &Path) -> Option<FileIdentity>;
     fn disk_space(&self, path: &Path) -> Result<DiskSpace>;
     fn list_processes(&self) -> Vec<ProcessInfo>;
     /// Windows only. `None` elsewhere.
@@ -273,6 +289,10 @@ impl Platform for NativePlatform {
 
     fn volume_id(&self, path: &Path) -> Result<VolumeId> {
         sys::volume_id(path)
+    }
+
+    fn file_identity(&self, path: &Path) -> Option<FileIdentity> {
+        sys::file_identity(path)
     }
 
     fn disk_space(&self, path: &Path) -> Result<DiskSpace> {
@@ -668,6 +688,10 @@ impl Platform for FakePlatform {
         }
         drop(s);
         self.inner.volume_id(path)
+    }
+
+    fn file_identity(&self, path: &Path) -> Option<FileIdentity> {
+        self.inner.file_identity(path)
     }
 
     fn disk_space(&self, path: &Path) -> Result<DiskSpace> {

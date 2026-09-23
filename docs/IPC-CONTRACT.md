@@ -661,6 +661,7 @@ type PlanGroup = {
   source: PlanSource             // which copy becomes the vault file
   links: PlanLink[]              // every place that gets a link. Always `occurrences` long.
   occurrences: number
+  distinctFiles: number          // how many real files those paths are
   bytesFreed: number
   singleCopy: boolean
   crossVolume: boolean
@@ -683,6 +684,7 @@ type PlanLink = {
   linkName: string               // the name the link keeps
   nameDiffersFromVault: boolean
   isSource: boolean              // this copy's bytes become the vault file
+  sharesBytesWithAnother: boolean  // a second name for a file already counted
 }
 
 type PlanTotals = {
@@ -741,6 +743,18 @@ A group with one copy always reports `onlyCopy`, even when that copy happens
 to sit on the vault volume. No rule had to fire, because there was no choice
 to make, and "the only copy" is the truer sentence to put in front of a
 person than "it was already on the right drive".
+
+**Two names for one file free nothing.** Some of a group's paths can be hard
+links to each other: two names, one set of bytes. Removing one returns no space
+while the other name remains. `distinctFiles` counts the real files, which is
+lower than `occurrences` when that happens, and `bytesFreed` is
+`sizeBytes * (distinctFiles - 1)`. Each such path carries
+`sharesBytesWithAnother`, so a row can say it rather than the total quietly
+disagreeing with the rows.
+
+When the system cannot say which file a path names, the engine counts it as its
+own file. That reports less space than there may be, which is the right
+direction for a number the person checks against their drive afterwards.
 
 **Single copies.** A file that exists once still moves into the vault. It
 frees nothing. `singleCopy` is `true` and `bytesFreed` is `0`. The user

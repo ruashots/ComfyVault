@@ -49,6 +49,13 @@ pub(super) fn volume_id(path: &Path) -> Result<VolumeId> {
     .with_path(path))
 }
 
+/// The device and inode together name one file, whatever it is called.
+pub(super) fn file_identity(path: &Path) -> Option<crate::platform::FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path).ok()?;
+    Some(crate::platform::FileIdentity(format!("{}:{}", m.dev(), m.ino())))
+}
+
 pub(super) fn developer_mode_enabled() -> Option<bool> {
     None
 }

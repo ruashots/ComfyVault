@@ -130,6 +130,8 @@ impl Store {
         }
         tx.commit()?;
 
+        self.scrub_stored_credentials()?;
+
         match self.meta_u32("schemaVersion")? {
             Some(v) if v > SCHEMA_VERSION => {
                 return Err(VaultError::new(
@@ -144,6 +146,43 @@ impl Store {
                 self.put_meta("createdAt", &crate::time_util::Timestamp::now())?;
             }
         }
+        Ok(())
+    }
+
+    /// Removes a credential an older build stored, on open.
+    ///
+    /// Dropping a field from the type stops it being read. It does not remove
+    /// the bytes: they sit in the database until someone happens to save a
+    /// setting, which on an upgrade may be never. This vault is a folder the
+    /// person is told to carry on a portable drive, so "unreadable by this
+    /// build" is not the same as gone.
+    ///
+    /// The rule is by shape rather than by name, so it also catches a
+    /// credential a future field introduces and a later build removes.
+    ///
+    /// Rewriting the row is what removes the bytes: the database reuses the
+    /// page the old value sat in. That is verified by a test on a fresh vault
+    /// and on one with four thousand rows in it, rather than assumed. What it
+    /// cannot reach is a copy outside the database: a filesystem snapshot, a
+    /// backup, or a block the drive has already relocated.
+    fn scrub_stored_credentials(&self) -> Result<()> {
+        let Some(raw): Option<serde_json::Value> = self.get(META, "settings")? else {
+            return Ok(());
+        };
+        let Some(object) = raw.as_object() else { return Ok(()) };
+
+        let carries_credential = object
+            .iter()
+            .any(|(k, v)| looks_like_a_credential(k) && !v.is_null());
+        if !carries_credential {
+            return Ok(());
+        }
+
+        // Rewrite the row from the settings this build understands, which by
+        // construction carry no credential, then overwrite the old bytes.
+        let cleaned: crate::settings::Settings =
+            serde_json::from_value(raw).unwrap_or_default();
+        self.put_meta("settings", &cleaned)?;
         Ok(())
     }
 
@@ -566,6 +605,17 @@ impl Store {
     pub fn clear_metadata(&self) -> Result<usize> {
         self.clear_table(METADATA)
     }
+}
+
+/// Does this field name look like it holds a secret?
+///
+/// By shape rather than by name, so it catches a credential a future field
+/// introduces and a later build removes, not only the one that prompted it.
+fn looks_like_a_credential(field: &str) -> bool {
+    let f = field.to_lowercase();
+    ["key", "token", "secret", "password", "credential", "bearer"]
+        .iter()
+        .any(|w| f.contains(w))
 }
 
 /// A path used as a database key.
@@ -1009,5 +1059,142 @@ mod tests {
         assert!(s.metadata("nope").unwrap().is_none());
         assert!(s.journal("nope").unwrap().is_empty());
         assert!(s.scan_entries("nope").unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod scrub_tests {
+    use super::*;
+
+    /// Writes the settings blob an older build left behind, credential and all.
+    fn plant_old_settings(root: &Path, key: &str) {
+        let s = Store::open(root, true).unwrap();
+        let old = serde_json::json!({
+            "metadataLookupsEnabled": true,
+            "civitaiApiKey": key,
+            "hashCacheEnabled": true,
+            "scanExtensions": [".safetensors"],
+            "minFileSizeBytes": 1048576,
+            "followExtraModelPaths": true,
+            "scanOutputModelDirs": true
+        });
+        s.put_meta("settings", &old).unwrap();
+        drop(s);
+    }
+
+    fn key_readable_in(root: &Path, key: &str) -> bool {
+        let db = root.join(INTERNAL_DIR).join(DB_FILE);
+        let bytes = std::fs::read(&db).unwrap_or_default();
+        bytes
+            .windows(key.len())
+            .any(|w| w == key.as_bytes())
+    }
+
+    #[test]
+    fn opening_a_vault_removes_a_credential_an_older_build_stored() {
+        // Dropping the field stops it being read. It does not remove the
+        // bytes, and on an upgrade nobody may ever save a setting. This vault
+        // is a folder the person is told to carry on a portable drive.
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("vault");
+        const KEY: &str = "cv-SECRET-abc123";
+
+        plant_old_settings(&root, KEY);
+        assert!(
+            key_readable_in(&root, KEY),
+            "the test did not manage to plant the old value, so it proves nothing"
+        );
+
+        // Just opening it, with no setting saved and nothing else done.
+        let s = Store::open(&root, true).unwrap();
+        drop(s);
+
+        assert!(
+            !key_readable_in(&root, KEY),
+            "the credential is still readable in the vault database"
+        );
+    }
+
+    #[test]
+    fn the_credential_goes_even_when_the_database_has_grown() {
+        // A small database reuses its free pages almost at once, so a single
+        // write can remove the old bytes by itself. A vault that has been used
+        // has more pages to choose from, and that is where a write alone may
+        // leave the old value sitting in one of them.
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("vault");
+        const KEY: &str = "cv-SECRET-abc123";
+
+        {
+            let s = Store::open(&root, true).unwrap();
+            let rows: Vec<HashCacheRecord> = (0..4000)
+                .map(|i| HashCacheRecord {
+                    path: PathBuf::from(format!("/m/{i}.safetensors")),
+                    size_bytes: i,
+                    mtime_nanos: i as i128,
+                    sha256: format!("{i:064X}"),
+                })
+                .collect();
+            s.put_cached_hashes(&rows).unwrap();
+
+            let old = serde_json::json!({
+                "metadataLookupsEnabled": true,
+                "civitaiApiKey": KEY,
+                "hashCacheEnabled": true,
+                "scanExtensions": [".safetensors"],
+                "minFileSizeBytes": 1048576,
+                "followExtraModelPaths": true,
+                "scanOutputModelDirs": true
+            });
+            s.put_meta("settings", &old).unwrap();
+        }
+        assert!(key_readable_in(&root, KEY), "the old value was not planted");
+
+        let s = Store::open(&root, true).unwrap();
+        drop(s);
+
+        assert!(
+            !key_readable_in(&root, KEY),
+            "the credential survived in a used vault's database"
+        );
+    }
+
+    #[test]
+    fn the_settings_survive_the_scrub() {
+        // The control. Removing the credential must not take the person's
+        // other choices with it.
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("vault");
+        plant_old_settings(&root, "cv-SECRET-abc123");
+
+        let s = Store::open(&root, true).unwrap();
+        let settings = s.settings().unwrap();
+        assert_eq!(settings.scan_extensions, vec![".safetensors"]);
+        assert_eq!(settings.min_file_size_bytes, 1048576);
+        assert!(settings.metadata_lookups_enabled);
+    }
+
+    #[test]
+    fn a_vault_with_nothing_to_scrub_is_left_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("vault");
+        {
+            let s = Store::open(&root, true).unwrap();
+            let mut custom = crate::settings::Settings::default();
+            custom.min_file_size_bytes = 4096;
+            s.put_settings(&custom).unwrap();
+        }
+        let s = Store::open(&root, true).unwrap();
+        assert_eq!(s.settings().unwrap().min_file_size_bytes, 4096);
+    }
+
+    #[test]
+    fn the_rule_is_the_shape_of_the_name_not_the_one_field_that_prompted_it() {
+        for yes in ["civitaiApiKey", "apiKey", "authToken", "clientSecret", "password", "bearer"] {
+            assert!(looks_like_a_credential(yes), "{yes} should be scrubbed");
+        }
+        for no in ["metadataLookupsEnabled", "scanExtensions", "minFileSizeBytes", "vaultRoot"] {
+            assert!(!looks_like_a_credential(no), "{no} is not a credential");
+        }
     }
 }

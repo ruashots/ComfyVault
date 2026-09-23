@@ -35,7 +35,9 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, GetLogicalDrives, GetVolumePathNameW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
+    CreateFileW, GetFileInformationByHandle, GetLogicalDrives, GetVolumePathNameW,
+    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::Registry::{
     RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
@@ -161,6 +163,40 @@ pub(super) fn volume_id(path: &Path) -> Result<VolumeId> {
         "Could not tell which drive that folder is on.",
     )
     .with_path(path))
+}
+
+/// The volume serial number and the file index together name one file on
+/// Windows, whatever it is called. It is the same idea as a device and inode.
+///
+/// The handle asks only for attributes and shares everything, so this never
+/// disturbs a program that has the file open, and never reports a file as
+/// unreadable because something else is using it.
+pub(super) fn file_identity(path: &Path) -> Option<crate::platform::FileIdentity> {
+    let w = wide(path);
+    let handle: HANDLE = unsafe {
+        CreateFileW(
+            w.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    unsafe { CloseHandle(handle) };
+    if ok == 0 {
+        return None;
+    }
+    Some(crate::platform::FileIdentity(format!(
+        "{}:{}:{}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    )))
 }
 
 /// Reads the registry value the Developer Mode switch writes.
@@ -294,6 +330,38 @@ mod tests {
         drop(held);
 
         assert!(!lock_state(&p).locked, "the file is free again");
+    }
+
+    #[test]
+    fn two_names_for_one_file_share_an_identity() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a.safetensors");
+        let b = d.path().join("b.safetensors");
+        std::fs::write(&a, b"weights").unwrap();
+        std::fs::hard_link(&a, &b).expect("NTFS supports hard links");
+
+        let other = d.path().join("c.safetensors");
+        std::fs::write(&other, b"weights").unwrap();
+
+        assert_eq!(file_identity(&a), file_identity(&b), "two names, one file");
+        assert!(file_identity(&a).is_some());
+        assert_ne!(
+            file_identity(&a),
+            file_identity(&other),
+            "same bytes, two files, and the space is really two files' worth"
+        );
+    }
+
+    #[test]
+    fn a_file_another_program_holds_open_still_reports_its_identity() {
+        // The handle asks only for attributes and shares everything, so a
+        // loaded model must not come back as unidentifiable.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("held.safetensors");
+        std::fs::write(&p, b"weights").unwrap();
+        let held = std::fs::File::open(&p).unwrap();
+        assert!(file_identity(&p).is_some());
+        drop(held);
     }
 
     #[test]

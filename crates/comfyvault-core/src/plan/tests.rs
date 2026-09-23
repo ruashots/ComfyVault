@@ -914,3 +914,80 @@ fn a_file_already_sitting_at_the_vault_path_blocks_the_row() {
     assert_eq!(blocked_for(&plan, "m.safetensors").reason, BlockReason::TargetExistsNotLink);
     assert_eq!(std::fs::read(&occupied).unwrap(), b"someone else's file");
 }
+
+// ---------------------------------------------------------------------------
+// Two names for one file free nothing.
+//
+// "600 GB you can get back" is the number this product is judged on, and the
+// first thing the person does after Apply is look at the drive. Better under
+// than over.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_hard_links_to_one_file_are_counted_as_one_file() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let real = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let second_name = a.root.join("models/loras/also-m.safetensors");
+    std::fs::hard_link(&real, &second_name).expect("hard link");
+
+    let plan = w.plan(&[a]);
+    let g = group_for(&plan, "m");
+
+    assert_eq!(g.occurrences, 2, "two paths hold this model");
+    assert_eq!(g.distinct_files, 1, "but they are one file");
+    assert_eq!(
+        g.bytes_freed, 0,
+        "removing one name of a file frees nothing while the other name remains"
+    );
+    assert_eq!(plan.totals.bytes_freed, 0);
+
+    let shared: Vec<bool> = g.links.iter().map(|l| l.shares_bytes_with_another).collect();
+    assert_eq!(
+        shared.iter().filter(|s| **s).count(),
+        1,
+        "the plan has to say which row is a second name, not only fix the total"
+    );
+}
+
+#[test]
+fn real_duplicates_are_still_counted_as_real_duplicates() {
+    // The control. A fix that made everything free nothing would pass the
+    // test above and destroy the product.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+
+    let plan = w.plan(&[a, b]);
+    let g = group_for(&plan, "m");
+
+    assert_eq!(g.occurrences, 2);
+    assert_eq!(g.distinct_files, 2, "two separate files on the disk");
+    assert_eq!(g.bytes_freed, weights("m").len() as u64);
+    assert!(g.links.iter().all(|l| !l.shares_bytes_with_another));
+}
+
+#[test]
+fn a_mix_of_real_copies_and_second_names_counts_only_the_real_ones() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let real_a = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    std::fs::hard_link(&real_a, a.root.join("models/loras/alias.safetensors")).unwrap();
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&c, "models/loras/m.safetensors", &weights("m"));
+
+    let plan = w.plan(&[a, b, c]);
+    let g = group_for(&plan, "m");
+
+    assert_eq!(g.occurrences, 4, "four paths");
+    assert_eq!(g.distinct_files, 3, "three files");
+    assert_eq!(
+        g.bytes_freed,
+        weights("m").len() as u64 * 2,
+        "three files become one, so two files' worth comes back"
+    );
+}
