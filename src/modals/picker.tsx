@@ -3,7 +3,13 @@ import { For, Show, createMemo, createSignal, onMount, type JSX } from "solid-js
 import { Icon } from "~/components/Icon";
 import { fmt, joinPath, leafOf } from "~/domain/format";
 import { folderNameError } from "~/domain/foldername";
-import { driveFor, driveKindWord, isReadable } from "~/domain/drives";
+import {
+  driveFor,
+  driveKindWord,
+  isReadable,
+  sameVolume,
+  volumeLabel,
+} from "~/domain/drives";
 import {
   messageOf,
   useApp,
@@ -291,6 +297,20 @@ export function PickerModalView() {
     );
     const node = modal()?.nodes.find((n) => n.path === created);
     if (node) await pick(node);
+    // The tree scrolls, and a new folder lands after everything already open
+    // under its parent. On a real drive that is far below the fold, so the
+    // person saw the path and the footer change and no row appear.
+    revealRow(created);
+  };
+
+  /** Bring a row into view inside the tree's own scrolling box. */
+  const revealRow = (path: string): void => {
+    const row = document.querySelector(
+      `.tree .tnode[data-path="${CSS.escape(path)}"]`,
+    );
+    if (row && typeof row.scrollIntoView === "function") {
+      row.scrollIntoView({ block: "nearest" });
+    }
   };
 
   const confirm = async () => {
@@ -432,6 +452,7 @@ export function PickerModalView() {
                         <button
                           class="tnode"
                           classList={{ on: current().picked === node.path }}
+                          data-path={node.path}
                           title={node.refusal ?? node.path}
                           onClick={() => void pick(node)}
                         >
@@ -878,8 +899,13 @@ export function verdictFor(
     };
   }
 
-  const volume = (candidate.root ?? path).slice(0, 2).toUpperCase();
-  const vaultVolume = app.vault()?.volume ?? "C:";
+  const installRoot = candidate.root ?? path;
+  const vaultVolume = volumeLabel(app.vault()?.volume) || "C:";
+  const volume = volumeLabel(installRoot.slice(0, 2).toUpperCase());
+  // One question, one answer. Comparing the engine's volume against a path's
+  // own prefix compared two differently shaped strings, and every install on
+  // the vault's own drive was told its files would be copied.
+  const onVaultDrive = sameVolume(installRoot, app.vault()?.volume);
 
   return {
     ok: true,
@@ -923,7 +949,7 @@ export function verdictFor(
             separately if you want them read too.
           </p>
         </Show>
-        <Show when={volume !== vaultVolume}>
+        <Show when={!onVaultDrive}>
           <p>
             This install is on drive {volume} and the vault is on {vaultVolume}. Its
             files are <span class="emph">copied</span> and checked before the

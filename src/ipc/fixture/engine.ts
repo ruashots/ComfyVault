@@ -332,7 +332,10 @@ export class FixtureEngine implements Engine {
     return {
       root: path,
       createdAt: "2026-09-11T10:06:00.000Z",
-      volume: VAULT_VOLUME,
+      // What Windows answers: the drive root, with its trailing separator.
+      // The engine has a test pinning that, and reporting a tidier "C:" here
+      // hid a comparison that treated every install as being on another drive.
+      volume: `${VAULT_VOLUME}\\`,
       freeBytes: this.world.freeBytes,
       totalBytes: VAULT_TOTAL_BYTES,
       fileCount: this.world.vault.size,

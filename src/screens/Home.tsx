@@ -5,7 +5,7 @@ import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
 import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
-import { driveFor } from "~/domain/drives";
+import { driveFor, volumeLabel } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import type { DriveInfo } from "~/ipc/contract";
@@ -148,7 +148,7 @@ function Setup() {
                 </>
               }
             >
-              The vault is on {vault()?.volume}. An install on {vault()?.volume}{" "}
+              The vault is on {app.vaultVolume()}. An install on {app.vaultVolume()}{" "}
               has its files moved, which is instant and needs no spare room. An
               install on any other drive has them copied across instead, and
               ComfyVault says what that needs before anything happens.
@@ -309,7 +309,7 @@ function HomeReport() {
                           Freed. {finished().linksCreated} copies are now links.
                         </div>
                         <div class="l2">
-                          Drive {drive()?.volume} has {fmt(drive()?.freeBytes ?? 0)}{" "}
+                          Drive {app.vaultVolume()} has {fmt(drive()?.freeBytes ?? 0)}{" "}
                           free.
                         </div>
                       </div>
@@ -446,7 +446,7 @@ function PlanHero(props: { afterFree: number }) {
                   <div class="l1">Every model is held once already.</div>
                   <div class="l2">
                     Consolidating moves them into the vault and leaves a link
-                    behind, so nothing on drive {drive()?.volume} changes size.
+                    behind, so nothing on drive {app.vaultVolume()} changes size.
                   </div>
                 </>
               }
@@ -457,7 +457,7 @@ function PlanHero(props: { afterFree: number }) {
               </div>
               <div class="l2">
                 Consolidating leaves {fmt(props.afterFree)} free on drive{" "}
-                {drive()?.volume},{" "}
+                {app.vaultVolume()},{" "}
                 {usedPercent(drive()?.totalBytes ?? 0, props.afterFree)}% used.
               </div>
             </Show>
@@ -511,7 +511,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   if (vault) {
     lines.push({
       event: "vault.create",
-      detail: `${vault.root} · drive ${vault.volume}`,
+      detail: `${vault.root} · drive ${volumeLabel(vault.volume)}`,
       when: vault.createdAt,
     });
   }

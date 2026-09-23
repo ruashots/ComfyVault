@@ -189,7 +189,7 @@ export function SettingsScreen() {
                         "margin-top": "2px",
                       }}
                     >
-                      drive {info().volume} &middot; {fmt(info().totalStoredBytes)}{" "}
+                      drive {app.vaultVolume()} &middot; {fmt(info().totalStoredBytes)}{" "}
                       held &middot; {info().fileCount} files
                     </div>
                   </div>
@@ -206,12 +206,12 @@ export function SettingsScreen() {
                         {otherDrives().map((i) => i.label).join(" and ")}{" "}
                         {otherDrives().length === 1 ? "sits" : "sit"} on another
                         drive, so files from there are copied across and checked
-                        before the original goes, and drive {info().volume} pays for
+                        before the original goes, and drive {app.vaultVolume()} pays for
                         them first.
                       </>
                     }
                   >
-                    Every install is on drive {info().volume}, so files move instead
+                    Every install is on drive {app.vaultVolume()}, so files move instead
                     of being copied and the space comes back straight away. Choose a
                     folder on another drive and ComfyVault will say what changes
                     before anything happens.

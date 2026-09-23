@@ -74,7 +74,7 @@ function DryRun() {
   const singlesBytes = createMemo(() =>
     view().singles.reduce((sum, g) => sum + g.sizeBytes, 0),
   );
-  const volume = () => app.vault()?.volume ?? "C:";
+  const volume = () => app.vaultVolume();
 
   /** Where the vault sits relative to the installs, said plainly. */
   const vaultNote = createMemo(() => {
@@ -425,7 +425,7 @@ function DuplicateGroup(props: { group: PlanGroup }) {
   const app = useApp();
   const on = () => !app.unticked().has(props.group.groupId);
   const name = () => fileNameOf(props.group.vaultRelPath);
-  const volume = () => app.vault()?.volume ?? "C:";
+  const volume = () => app.vaultVolume();
 
   return (
     <div class="grp" classList={{ off: !on() }}>
@@ -704,7 +704,7 @@ function CommitBar() {
   const app = useApp();
   const selection = () => app.selection();
   const gate = () => app.gate();
-  const volume = () => app.vault()?.volume ?? "C:";
+  const volume = () => app.vaultVolume();
 
   const apply = () => {
     const planId = app.plan()?.planId;

@@ -31,7 +31,7 @@ export function ApplyDone() {
           {
             text: "Every file this run moved goes back to the path it came from, and the link left in its place is removed. Drive ",
           },
-          { text: drive()?.volume ?? "C:" },
+          { text: app.vaultVolume() },
           { text: " takes back the " },
           { text: fmt(run().bytesFreed), emph: true },
           { text: " this run removed. Nothing else in the vault is touched." },
@@ -73,7 +73,7 @@ export function ApplyDone() {
             </div>
             <div class="txt">
               <div class="l1">
-                Back on drive {drive()?.volume}. {run().linksCreated} copies stopped
+                Back on drive {app.vaultVolume()}. {run().linksCreated} copies stopped
                 taking room.
               </div>
               <div class="l2">
@@ -81,13 +81,13 @@ export function ApplyDone() {
                   when={run().vaultFreeBytesBefore !== null && run().vaultFreeBytesAfter !== null}
                   fallback={
                     <>
-                      Drive {drive()?.volume} did not answer when asked how much room
+                      Drive {app.vaultVolume()} did not answer when asked how much room
                       it had, so there is nothing to compare. The figure above is
                       what this run removed.
                     </>
                   }
                 >
-                  Drive {drive()?.volume} had {fmt(run().vaultFreeBytesBefore!)} free
+                  Drive {app.vaultVolume()} had {fmt(run().vaultFreeBytesBefore!)} free
                   before and has {fmt(run().vaultFreeBytesAfter!)} now, both read from
                   the drive itself.{" "}
                   {usedPercent(drive()?.totalBytes ?? 0, run().vaultFreeBytesAfter!)}%

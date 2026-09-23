@@ -31,6 +31,7 @@ import {
   type MachineFacts,
   type Selection,
 } from "~/domain/selection";
+import { volumeLabel } from "~/domain/drives";
 import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
@@ -181,6 +182,14 @@ export interface AppStore {
   readonly hasInstalls: Accessor<boolean>;
   /** A vault folder exists. Almost nothing works until it does. */
   readonly hasVault: Accessor<boolean>;
+  /**
+   * The vault's drive as a person writes it, "C:".
+   *
+   * The engine reports whatever the operating system calls that volume, which
+   * on Windows is the drive root with a trailing separator. Every screen reads
+   * it from here so none of them prints it raw or compares it against a path.
+   */
+  readonly vaultVolume: Accessor<string>;
   /**
    * An install folder the person has chosen while there was still no vault to
    * record it in. The engine refuses to register one before a vault exists, so
@@ -346,6 +355,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [drives, setDrives] = createSignal<readonly DriveInfo[]>([]);
   const hasInstalls = createMemo(() => installs().length > 0);
   const hasVault = createMemo(() => appState()?.vaultInitialized === true);
+  const vaultVolume = createMemo(() => volumeLabel(vault()?.volume) || "C:");
   const setupDone = createMemo(() => hasInstalls() && hasVault());
   const missingStep = createMemo(() => {
     if (setupDone()) return null;
@@ -639,6 +649,7 @@ export function createAppStore(engine: Engine): AppStore {
     gate,
     hasInstalls,
     hasVault,
+    vaultVolume,
     drives,
     setupDone,
     missingStep,

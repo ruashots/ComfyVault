@@ -16,7 +16,7 @@ const STEP_WORDS: Record<string, string> = {
 export function ApplyRunning() {
   const app = useApp();
   const progress = () => app.applyProgress()!;
-  const volume = () => app.vault()?.volume ?? "C:";
+  const volume = () => app.vaultVolume();
   const overall = () =>
     progress().groupTotal > 0 ? progress().groupIndex / progress().groupTotal : 0;
 

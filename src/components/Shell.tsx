@@ -1,7 +1,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 
 import { Icon, Mark, type IconName } from "~/components/Icon";
-import { driveKindShort, isReadable } from "~/domain/drives";
+import { driveKindShort, isReadable, volumeLabel } from "~/domain/drives";
 import { fmt, usedPercent } from "~/domain/format";
 import { gateBlockers } from "~/domain/selection";
 import { useApp, type Screen } from "~/state/store";
@@ -98,7 +98,7 @@ export function Rail() {
       free,
       usedPct: usedPercent(total, free),
       total,
-      volume: drive.volume,
+      volume: volumeLabel(drive.volume),
     };
   });
 

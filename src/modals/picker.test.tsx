@@ -307,3 +307,112 @@ describe("an extra_model_paths.yaml the engine could not fully read", () => {
     expect(text).not.toContain("could not be read");
   });
 });
+
+describe("adding an install that is on the vault's own drive", () => {
+  it("does not tell the person its files will be copied", async () => {
+    await mountPicker((h) => openInstallPicker(h.app));
+    await openDrive();
+    await userEvent.click(node("ComfyUI-Portable"));
+    await waitFor(() => verdict()?.classList.contains("wait") === false);
+
+    const text = verdict()!.textContent ?? "";
+    expect(text).toContain("This is a ComfyUI install");
+    // Same drive means a rename. Saying otherwise contradicts the advice the
+    // setup screen gives about which drive to put the vault on.
+    expect(text).not.toContain("copied");
+    expect(text).not.toContain("pays for them first");
+    expect(text).not.toContain("free space before it starts");
+  });
+
+  it("says the files are copied only when the drives really differ", async () => {
+    const harness = await mountPicker((h) => openInstallPicker(h.app));
+    // The vault reports its drive the way Windows does, with a separator.
+    expect(harness.app.vault()!.volume).toBe("C:\\");
+    expect(harness.app.vaultVolume()).toBe("C:");
+
+    await userEvent.click(expander("D:\\"));
+    await waitFor(
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Backup/ }).length > 0,
+    );
+    await userEvent.click(node("ComfyUI-Backup"));
+    await waitFor(() => verdict()?.classList.contains("wait") === false);
+
+    const text = verdict()!.textContent ?? "";
+    expect(text).toContain("This install is on drive D:");
+    expect(text).toContain("the vault is on C:");
+    expect(text).toContain("copied");
+    // And never the raw volume the engine reported.
+    expect(text).not.toContain("C:\\ pays");
+  });
+});
+
+describe("a folder made in the picker", () => {
+  it("appears as a row when it is made at a drive root", async () => {
+    const harness = await mountPicker((h) => openVaultPicker(h.app));
+    // The drive itself is the parent, which is where a vault folder goes.
+    await userEvent.click(node("C:\\"));
+    await waitFor(() => (harness.app.modal() as { picked: string | null }).picked === "C:\\");
+
+    await userEvent.click(button("New folder"));
+    await waitFor(() => document.querySelector(".tnew input") !== null);
+    await userEvent.type(document.querySelector(".tnew input")!, "ComfyVault2");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => (harness.app.modal() as { newFolder: unknown }).newFolder === null);
+
+    const picked = (harness.app.modal() as { picked: string }).picked;
+    expect(picked).toBe("C:\\ComfyVault2");
+    const rows = [...document.querySelectorAll(".tnode")].map((el) => el.textContent);
+    expect(rows.some((t) => t?.includes("ComfyVault2"))).toBe(true);
+  });
+
+  it("brings the new row into view, because the tree scrolls", async () => {
+    const seen: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      seen.push(this.getAttribute("data-path") ?? "");
+    };
+    try {
+      const harness = await mountPicker((h) => openVaultPicker(h.app));
+      await userEvent.click(node("C:\\"));
+      await waitFor(
+        () => (harness.app.modal() as { picked: string | null }).picked === "C:\\",
+      );
+      await userEvent.click(button("New folder"));
+      await waitFor(() => document.querySelector(".tnew input") !== null);
+      await userEvent.type(document.querySelector(".tnew input")!, "Deep");
+      await userEvent.keyboard("{Enter}");
+      await waitFor(
+        () => (harness.app.modal() as { newFolder: unknown }).newFolder === null,
+      );
+
+      // A row that lands below the fold of the tree's scrolling box is a row
+      // the person never sees, which is what "it never appeared" was.
+      expect(seen).toContain("C:\\Deep");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("appears as a row, marked new, and becomes the selection", async () => {
+    const harness = await mountPicker((h) => openVaultPicker(h.app));
+    await openDrive();
+    await userEvent.click(node("Users"));
+    await waitFor(() => harness.app.modal()!.kind === "picker");
+
+    await userEvent.click(button("New folder"));
+    await waitFor(() => document.querySelector(".tnew input") !== null);
+    await userEvent.type(document.querySelector(".tnew input")!, "ComfyVault");
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => (harness.app.modal() as { newFolder: unknown }).newFolder === null);
+    const made = "C:\\Users\\ComfyVault";
+    // It is the selection and the footer says so.
+    expect((harness.app.modal() as { picked: string }).picked).toBe(made);
+    // And it is on screen, which is the part that was missing.
+    const rows = [...document.querySelectorAll(".tnode")].map((el) => el.textContent);
+    expect(rows.some((t) => t?.includes("ComfyVault"))).toBe(true);
+    expect(document.querySelector(".tnew-tag")?.textContent?.toLowerCase()).toContain(
+      "new",
+    );
+  });
+});
