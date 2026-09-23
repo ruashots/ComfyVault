@@ -737,6 +737,11 @@ sits on the vault volume, because that move is a rename and takes no time and
 no extra space. If no copy sits on the vault volume, the engine takes the
 first copy by sorted path. `chosenBecause` reports the rule that fired.
 
+A group with one copy always reports `onlyCopy`, even when that copy happens
+to sit on the vault volume. No rule had to fire, because there was no choice
+to make, and "the only copy" is the truer sentence to put in front of a
+person than "it was already on the right drive".
+
 **Single copies.** A file that exists once still moves into the vault. It
 frees nothing. `singleCopy` is `true` and `bytesFreed` is `0`. The user
 interface must present these separately, because the person expects the space
@@ -862,6 +867,12 @@ only then puts it in place and removes the source.
 | `apply:done` | `ApplyResult` |
 | `apply:error` | `VaultError` |
 
+`bytesToMove` and `bytesMoved` count only the groups whose move is a real copy
+to another drive. A move within one drive is a rename, which moves no bytes, so
+counting it would make the time remaining pessimistic at the start and then
+jump. Use `groupIndex` and `groupTotal` for a progress bar that covers the
+whole run.
+
 ```ts
 type ApplyProgress = {
   applyId: string
@@ -872,7 +883,7 @@ type ApplyProgress = {
   currentPath: string | null
   step: 'verifying' | 'moving' | 'linking' | 'cleaning'
   bytesMoved: number
-  bytesToMove: number
+  bytesToMove: number    // only the bytes really copied. See below.
   bytesFreed: number
   filesMoved: number
   linksCreated: number

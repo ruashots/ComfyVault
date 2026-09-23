@@ -1430,3 +1430,115 @@ fn an_unrelated_later_run_does_not_block_an_undo() {
         assert!(w.is_link(&still), "the other run must stay applied");
     }
 }
+
+#[test]
+fn undoing_a_run_a_hand_made_link_depends_on_is_refused() {
+    // A link made from the vault screen writes no journal entry, so a check
+    // that reads only journals cannot see it. Undoing the run that put the
+    // file in the vault then leaves that install holding a link to nothing,
+    // which section 8.8 calls the most serious state this app can produce:
+    // ComfyUI lists the model and fails to load it, and a node re-downloading
+    // the "missing" model writes straight through the dead link into the vault.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    run_apply(&w, &plan);
+
+    // The person adds that model to a third install from the vault screen.
+    let link = crate::links::Links::new(&w.store, &w.platform)
+        .create(&crate::links::CreateLinkRequest {
+            install_id: c.id.clone(),
+            sha256: weights_hash("m"),
+            relative_dir: "models/loras".into(),
+            link_name: None,
+            create_dir: true,
+        })
+        .unwrap();
+    assert_eq!(w.read(&link.abs_path), weights("m"));
+
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(
+        err.detail.unwrap().contains("C"),
+        "the person has to be told which install is still using it"
+    );
+
+    // And the third install's link still reads, because nothing was undone.
+    assert!(w.is_link(&link.abs_path));
+    assert_eq!(w.read(&link.abs_path), weights("m"));
+}
+
+#[test]
+fn a_hand_made_link_to_a_different_model_does_not_block_an_undo() {
+    // The control. A check this broad would be useless if any manual link
+    // anywhere froze every undo.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    w.write_model(&a, "models/loras/mine.safetensors", &weights("mine"));
+    w.write_model(&b, "models/loras/mine.safetensors", &weights("mine"));
+    w.write_model(&a, "models/loras/other.safetensors", &weights("other"));
+
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    let mine = group_for(&plan, "mine").group_id.clone();
+    let other = group_for(&plan, "other").group_id.clone();
+
+    let run = |id: &str, g: String| {
+        applier(&w)
+            .apply(
+                id,
+                &plan,
+                &ApplyRequest {
+                    plan_id: plan.plan_id.clone(),
+                    group_ids: vec![g],
+                    verify: VerifyModeArg::SizeAndMtime,
+                    stop_on_error: false,
+                },
+                &CancelToken::new(),
+                &NullSink,
+            )
+            .unwrap()
+    };
+    run("ap-mine", mine);
+    run("ap-other", other);
+
+    // A hand-made link to the OTHER model.
+    crate::links::Links::new(&w.store, &w.platform)
+        .create(&crate::links::CreateLinkRequest {
+            install_id: c.id,
+            sha256: weights_hash("other"),
+            relative_dir: "models/loras".into(),
+            link_name: None,
+            create_dir: true,
+        })
+        .unwrap();
+
+    applier(&w)
+        .revert("ap-mine", &CancelToken::new(), &NullSink)
+        .expect("a link to a different model must not block this undo");
+
+    for install in [&a, &b] {
+        let p = install.root.join("models/loras/mine.safetensors");
+        assert!(!w.is_link(&p));
+        assert_eq!(std::fs::read(&p).unwrap(), weights("mine"));
+    }
+}
+
+#[test]
+fn an_unsafe_vault_path_reaches_the_person_as_what_it_is() {
+    // It used to arrive filed as an unreadable file while carrying the right
+    // sentence, so the reason and the words disagreed.
+    assert_eq!(
+        block_reason_for(&VaultError::new(
+            ErrorCode::PathOutsideBoundary,
+            "outside"
+        )),
+        BlockReason::UnsafeVaultPath
+    );
+}

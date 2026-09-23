@@ -210,7 +210,14 @@ impl<'a> Applier<'a> {
             seq: start_seq,
             clock: std::time::Instant::now(),
             throttle: Throttle::per_second(4),
-            bytes_to_move: groups.iter().map(|g| g.size_bytes).sum(),
+            // Only the groups whose move is a real copy. A same-drive move is
+            // a rename, so counting its bytes made the time remaining
+            // pessimistic at the start and then jump.
+            bytes_to_move: groups
+                .iter()
+                .filter(|g| g.cross_volume)
+                .map(|g| g.size_bytes)
+                .sum(),
             bytes_moved: 0,
             bytes_freed: 0,
             files_moved: 0,
@@ -404,7 +411,9 @@ impl<'a> Applier<'a> {
             };
             done.push(self.finish(run, entry)?);
             run.files_moved += 1;
-            run.bytes_moved += group.size_bytes;
+            if group.cross_volume {
+                run.bytes_moved += group.size_bytes;
+            }
 
             // 2. Every copy's old place gets a link.
             //
@@ -877,11 +886,28 @@ impl<'a> Applier<'a> {
                 if e.state == JournalState::Reverted {
                     continue;
                 }
-                if let Some(p) = step_path_touched(&e.step) {
+                for p in step_paths_touched(&e.step) {
                     if mine.contains(&p) {
                         conflicts.push(crate::paths::display_path(&p));
                     }
                 }
+            }
+        }
+
+        // A link made by hand writes no journal entry, so the journals alone
+        // cannot see it. Undoing a run while a third install links to a vault
+        // file it created leaves that install holding a link to nothing, which
+        // is the worst state this product can produce: ComfyUI lists the model
+        // and then fails to load it, and a node re-downloading the "missing"
+        // model writes straight through the dead link.
+        let vault_root = self.store.vault_root();
+        for link in self.store.links()? {
+            if link.apply_id.as_deref() == Some(apply_id) {
+                continue;
+            }
+            let target = vault_root.join(&link.vault_rel_path);
+            if mine.contains(&target) {
+                conflicts.push(crate::paths::display_path(&link.abs_path));
             }
         }
 
@@ -1138,13 +1164,17 @@ fn short_id(apply_id: &str) -> String {
     apply_id.chars().filter(|c| c.is_alphanumeric()).take(8).collect()
 }
 
-/// The path a step created or acted on, for the dependency check.
-fn step_path_touched(step: &JournalStep) -> Option<PathBuf> {
+/// Every path a step created or acted on, for the dependency check.
+///
+/// A link step gives both ends. The link itself matters because a later run
+/// may have replaced it, and the target matters because a later link pointing
+/// at a vault file this run created is a reason not to undo the run.
+fn step_paths_touched(step: &JournalStep) -> Vec<PathBuf> {
     match step {
-        JournalStep::MoveToVault { to, .. } => Some(to.clone()),
-        JournalStep::CreateLink { link, .. } => Some(link.clone()),
-        JournalStep::RemoveLink { link, .. } => Some(link.clone()),
-        _ => None,
+        JournalStep::MoveToVault { to, .. } => vec![to.clone()],
+        JournalStep::CreateLink { link, target } => vec![link.clone(), target.clone()],
+        JournalStep::RemoveLink { link, target } => vec![link.clone(), target.clone()],
+        _ => Vec::new(),
     }
 }
 
@@ -1178,6 +1208,7 @@ fn block_reason_for(e: &VaultError) -> BlockReason {
         ErrorCode::NotFound => BlockReason::FileMissing,
         ErrorCode::PermissionDenied => BlockReason::PermissionDenied,
         ErrorCode::SymlinkUnsupported => BlockReason::SymlinkUnsupported,
+        ErrorCode::PathOutsideBoundary => BlockReason::UnsafeVaultPath,
         ErrorCode::Conflict => BlockReason::TargetExistsNotLink,
         _ => BlockReason::ReadError,
     }
