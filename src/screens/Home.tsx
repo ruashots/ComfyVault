@@ -1,18 +1,18 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 
-import { Icon, Mark } from "~/components/Icon";
+import { Icon, Mark, type IconName } from "~/components/Icon";
 import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
-import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
-import { DEFAULT_VAULT, openInstallPicker } from "~/modals/picker";
+import { driveOf, fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
+import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import { ScanScreen } from "~/screens/Scan";
 
 export function HomeScreen() {
   const app = useApp();
   return (
-    <Show when={app.hasInstalls()} fallback={<FirstRun />}>
+    <Show when={app.setupDone()} fallback={<Setup />}>
       <Show when={!app.scanProgress()} fallback={<ScanScreen />}>
         <HomeReport />
       </Show>
@@ -20,35 +20,178 @@ export function HomeScreen() {
   );
 }
 
-function FirstRun() {
+/**
+ * The two things a person sets before anything else works, each ticked when it
+ * is done, and what happens after they are.
+ *
+ * Installs lead. Once one is registered the screen can say which drive it is
+ * on, which is the fact that makes the vault-folder choice an informed one.
+ */
+function Setup() {
   const app = useApp();
+  const installs = () => app.installs();
+  const vault = () => app.vault();
+  const hasInstalls = () => app.hasInstalls();
+  const hasVault = () => app.hasVault();
+  const done = () => Number(hasInstalls()) + Number(hasVault());
+
+  /** Every install folder set so far, registered or still waiting for a vault. */
+  const roots = () => {
+    const waiting = app.pendingInstall();
+    return [...installs().map((i) => i.root), ...(waiting ? [waiting] : [])];
+  };
+  const installDrive = () => driveOf(roots()[0] ?? "");
+
   return (
     <>
-      <Header title="Home" sub="no instances yet" />
+      <Header
+        title="Setup"
+        sub={done() === 0 ? "nothing set yet" : `${done()} of 2 done`}
+      />
       <div class="screen">
-        <div class="empty">
-          <Mark size={34} />
-          <h2>Nothing registered yet</h2>
-          <p>
-            ComfyVault needs to know where your ComfyUI installs are. It reads each
-            one, then holds one copy of every model in a single folder and leaves a
-            link behind in every place a file used to be.
-          </p>
-          <div class="acts">
-            <button class="btn pri" onClick={() => void openInstallPicker(app)}>
+        <div class="scroll">
+          <div style={{ "text-align": "center", padding: "14px 0 2px" }}>
+            <Mark size={30} />
+            <div
+              class="lbl"
+              style={{ "margin-top": "10px", "letter-spacing": "1.8px" }}
+            >
+              Set ComfyVault up
+            </div>
+            <div
+              class="note"
+              style={{ "max-width": "450px", margin: "9px auto 0" }}
+            >
+              ComfyVault keeps one copy of every model in a single folder and
+              leaves a link behind in every place a file used to be. ComfyUI goes
+              on reading them from the paths it already uses.
+            </div>
+          </div>
+
+          <div class="sec secgap">
+            <span class="t">Two things to set</span>
+          </div>
+
+          <StepRow
+            number={1}
+            title="Your ComfyUI installs"
+            sub={
+              hasInstalls() ? roots().join("  ·  ") : "none registered yet"
+            }
+            done={hasInstalls()}
+          >
+            <button
+              class="btn"
+              classList={{ pri: !hasInstalls() }}
+              onClick={() => void openInstallPicker(app)}
+            >
               <Icon name="folder" size={13} />
-              Choose an install folder
+              {hasInstalls() ? "Add another" : "Choose an install folder"}
             </button>
+          </StepRow>
+
+          <StepRow
+            number={2}
+            title="Where the vault goes"
+            sub={
+              hasVault()
+                ? (vault()?.root ?? "")
+                : hasInstalls()
+                  ? `not chosen yet · your installs are on ${installDrive()}`
+                  : "not chosen yet"
+            }
+            done={hasVault()}
+          >
+            <button
+              class="btn"
+              classList={{ pri: hasInstalls() && !hasVault() }}
+              onClick={() => void openVaultPicker(app)}
+            >
+              <Icon name="folder" size={13} />
+              {hasVault() ? "Change" : "Choose the vault folder"}
+            </button>
+          </StepRow>
+
+          <div class="note up">
+            <Show
+              when={hasInstalls()}
+              fallback={
+                <>
+                  Put the vault on the same drive as your installs. Files are
+                  moved there rather than copied, so it needs no free space of
+                  its own. On any other drive every file is copied first, so that
+                  drive needs the room up front.
+                </>
+              }
+            >
+              Put the vault on drive {installDrive()}, the drive your installs
+              are already on. Files are moved there rather than copied, so the
+              vault needs no free space of its own and the room comes back as it
+              goes. On any other drive every file has to be copied across first,
+              so that drive needs the room up front.
+            </Show>
           </div>
-          <div class="foot">
-            The vault will be created at{" "}
-            <span class="emph">{app.vault()?.root ?? DEFAULT_VAULT}</span>.
-            <br />
-            Change that in Settings before the first scan.
+
+          <div class="sec secgap">
+            <span class="t">What happens after this</span>
+            <span class="n">nothing moves on its own</span>
           </div>
+          <AfterStep icon="scan" title="A scan reads every model file">
+            It opens nothing and moves nothing. It reads each file to work out
+            which of them are the same file under different names.
+          </AfterStep>
+          <AfterStep icon="file" title="You get a plan to read">
+            Every file it would move, where it would go, what it gives back, and
+            anything it cannot touch, with the reason.
+          </AfterStep>
+          <AfterStep icon="check" title="Nothing moves until you press Apply">
+            Each move is written to a log as it happens, so the whole run can be
+            undone afterwards.
+          </AfterStep>
         </div>
       </div>
     </>
+  );
+}
+
+function StepRow(props: {
+  number: number;
+  title: string;
+  sub: string;
+  done: boolean;
+  children: JSX.Element;
+}) {
+  return (
+    <div class="setup" classList={{ done: props.done }}>
+      <span class="sn">
+        <Show when={props.done} fallback={props.number}>
+          <Icon name="check" size={12} />
+        </Show>
+      </span>
+      <div style={{ flex: 1, "min-width": 0 }}>
+        <div class="stt">{props.title}</div>
+        <div class="sts">{props.sub}</div>
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+function AfterStep(props: {
+  icon: IconName;
+  title: string;
+  children: JSX.Element;
+}) {
+  return (
+    <div class="after">
+      <span class="an">
+        <Icon name={props.icon} size={13} />
+      </span>
+      <div>
+        <div class="at">{props.title}</div>
+        <div class="as">{props.children}</div>
+      </div>
+    </div>
   );
 }
 

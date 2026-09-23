@@ -5,7 +5,7 @@ import { Header } from "~/components/Shell";
 import { dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
-import { DEFAULT_VAULT, openInstallPicker, openVaultPicker } from "~/modals/picker";
+import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { Boundary } from "~/components/Boundary";
 import { useApp } from "~/state/store";
 import { cacheDirsOf, type Install } from "~/ipc/contract";
@@ -225,9 +225,9 @@ export function SettingsScreen() {
               <div class="it" style={{ flex: 1, "min-width": 0 }}>
                 <div
                   class="nm"
-                  style={{ "font-size": "11.5px", color: "var(--t-bright)" }}
+                  style={{ "font-size": "11.5px", color: "var(--t-muted)" }}
                 >
-                  {DEFAULT_VAULT}
+                  Not chosen yet
                 </div>
                 <div
                   class="pp"
@@ -237,19 +237,19 @@ export function SettingsScreen() {
                     "margin-top": "2px",
                   }}
                 >
-                  not created yet
+                  nothing is read or written until it is
                 </div>
               </div>
-              <button class="btn sm" onClick={() => void openVaultPicker(app)}>
+              <button class="btn sm pri" onClick={() => void openVaultPicker(app)}>
                 <Icon name="folder" size={11} />
-                Choose
+                Choose it
               </button>
             </div>
             <div class="note up">
-              ComfyVault creates the vault when the first scan runs, at{" "}
-              <span class="emph">{DEFAULT_VAULT}</span> unless another folder is
-              chosen here. Put it on the drive the installs are on and files move
-              instead of being copied, so the space comes back straight away.
+              Put it on the same drive as your installs. Files are moved there
+              rather than copied, so the vault needs no free space of its own. A
+              folder on another drive means every file is copied across first, and
+              ComfyVault will say what that needs before anything happens.
             </div>
           </Show>
 

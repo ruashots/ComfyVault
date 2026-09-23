@@ -15,7 +15,9 @@ export function Titlebar() {
         Comfy<i>Vault</i>
       </span>
       <span class="tb-sep" data-tauri-drag-region />
-      <span class="tb-path">{app.vault()?.root ?? ""}</span>
+      <span class="tb-path">
+        {app.vault()?.root ?? "no vault folder yet"}
+      </span>
       <button
         class="tb-btn"
         title="Minimize"
@@ -147,7 +149,10 @@ export function Rail() {
       </nav>
       <div class="rail-fill" />
 
-      <Show when={app.hasInstalls()}>
+      {/* Registered ones only. An install still waiting for a vault has
+          nothing to report yet, and a heading over nothing says less than no
+          heading at all. */}
+      <Show when={app.installViews().length > 0}>
         <div class="rail-inst">
           <div class="lbl">Installs</div>
           <For each={app.installViews()}>

@@ -16,7 +16,7 @@ import { dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
 import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
-import { openInstallPicker, openLinkPicker } from "~/modals/picker";
+import { openLinkPicker } from "~/modals/picker";
 import { useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
 import type { ContentRow, UsageResult } from "~/ipc/contract";
@@ -73,21 +73,23 @@ export function LibraryScreen() {
   const app = useApp();
   return (
     <Show
-      when={app.hasInstalls() && app.library().length > 0}
+      when={app.setupDone() && app.library().length > 0}
       fallback={
         <EmptyScreen
           title="Library"
           head="The vault is empty"
-          body="Register a ComfyUI install and run a scan. Every model file found is listed here once, whatever folder it sits in and however many copies exist."
+          body={
+            app.setupDone()
+              ? "Run a scan. Every model found is listed here once, whatever folder it sits in and however many copies exist."
+              : `${app.missingStep() ?? ""} After a scan, every model found is listed here once, whatever folder it sits in and however many copies exist.`
+          }
         >
           <Show
-            when={app.hasInstalls()}
-            fallback={
-              <button class="btn pri" onClick={() => void openInstallPicker(app)}>
-                <Icon name="folder" size={13} />
-                Choose an install folder
-              </button>
-            }
+            when={app.setupDone()}
+            fallback={<button class="btn pri" onClick={() => app.actions.go("home")}>
+            <Icon name="arrow" size={13} />
+            Finish setting up
+          </button>}
           >
             <button
               class="btn pri"

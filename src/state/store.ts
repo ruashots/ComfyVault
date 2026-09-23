@@ -178,6 +178,22 @@ export interface AppStore {
   readonly selection: Accessor<Selection>;
   readonly gate: Accessor<ApplyGate>;
   readonly hasInstalls: Accessor<boolean>;
+  /** A vault folder exists. Almost nothing works until it does. */
+  readonly hasVault: Accessor<boolean>;
+  /**
+   * An install folder the person has chosen while there was still no vault to
+   * record it in. The engine refuses to register one before a vault exists, so
+   * the interface holds it until the vault folder is chosen and then registers
+   * it. It lives only in this window until then.
+   */
+  readonly pendingInstall: Accessor<string | null>;
+  readonly setPendingInstall: (path: string | null) => void;
+  /** Both things a person has to set before any screen has anything to show. */
+  readonly setupDone: Accessor<boolean>;
+  /**
+   * What is still to be set, said as the thing it is. Null once both are done.
+   */
+  readonly missingStep: Accessor<string | null>;
   readonly unusedCount: Accessor<number>;
 
   readonly screen: Accessor<Screen>;
@@ -322,7 +338,25 @@ export function createAppStore(engine: Engine): AppStore {
     applyGate(machineFacts(), selection(), appState()?.busy ?? null),
   );
 
-  const hasInstalls = createMemo(() => installs().length > 0);
+  const [pendingInstall, setPendingInstall] = createSignal<string | null>(null);
+  const hasInstalls = createMemo(
+    () => installs().length > 0 || pendingInstall() !== null,
+  );
+  const hasVault = createMemo(() => appState()?.vaultInitialized === true);
+  const setupDone = createMemo(() => hasInstalls() && hasVault());
+  const missingStep = createMemo(() => {
+    if (setupDone()) return null;
+    if (!hasInstalls() && !hasVault()) {
+      return "Register a ComfyUI install and choose where the vault goes.";
+    }
+    if (!hasInstalls()) {
+      return "Register a ComfyUI install. The vault folder is already set.";
+    }
+    // "set" rather than "registered": an install chosen before there is a
+    // vault is held in the window until one exists, so it is not registered
+    // anywhere yet and saying so would be untrue.
+    return "Choose where the vault goes. Your ComfyUI installs are set.";
+  });
 
   const danglingLinks = createMemo<readonly LinkRecord[]>(
     () => health()?.danglingLinks ?? [],
@@ -604,6 +638,11 @@ export function createAppStore(engine: Engine): AppStore {
     selection,
     gate,
     hasInstalls,
+    hasVault,
+    pendingInstall,
+    setPendingInstall,
+    setupDone,
+    missingStep,
     unusedCount,
     screen,
     toast,

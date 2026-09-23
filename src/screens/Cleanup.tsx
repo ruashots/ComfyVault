@@ -7,7 +7,6 @@ import { Wrap } from "~/components/Wrap";
 import { dayMonth, fmt } from "~/domain/format";
 import { buildNameGroupView, type NameGroupView } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
-import { openInstallPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import type { VaultFile } from "~/ipc/contract";
 
@@ -15,16 +14,16 @@ export function CleanupScreen() {
   const app = useApp();
   return (
     <Show
-      when={app.hasInstalls()}
+      when={app.setupDone()}
       fallback={
         <EmptyScreen
           title="Cleanup"
           head="Nothing to tidy yet"
-          body="Cleanup works on the vault. Register an install and run a scan first."
+          body={`Cleanup works on the vault. ${app.missingStep() ?? ""}`}
         >
-          <button class="btn pri" onClick={() => void openInstallPicker(app)}>
-            <Icon name="folder" size={13} />
-            Choose an install folder
+          <button class="btn pri" onClick={() => app.actions.go("home")}>
+            <Icon name="arrow" size={13} />
+            Finish setting up
           </button>
         </EmptyScreen>
       }

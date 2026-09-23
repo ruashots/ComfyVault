@@ -639,6 +639,29 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .bnd .readout{margin-top:8px}
 .bnd .btn{margin-top:9px}
 
+/* the two things a person sets before anything works */
+.setup{
+  display:flex;align-items:center;gap:12px;padding:11px 12px;margin-bottom:8px;
+  border:1px solid var(--div);border-radius:var(--r2);background:var(--bg-panel);
+}
+.setup .sn{
+  width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--div2);border-radius:var(--r2);
+  font-size:11px;font-weight:600;color:var(--t-faint);
+}
+.setup.done{border-color:color-mix(in srgb,var(--green) 34%,transparent)}
+.setup.done .sn{border-color:color-mix(in srgb,var(--green) 50%,transparent);color:var(--green-br)}
+.setup .stt{font-size:11.5px;color:var(--t-bright);font-weight:500}
+.setup .sts{font-size:9.5px;color:var(--t-dim);margin-top:3px;overflow-wrap:anywhere}
+.setup.done .sts{color:var(--t-muted)}
+.after{display:flex;align-items:flex-start;gap:11px;padding:7px 2px}
+.after .an{
+  width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;
+  color:var(--t-faint);border:1px solid var(--div);border-radius:var(--r2);
+}
+.after .at{font-size:11px;color:var(--t-sec)}
+.after .as{font-size:9.5px;color:var(--t-dim);margin-top:3px;line-height:1.55;max-width:660px}
+
 /* toast */
 .toast{
   position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:40;

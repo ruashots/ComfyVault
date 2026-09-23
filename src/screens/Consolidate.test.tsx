@@ -264,3 +264,36 @@ describe("the report says what is holding Apply back", () => {
     expect(text).toContain("so moving it is a rename and takes no time");
   });
 });
+
+describe("an apply with nothing ticked", () => {
+  it("is refused by the same rule that greys the button", async () => {
+    const { app } = await mount(clearMachine);
+    await waitFor(() => app.gate().can);
+
+    for (const group of app.plan()!.groups) app.actions.toggleGroup(group.groupId);
+    await waitFor(() => app.selection().moves === 0);
+
+    // One rule, read in both places: the button is dead and the run refuses.
+    expect(app.gate()).toMatchObject({ can: false, reason: "nothing_ticked" });
+    const button = applyButton();
+    expect(button).toBeDisabled();
+    expect(button.textContent).toContain("Nothing is ticked");
+  });
+
+  it("cannot start even when the machine is otherwise clear", async () => {
+    const { app } = await mount(clearMachine);
+    await waitFor(() => app.gate().can);
+    for (const group of app.plan()!.groups) app.actions.toggleGroup(group.groupId);
+    await waitFor(() => app.selection().moves === 0);
+
+    let started = 0;
+    const original = app.engine.startApply.bind(app.engine);
+    app.engine.startApply = async (args) => {
+      started += 1;
+      return original(args);
+    };
+    await userEvent.click(applyButton());
+    expect(started).toBe(0);
+    expect(app.applyProgress()).toBeNull();
+  });
+});

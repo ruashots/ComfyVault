@@ -12,7 +12,6 @@ import { fmt } from "~/domain/format";
 import { chosenBecauseText, fileNameOf } from "~/domain/view";
 import { gateBlockers } from "~/domain/selection";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
-import { openInstallPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
 import { ApplyDone } from "~/screens/ApplyDone";
@@ -22,16 +21,16 @@ export function ConsolidateScreen() {
   const app = useApp();
   return (
     <Show
-      when={app.hasInstalls()}
+      when={app.setupDone()}
       fallback={
         <EmptyScreen
           title="Consolidate"
           head="Nothing to consolidate yet"
-          body="Register at least one ComfyUI install. ComfyVault then reads it and shows exactly what it would move, before it moves anything."
+          body={`${app.missingStep() ?? ""} ComfyVault then reads your installs and shows exactly what it would move, before it moves anything.`}
         >
-          <button class="btn pri" onClick={() => void openInstallPicker(app)}>
-            <Icon name="folder" size={13} />
-            Choose an install folder
+          <button class="btn pri" onClick={() => app.actions.go("home")}>
+            <Icon name="arrow" size={13} />
+            Finish setting up
           </button>
         </EmptyScreen>
       }
@@ -710,6 +709,19 @@ function CommitBar() {
   const apply = () => {
     const planId = app.plan()?.planId;
     if (!planId) return;
+    // An empty run is not a run: it would report zeros as though it had done
+    // them. The gate already knows, and this reads the gate rather than asking
+    // the same question a second way, so the two can never drift apart.
+    const answer = gate();
+    if (!answer.can) {
+      app.actions.showToast(
+        answer.reason === "nothing_ticked"
+          ? "Nothing is ticked, so there is nothing to apply"
+          : "Apply is held back until the things above are fixed",
+        "bad",
+      );
+      return;
+    }
     void app.actions.run(() =>
       app.engine.startApply({
         planId,

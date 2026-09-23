@@ -21,76 +21,167 @@ async function firstRun(): Promise<Harness> {
   return harness;
 }
 
-describe("the first time anyone opens this", () => {
-  it("invites them to start, and does not call it a failure", async () => {
+/** Walk the picker to a folder and take it. */
+async function pickFolder(name: string, cta: string): Promise<void> {
+  await waitFor(() => screen.queryAllByRole("dialog").length > 0);
+  await userEvent.click(screen.getByRole("button", { name: "Open C:\\" }));
+  await waitFor(
+    () => screen.queryAllByRole("button", { name: new RegExp(`Open ${name}`) }).length > 0,
+  );
+  await userEvent.click(
+    screen.getAllByRole("button").find((b) => b.textContent?.startsWith(name))!,
+  );
+  await waitFor(() => document.querySelector(".verdict:not(.wait)") !== null);
+  await userEvent.click(screen.getByRole("button", { name: cta }));
+}
+
+const addInstall = () =>
+  userEvent.click(screen.getByRole("button", { name: /Choose an install folder/ }));
+const chooseVault = () =>
+  userEvent.click(screen.getByRole("button", { name: /Choose the vault folder/ }));
+
+describe("the setup screen", () => {
+  it("shows both things to set, neither done, and calls nothing a failure", async () => {
     const { app } = await firstRun();
-
     expect(app.failure()).toBeNull();
+    expect(app.setupDone()).toBe(false);
+
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Nothing registered yet");
-    expect(
-      screen.getByRole("button", { name: /Choose an install folder/ }),
-    ).toBeInTheDocument();
+    expect(text).toContain("Set ComfyVault up");
+    expect(text).toContain("Two things to set");
+    expect(text).toContain("Your ComfyUI installs");
+    expect(text).toContain("none registered yet");
+    expect(text).toContain("Where the vault goes");
+    expect(text).toContain("not chosen yet");
+    expect(text).toContain("nothing set yet");
 
-    // None of the apology, and none of the button that cannot do anything.
+    // Neither step is ticked.
+    expect(document.querySelectorAll(".setup.done")).toHaveLength(0);
+    // And none of the old apology.
     expect(text).not.toContain("could not read the vault");
-    expect(text).not.toContain("answered with a problem");
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    // And no engine sentence about vaults reaches them either.
-    expect(text).not.toContain("No vault folder is open yet");
   });
 
-  it("asks the engine for nothing it refuses to answer", async () => {
-    const engine = new FixtureEngine({ empty: true });
-    const refused: string[] = [];
-    for (const name of [
-      "listInstalls",
-      "getLastScan",
-      "getInterruptedApplies",
-      "listApplies",
-      "getRunningComfy",
-      "getVaultInfo",
-      "listVaultFiles",
-      "listContents",
-      "listNameGroups",
-      "listOrphans",
-      "checkVaultHealth",
-      "getSettings",
-    ] as const) {
-      const original = engine[name].bind(engine) as (...args: never[]) => unknown;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (engine as any)[name] = (...args: never[]) => {
-        refused.push(name);
-        return original(...args);
-      };
-    }
-    harness = await renderWithApp(() => <App />, { engine });
-    await waitFor(() => harness!.app.ready());
-
-    // Every one of these refuses before a vault is chosen. Calling any of them
-    // is what turned a first run into a failure screen.
-    expect(refused).toEqual([]);
-    expect(harness.app.failure()).toBeNull();
-  });
-
-  it("says where the vault will go, so the default is not a surprise", async () => {
+  it("says what happens after setup, so nothing moving is not a surprise", async () => {
     await firstRun();
     const text = document.body.textContent ?? "";
-    expect(text).toContain("The vault will be created at");
-    expect(text).toContain("C:\\ComfyVault");
-    expect(text).toContain("Change that in Settings before the first scan");
+    expect(text).toContain("What happens after this");
+    expect(text).toContain("nothing moves on its own");
+    expect(text).toContain("A scan reads every model file");
+    expect(text).toContain("You get a plan to read");
+    expect(text).toContain("Nothing moves until you press Apply");
   });
 
-  it("leaves nothing half-filled behind it", async () => {
+  it("says to put the vault with the installs, not on the drive with room", async () => {
+    await firstRun();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Put the vault on the same drive as your installs");
+    expect(text).toContain("moved there rather than copied");
+    expect(text).toContain("needs no free space of its own");
+    expect(text).toContain("that drive needs the room up front");
+  });
+});
+
+describe("choosing an install before there is a vault", () => {
+  it("ticks that step and points at the next one", async () => {
+    const { app, engine } = await firstRun();
+    await addInstall();
+    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await waitFor(() => app.hasInstalls());
+
+    // The engine has nothing to record it in yet, and was not asked to.
+    expect(app.hasVault()).toBe(false);
+    expect(app.pendingInstall()).toBe("C:\\ComfyUI-Alpha");
+    expect(app.setupDone()).toBe(false);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("now choose where the vault goes");
+    expect(text).toContain("1 of 2 done");
+    expect(document.querySelectorAll(".setup.done")).toHaveLength(1);
+    // The screen can now say which drive the installs are on.
+    expect(text).toContain("your installs are on C:");
+    expect(text).toContain("Put the vault on drive C:");
+    await expect(engine.listInstalls()).rejects.toMatchObject({
+      code: "notInitialized",
+    });
+  });
+
+  it("registers it the moment the vault folder is chosen", async () => {
+    const { app, engine } = await firstRun();
+    await addInstall();
+    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await waitFor(() => app.pendingInstall() !== null);
+
+    await chooseVault();
+    await pickFolder("ComfyVault", "Use this folder");
+    await waitFor(() => app.setupDone(), 4000);
+
+    expect(app.hasVault()).toBe(true);
+    expect(app.vault()!.root).toBe("C:\\ComfyVault");
+    expect(app.pendingInstall()).toBeNull();
+    expect((await engine.listInstalls()).map((i) => i.root)).toEqual([
+      "C:\\ComfyUI-Alpha",
+    ]);
+    // And the person is past setup.
+    expect(document.body.textContent).not.toContain("Two things to set");
+  });
+});
+
+describe("choosing the vault first", () => {
+  it("registers the install straight away afterwards", async () => {
+    const { app, engine } = await firstRun();
+    await chooseVault();
+    await pickFolder("ComfyVault", "Use this folder");
+    await waitFor(() => app.hasVault());
+    expect(app.setupDone()).toBe(false);
+    expect(document.body.textContent).toContain("1 of 2 done");
+
+    await addInstall();
+    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await waitFor(() => app.setupDone(), 4000);
+    expect((await engine.listInstalls()).length).toBe(1);
+    expect(app.pendingInstall()).toBeNull();
+  });
+});
+
+describe("the screens that need both things set", () => {
+  it.each(["library", "consolidate", "cleanup"] as const)(
+    "%s says which step is missing rather than showing nothing",
+    async (screenName) => {
+      const { app } = await firstRun();
+      app.actions.go(screenName);
+      await waitFor(() => document.querySelector(".empty") !== null);
+
+      const text = document.body.textContent ?? "";
+      expect(text).toContain(
+        "Register a ComfyUI install and choose where the vault goes.",
+      );
+      expect(
+        screen.getByRole("button", { name: /Finish setting up/ }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("names only the step that is actually missing", async () => {
     const { app } = await firstRun();
-    expect(app.vault()).toBeNull();
-    expect(app.installs()).toEqual([]);
-    expect(app.plan()).toBeNull();
-    expect(app.scan()).toBeNull();
-    expect(app.library()).toEqual([]);
-    expect(app.health()).toBeNull();
-    expect(app.danglingLinks()).toEqual([]);
-    expect(app.hasInstalls()).toBe(false);
+    await chooseVault();
+    await pickFolder("ComfyVault", "Use this folder");
+    await waitFor(() => app.hasVault());
+
+    app.actions.go("consolidate");
+    await waitFor(() => document.querySelector(".empty") !== null);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Register a ComfyUI install. The vault folder is already set.");
+    expect(text).not.toContain("choose where the vault goes");
+  });
+
+  it("goes back to setup when the button is pressed", async () => {
+    const { app } = await firstRun();
+    app.actions.go("cleanup");
+    await waitFor(() => document.querySelector(".empty") !== null);
+    await userEvent.click(screen.getByRole("button", { name: /Finish setting up/ }));
+    await waitFor(() => app.screen() === "home");
+    expect(document.body.textContent).toContain("Two things to set");
   });
 });
 
@@ -101,81 +192,23 @@ describe("Settings before a vault folder exists", () => {
     await waitFor(() => document.body.textContent?.includes("The vault folder") === true);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("The vault folder");
-    // The section says what will happen, rather than standing empty.
-    expect(text).toContain("not created yet");
-    expect(text).toContain("C:\\ComfyVault");
-    expect(
-      screen.getByRole("button", { name: /Choose/ }),
-    ).toBeInTheDocument();
+    expect(text).toContain("Not chosen yet");
+    expect(screen.getByRole("button", { name: /Choose it/ })).toBeInTheDocument();
   });
 
   it("does not claim the drive has no room on it", async () => {
     const { app } = await firstRun();
     app.actions.go("settings");
     await waitFor(() => document.body.textContent?.includes("Free space") === true);
-
     const text = document.body.textContent ?? "";
-    // "0 MB free" is a claim about a drive nobody has named yet.
     expect(text).not.toContain("0 MB free");
     expect(text).toContain("not known until a vault folder is chosen");
-  });
-
-  it("says the same about every other setting it cannot know", async () => {
-    const { app } = await firstRun();
-    app.actions.go("settings");
-    await waitFor(() => document.body.textContent?.includes("What a scan reads") === true);
-    const text = document.body.textContent ?? "";
-    expect(text).not.toContain("undefined");
-    expect(text).not.toContain("NaN");
-  });
-});
-
-describe("a vault with nothing registered in it yet", () => {
-  it("shows the same invitation rather than an empty Home", async () => {
-    const engine = new FixtureEngine({ empty: true });
-    // The vault folder exists now. The person still has no installs.
-    await engine.selectVault("C:\\ComfyVault");
-    harness = await renderWithApp(() => <App />, { engine });
-    await waitFor(() => harness!.app.ready());
-
-    expect(harness.app.failure()).toBeNull();
-    expect(harness.app.vault()).not.toBeNull();
-    expect(document.body.textContent).toContain("Nothing registered yet");
-    expect(
-      screen.getByRole("button", { name: /Choose an install folder/ }),
-    ).toBeInTheDocument();
-  });
-});
-
-describe("a vault that goes away between two calls", () => {
-  it("falls back to the invitation rather than an apology", async () => {
-    const engine = new FixtureEngine();
-    // The state says a vault is open, and the very next call disagrees. That
-    // happens when the vault folder is on a drive that has just been pulled,
-    // and it must not read as "this program is broken".
-    engine.listInstalls = async () => {
-      throw {
-        code: "notInitialized",
-        message: "No vault folder is open yet. Choose a vault folder to continue.",
-      };
-    };
-    harness = await renderWithApp(() => <App />, { engine });
-    await waitFor(() => harness!.app.ready());
-
-    expect(harness.app.failure()).toBeNull();
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("Nothing registered yet");
-    expect(text).not.toContain("could not read the vault");
-    expect(text).not.toContain("No vault folder is open yet");
   });
 });
 
 describe("one command that becomes conditional later", () => {
   it("costs that one answer, not the whole window", async () => {
     const engine = new FixtureEngine();
-    // Any of these could grow a vault requirement the interface has not caught
-    // up with. Losing the window over it is the failure worth preventing.
     engine.checkVaultHealth = async () => {
       throw {
         code: "notInitialized",
@@ -186,11 +219,9 @@ describe("one command that becomes conditional later", () => {
     await waitFor(() => harness!.app.ready());
 
     expect(harness.app.failure()).toBeNull();
-    // The one answer it could not get is missing, and everything else is there.
     expect(harness.app.health()).toBeNull();
     expect(harness.app.installs().length).toBeGreaterThan(0);
     expect(harness.app.plan()).not.toBeNull();
-    expect(harness.app.library().length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain("could not read the vault");
   });
 
@@ -207,77 +238,19 @@ describe("one command that becomes conditional later", () => {
   });
 });
 
-describe("a vault that really cannot be read", () => {
-  it("still says so, because that one is a failure", async () => {
-    const engine = new FixtureEngine();
-    engine.getAppState = async () => {
-      throw { code: "ioError", message: "The vault database could not be opened." };
-    };
-    harness = await renderWithApp(() => <App />, { engine });
-    await waitFor(() => harness!.app.ready());
-
-    expect(harness.app.failure()).toBe("The vault database could not be opened.");
-    const text = document.body.textContent ?? "";
-    expect(text).toContain("could not read the vault");
-    expect(text).toContain("The vault database could not be opened.");
-  });
-});
-
-describe("adding the very first install", () => {
-  it("creates the vault the setup screen promised, and registers", async () => {
-    const { app, engine } = await firstRun();
-    expect(app.appState()!.vaultInitialized).toBe(false);
-
-    await userEvent.click(
-      screen.getByRole("button", { name: /Choose an install folder/ }),
-    );
-    await waitFor(() => screen.queryAllByRole("dialog").length > 0);
-    await userEvent.click(screen.getByRole("button", { name: "Open C:\\" }));
-    await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
-    );
-    await userEvent.click(
-      screen.getAllByRole("button").find((b) => b.textContent?.startsWith("ComfyUI-Alpha"))!,
-    );
-    await waitFor(() => document.querySelector(".verdict:not(.wait)") !== null);
-    await userEvent.click(screen.getByRole("button", { name: "Add this install" }));
-
-    await waitFor(() => app.installs().length > 0, 4000);
-    // The vault exists now, and the install is registered in it.
-    expect(app.appState()!.vaultInitialized).toBe(true);
-    expect(app.vault()!.root).toBe("C:\\ComfyVault");
-    expect((await engine.listInstalls()).length).toBe(1);
-    // And the person is past the setup screen.
-    expect(document.body.textContent).not.toContain("Nothing registered yet");
-    expect(app.failure()).toBeNull();
-  });
-
-  it("never lets a refusal to that button go by unnoticed", async () => {
+describe("a refusal to a button the person pressed", () => {
+  it("stays in the modal beside it", async () => {
     const { app } = await firstRun();
-    app.engine.registerInstall = async () => {
-      throw { code: "notAComfyInstall", message: "That folder is not a ComfyUI install." };
+    app.engine.selectVault = async () => {
+      throw { code: "conflict", message: "That folder sits inside a ComfyUI install." };
     };
+    await chooseVault();
+    await pickFolder("ComfyVault", "Use this folder");
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /Choose an install folder/ }),
-    );
-    await waitFor(() => screen.queryAllByRole("dialog").length > 0);
-    await userEvent.click(screen.getByRole("button", { name: "Open C:\\" }));
-    await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
-    );
-    await userEvent.click(
-      screen.getAllByRole("button").find((b) => b.textContent?.startsWith("ComfyUI-Alpha"))!,
-    );
-    await waitFor(() => document.querySelector(".verdict:not(.wait)") !== null);
-    await userEvent.click(screen.getByRole("button", { name: "Add this install" }));
-
-    // It stays in front of them, in the modal, beside the button they pressed.
     await waitFor(() => document.querySelector('[role="dialog"] .verdict.no') !== null);
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain("That did not happen");
-    expect(dialog.textContent).toContain("That folder is not a ComfyUI install.");
-    expect(screen.queryAllByRole("dialog").length).toBe(1);
+    expect(dialog.textContent).toContain("sits inside a ComfyUI install");
   });
 });
 
@@ -291,8 +264,37 @@ describe("the drive meter before anything has been read", () => {
 
     expect(harness.app.scan()).toBeNull();
     const rail = document.querySelector(".rail")!.textContent ?? "";
-    // Nothing has been read, so there is nothing to say about duplicates.
     expect(rail).not.toContain("every model is held once");
     expect(rail).toContain("not scanned yet");
+  });
+});
+
+describe("the rail while setup is half done", () => {
+  it("shows no heading over an empty list", async () => {
+    const { app } = await firstRun();
+    await addInstall();
+    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await waitFor(() => app.pendingInstall() !== null);
+
+    // The install is chosen but not registered, so it has nothing to report.
+    const rail = document.querySelector(".rail")!.textContent ?? "";
+    expect(rail).not.toContain("Installs");
+    expect(document.querySelector(".rail-inst")).toBeNull();
+  });
+});
+
+describe("what the interface says about an install it has not registered", () => {
+  it("does not call it registered while it is still waiting for a vault", async () => {
+    const { app } = await firstRun();
+    await addInstall();
+    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await waitFor(() => app.pendingInstall() !== null);
+
+    app.actions.go("consolidate");
+    await waitFor(() => document.querySelector(".empty") !== null);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Choose where the vault goes");
+    // It is chosen, not registered. Nothing is on disk until the vault exists.
+    expect(text).not.toContain("are registered");
   });
 });

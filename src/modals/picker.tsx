@@ -303,19 +303,33 @@ export function PickerModalView() {
     try {
       if (current.purpose === "install") {
         const root = current.candidate?.root ?? path;
-        // The first install is also the moment the vault comes into being.
-        // The setup screen has already said where it goes and that Settings is
-        // where to change it, so this does not stop to ask again.
-        await ensureVault();
-        await app.engine.registerInstall(root);
-        app.setModal(null);
-        await app.actions.refresh();
-        app.actions.showToast(`Added ${root} \u00b7 run a scan to read it`);
+        if (app.hasVault()) {
+          await app.engine.registerInstall(root);
+          app.setModal(null);
+          await app.actions.refresh();
+          app.actions.showToast(`Added ${root} · run a scan to read it`);
+        } else {
+          // There is nowhere to record it yet. The vault folder is the next
+          // thing the person sets, and this is registered the moment it is.
+          app.setPendingInstall(root);
+          app.setModal(null);
+          await app.actions.refresh();
+          app.actions.showToast(`Added ${root} · now choose where the vault goes`);
+        }
       } else if (current.purpose === "vault") {
         await app.engine.selectVault(path, true);
+        const waiting = app.pendingInstall();
+        if (waiting) {
+          await app.engine.registerInstall(waiting);
+          app.setPendingInstall(null);
+        }
         app.setModal(null);
         await app.actions.refresh();
-        app.actions.showToast(`Vault folder set to ${path}`);
+        app.actions.showToast(
+          waiting
+            ? `Vault folder set to ${path} · setup is done`
+            : `Vault folder set to ${path}`,
+        );
       } else if (current.sha256) {
         const install = app
           .installs()
@@ -342,18 +356,6 @@ export function PickerModalView() {
     } finally {
       setConfirming(false);
     }
-  };
-
-  /**
-   * Open the vault before anything that needs one.
-   *
-   * Almost every command refuses until a vault exists, so on a first run the
-   * person's very first action would refuse. The vault goes where the setup
-   * screen said it would.
-   */
-  const ensureVault = async (): Promise<void> => {
-    if (app.appState()?.vaultInitialized === true) return;
-    await app.engine.selectVault(DEFAULT_VAULT, true);
   };
 
   const verdict = createMemo(() => {
