@@ -480,3 +480,17 @@ mod tests {
         assert_eq!(display_path(Path::new("/home/x")), "/home/x");
     }
 }
+
+/// One path, reduced to something two paths can be compared by.
+///
+/// Windows tells `/` and `\` apart in text but not on disk, and it ignores
+/// case. Comparing two paths as written said a link and the file it replaced
+/// were different places, and the same content got counted twice.
+pub fn compare_key(p: &Path) -> String {
+    let s = display_path(p);
+    if cfg!(windows) {
+        s.replace('/', "\\").to_lowercase()
+    } else {
+        s
+    }
+}

@@ -627,14 +627,7 @@ fn looks_like_a_credential(field: &str) -> bool {
 /// are normalized here. A path that arrives from the interface as
 /// `C:/models/loras` and one the engine walked as `C:\models\loras` are the
 /// same folder, and they have to key the same.
-fn path_key(p: &Path) -> String {
-    let s = crate::paths::display_path(p);
-    if cfg!(windows) {
-        s.replace('/', "\\").to_lowercase()
-    } else {
-        s
-    }
-}
+use crate::paths::compare_key as path_key;
 
 /// A key that sorts by sequence number, because redb iterates in key order.
 fn seq_key(id: &str, seq: u64) -> String {

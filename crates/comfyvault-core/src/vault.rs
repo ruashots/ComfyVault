@@ -339,13 +339,30 @@ impl<'a> Vault<'a> {
             );
         }
 
+        // Every path already counted above, as a link into the vault.
+        //
+        // The stored scan is the one taken before the last consolidation ran.
+        // At that moment these paths held real files and the scan called them
+        // movable, which is true of the scan and not of the disk any more. A
+        // path that is now a link is already in `links.len()`, so counting the
+        // old entry as well reported every consolidated model as living in
+        // twice as many places as it does.
+        let mut counted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for record in self.store.vault_files()? {
+            for l in self.live_links(&record.sha256)? {
+                counted.insert(crate::paths::compare_key(&l.abs_path));
+            }
+        }
+
         // Anything the last scan found that is still a real file out in an
-        // install. A copy that is already a link was classified as such by the
-        // scan, so nothing is counted twice.
+        // install, and is not one of those.
         let scan_id = self.store.last_scan_id()?;
         if let Some(id) = &scan_id {
             for e in self.store.scan_entries(id)? {
                 if !e.classification.is_movable() {
+                    continue;
+                }
+                if counted.contains(&crate::paths::compare_key(&e.abs_path)) {
                     continue;
                 }
                 let Some(sha) = e.sha256.clone() else { continue };
@@ -859,3 +876,90 @@ pub fn group_by_content(records: &[VaultFileRecord]) -> BTreeMap<String, Vec<&Va
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod counting_after_a_run {
+    use crate::apply::{Applier, ApplyRequest, VerifyModeArg};
+    use crate::progress::{CancelToken, NullSink};
+    use crate::testkit::{weights, TestWorld};
+
+    fn consolidate(w: &TestWorld, installs: &[crate::install::Install]) -> u64 {
+        let plan = w.plan(installs);
+        let req = ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        };
+        Applier::new(&w.store, &w.platform)
+            .apply("ap-1", &plan, &req, &CancelToken::new(), &NullSink)
+            .expect("apply")
+            .links_created
+    }
+
+    fn rows(w: &TestWorld) -> Vec<super::ContentRow> {
+        super::Vault::new(&w.store, &w.platform)
+            .list_contents(0, 100, &Default::default(), super::VaultSort::Name, false)
+            .expect("contents")
+            .rows
+    }
+
+    #[test]
+    fn a_consolidated_model_is_counted_once_per_place_not_twice() {
+        // The stored scan is the one taken before the run. At that moment
+        // these paths held real files, so the scan called them movable. After
+        // the run they are links, and the links are already counted. Counting
+        // the old entry as well said every model lived in twice as many places
+        // as it does, on every row, forever after the first consolidation.
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        for i in [&a, &b, &c] {
+            w.write_model(i, "models/loras/m.safetensors", &weights("m"));
+        }
+        let installs = vec![a, b, c];
+        let links = consolidate(&w, &installs);
+        assert_eq!(links, 3, "three places held it, so three links");
+
+        let rows = rows(&w);
+        assert_eq!(rows.len(), 1, "one content");
+        assert_eq!(rows[0].link_count, 3);
+        assert_eq!(
+            rows[0].occurrence_count, 3,
+            "the model is in three places and the column says {}",
+            rows[0].occurrence_count
+        );
+    }
+
+    #[test]
+    fn a_copy_that_was_never_consolidated_is_still_counted() {
+        // The other direction. Skipping a path because it is a link must not
+        // skip a real file sitting beside it in an install nobody consolidated.
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        for i in [&a, &b] {
+            w.write_model(i, "models/loras/m.safetensors", &weights("m"));
+        }
+        let consolidated = vec![a, b];
+        assert_eq!(consolidate(&w, &consolidated), 2);
+
+        // A third install turns up afterwards, holding its own real copy.
+        let c = w.add_install("C");
+        let loose = w.write_model(&c, "models/loras/m.safetensors", &weights("m"));
+        assert!(!w.is_link(&loose), "this one is a real file");
+        let mut all = consolidated.clone();
+        all.push(c);
+        w.scan(&all);
+
+        let rows = rows(&w);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].link_count, 2, "two of them are links");
+        assert_eq!(
+            rows[0].occurrence_count, 3,
+            "two links and one real file is three places, not {}",
+            rows[0].occurrence_count
+        );
+    }
+}

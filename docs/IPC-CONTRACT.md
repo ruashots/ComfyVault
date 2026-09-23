@@ -62,6 +62,32 @@ To accept a deliberate change to the engine's output:
 UPDATE_GOLDEN=1 cargo test -p comfyvault-core golden
 ```
 
+#### What a sample cannot tell you
+
+A sample proves the **names, the shapes and the kinds** of a payload. Its
+**values** are written by hand, so for a field whose value the operating system
+produces, the sample shows what somebody typed rather than what will arrive.
+
+This has cost real work once. `volume` was written `C:` and Windows returns
+`C:\`. Both are strings with the right name, so a check on names passed and a
+check on kinds passed, and an interface built against the sample told people
+their files would be copied when they would be renamed.
+
+The fields whose value comes from the operating system rather than from the
+engine's own records:
+
+| Field | Held to a real answer? |
+|---|---|
+| `VaultInfo.volume` | yes, the shape is checked against this machine |
+| `DriveInfo.root`, `DriveInfo.kind` | yes, same |
+| `PlatformReport.os`, `PlatformReport.symlinks` | yes, the name must be one the engine sends |
+| `LockState.*`, `RunningComfy.*` | **no** |
+| `mtimeNanos` anywhere | **no** |
+
+The rows marked no have no fixed shape to hold them to, so their samples are
+illustrative. Do not read a value from one of those and compare it with
+anything. Ask the engine instead.
+
 ### 1.4 Errors
 
 Every command rejects with the same shape:
@@ -1394,6 +1420,12 @@ A content that is half consolidated, with some copies linked and one still a
 real file, is **one** row. `occurrenceCount` counts every place and
 `linkCount` counts the linked ones, so `occurrenceCount - linkCount` is how
 many real copies are left.
+
+After a consolidation, `occurrenceCount` equals `linkCount` for every content
+that was consolidated: the places that held it now hold links to it, and each
+place is counted once. It is not the number of places plus the number of links.
+A row where the count is exactly twice the links is reporting the same paths
+twice.
 
 `orphansOnly` here means a content the vault holds that nothing on disk reaches
 any more. A model still sitting in an install is not an orphan: it is there.
