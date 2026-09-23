@@ -1293,8 +1293,9 @@ Returns:
 type UsageResult = {
   name: string
   used: boolean
+  searched: boolean     // were any saved workflow files searched at all?
   matches: UsageMatch[]
-  method: string        // always the sentence below
+  method: string        // one of the two sentences below
 }
 
 type UsageMatch = {
@@ -1319,6 +1320,11 @@ When there were no saved workflow files to search at all:
 The second sentence matters. A person whose workflows only ever lived in the
 browser would otherwise read "not used" for every model they own and believe
 the app had checked.
+
+`searched` carries the same fact as a boolean, so the interface never has to
+read it back out of the sentence. When `searched` is `false`, do not present
+the model as used or unused at all: nothing was checked. `used: false` with
+`searched: false` is not an answer about the model.
 
 **This check is deliberately shallow.** The engine looks for the file name as
 text inside the JSON. It does not parse the graph. It does not resolve node

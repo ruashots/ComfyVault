@@ -800,3 +800,50 @@ fn a_file_that_changes_while_it_is_being_read_is_not_remembered() {
     }
     assert_eq!(e.sha256.as_deref(), Some(weights_hash("m").as_str()));
 }
+
+/// A Windows junction, which `mklink /J` creates and which is what people
+/// really make when they move a model folder to a second drive. Rust has no
+/// API for one, and the audits could only reach this finding through POSIX
+/// symbolic links, so it is checked here with the real thing.
+#[cfg(windows)]
+#[test]
+fn a_file_behind_a_windows_junction_that_leaves_the_install_is_never_movable() {
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let theirs = w.path().join("SomeOtherApp");
+    std::fs::create_dir_all(&theirs).unwrap();
+    std::fs::write(theirs.join("their-data.bin"), weights("theirs")).unwrap();
+
+    let loras = i.root.join("models\\loras");
+    std::fs::create_dir_all(&loras).unwrap();
+    let junction = loras.join("backups");
+
+    let made = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &junction.to_string_lossy(),
+            &theirs.to_string_lossy(),
+        ])
+        .output()
+        .expect("run mklink");
+    assert!(
+        made.status.success() && junction.exists(),
+        "could not create a junction, so this test proved nothing: {}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+
+    let out = w.scan(&[i.clone()]);
+    let e = entry(&out, "their-data.bin");
+    assert_eq!(
+        e.classification,
+        Classification::ExternalLink,
+        "a junction is the common Windows shape and must be refused like any link"
+    );
+    assert!(e.link_target.is_some(), "and the real location has to travel with it");
+
+    let plan = w.planner().build("p", &out.record.scan_id, &out.entries, &[i]).unwrap();
+    assert!(plan.groups.is_empty());
+    assert_eq!(std::fs::read(theirs.join("their-data.bin")).unwrap(), weights("theirs"));
+}

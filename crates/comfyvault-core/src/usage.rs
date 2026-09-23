@@ -72,6 +72,13 @@ pub struct UsageResult {
     /// [`METHOD`], or [`METHOD_NOTHING_SEARCHED`] when there were no saved
     /// workflow files to search. The interface shows it beside the result.
     pub method: String,
+    /// Were any saved workflow files searched at all?
+    ///
+    /// `false` and `used: false` are different answers: nothing was checked,
+    /// rather than checked and not found. The interface decides very different
+    /// things from the two, so it is a fact here rather than something read
+    /// back out of the sentence.
+    pub searched: bool,
 }
 
 /// What the search covered, so the interface can be honest about the gaps.
@@ -149,6 +156,7 @@ pub fn check(installs: &[Install], names: &[String]) -> Result<UsageReport> {
             used: false,
             matches: Vec::new(),
             method: METHOD.to_string(),
+            searched: false,
         })
         .collect();
 
@@ -197,6 +205,7 @@ pub fn check(installs: &[Install], names: &[String]) -> Result<UsageReport> {
     let method = if searched == 0 { METHOD_NOTHING_SEARCHED } else { METHOD };
     for r in &mut results {
         r.method = method.to_string();
+        r.searched = searched > 0;
     }
 
     Ok(UsageReport {
@@ -423,6 +432,7 @@ mod tests {
         assert_eq!(report.workflows_searched, 0);
         assert_eq!(report.results[0].method, METHOD_NOTHING_SEARCHED);
         assert_eq!(report.method, METHOD_NOTHING_SEARCHED);
+        assert!(!report.results[0].searched, "the fact, not just the sentence");
         assert!(report.results[0].method.contains("nothing was searched"));
         assert!(
             report.results[0].method.contains("browser"),
@@ -448,6 +458,7 @@ mod tests {
 
         let did_search = check(&[searched], &["m.safetensors".into()]).unwrap();
         assert_eq!(did_search.workflows_searched, 1);
+        assert!(did_search.results[0].searched);
         assert_eq!(
             did_search.results[0].method, METHOD,
             "a real search must not claim that nothing was searched"
