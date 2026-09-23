@@ -15,6 +15,14 @@ import { isVaultError } from "~/ipc/contract";
  * of them happily, the interface asked five of them the moment the window
  * opened, and a new person was told the program could not read their vault.
  */
+const CONTRACT = join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "docs",
+  "IPC-CONTRACT.md",
+);
+
 const ENGINE_TEST = join(
   import.meta.dirname,
   "..",
@@ -54,7 +62,27 @@ const ARGS: Record<string, unknown[]> = {
   deleteVaultFile: ["A".repeat(64)],
 };
 
+/** The contract's own table of what answers before a vault is chosen. */
+function commandsThatAnswer(): string[] {
+  const source = readFileSync(CONTRACT, "utf8");
+  const start = source.indexOf("### 1.5 Before a vault is chosen");
+  expect(start, "the contract's section 1.5 moved or was renamed").toBeGreaterThan(-1);
+  const section = source.slice(start, source.indexOf("\n### ", start + 10));
+  const table = [...section.matchAll(/^\| `(\w+)` \|/gm)].map((m) => m[1]!);
+  // `select_vault` is named in the prose under the table, as the way out.
+  if (/`select_vault` is the way out/.test(section)) table.push("select_vault");
+  return table;
+}
+
+/** Arguments for the handful that answer before a vault is chosen. */
+const ANSWERING_ARGS: Record<string, unknown[]> = {
+  validateInstallPath: ["C:\\ComfyUI-Alpha"],
+  checkLockedFiles: [["C:\\ComfyUI-Alpha\\models\\a.safetensors"]],
+  selectVault: ["C:\\ComfyVault"],
+};
+
 const commands = commandsThatNeedAVault();
+const answering = commandsThatAnswer();
 
 describe("before a vault folder is chosen", () => {
   it("reads the engine's own list of what refuses", () => {
@@ -81,6 +109,30 @@ describe("before a vault folder is chosen", () => {
     expect(isVaultError(thrown) && thrown.code, `${method} refused for the wrong reason`).toBe(
       "notInitialized",
     );
+  });
+
+  it("reads the contract's list of what does answer", () => {
+    expect(answering).toContain("get_app_state");
+    expect(answering).toContain("validate_install_path");
+    expect(answering).toContain("select_vault");
+    expect(answering.length).toBeGreaterThan(3);
+  });
+
+  it.each(answering)("%s answers, because the contract says it must", async (command) => {
+    const engine = new FixtureEngine({ empty: true }) as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    const method = camel(command);
+    if (typeof engine[method] !== "function") return; // not on this side yet
+
+    const answer = await engine[method]!(...(ANSWERING_ARGS[method] ?? []));
+    expect(answer, `${method} gave nothing back`).not.toBeUndefined();
+  });
+
+  it("names nothing in both lists at once", () => {
+    const both = answering.filter((c) => commands.includes(c));
+    expect(both, "a command cannot both answer and refuse").toEqual([]);
   });
 
   it("answers get_app_state, because that is the one that must", async () => {

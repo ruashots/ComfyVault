@@ -362,6 +362,24 @@ export function createAppStore(engine: Engine): AppStore {
     }
   };
 
+  /**
+   * A call that may turn out to be one the engine only answers with a vault
+   * open, with what to use when it says "not yet".
+   *
+   * One refusal inside a batch used to reject the whole batch and take the
+   * screen down with it. A command becoming conditional is a normal thing for
+   * the engine to do, and when it happens the interface should lose that one
+   * answer, not the window.
+   */
+  const orNotYet = async <T>(call: Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await call;
+    } catch (error) {
+      if (isVaultError(error) && error.code === "notInitialized") return fallback;
+      throw error;
+    }
+  };
+
   const refresh = async () => {
     try {
       const state = await engine.getAppState();
@@ -396,26 +414,35 @@ export function createAppStore(engine: Engine): AppStore {
 
       const [installList, lastScan, interruptedList, applies, runningList] =
         await Promise.all([
-          engine.listInstalls(),
-          engine.getLastScan(),
-          engine.getInterruptedApplies(),
-          engine.listApplies(),
-          engine.getRunningComfy(),
+          orNotYet(engine.listInstalls(), [] as Install[]),
+          orNotYet(engine.getLastScan(), null),
+          orNotYet(engine.getInterruptedApplies(), [] as InterruptedApply[]),
+          orNotYet(engine.listApplies(), [] as ApplyRecord[]),
+          orNotYet(engine.getRunningComfy(), [] as RunningComfy[]),
         ]);
 
-      const vaultInfo = await engine.getVaultInfo();
+      const vaultInfo = await orNotYet(engine.getVaultInfo(), null);
 
       const nextPlan =
         lastScan && !lastScan.cancelled
-          ? await engine.buildPlan(lastScan.scanId)
+          ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
           : null;
 
       const [files, groups, orphanList, vaultHealth, contents] = await Promise.all([
-        engine.listVaultFiles({ offset: 0, limit: 1000 }),
-        engine.listNameGroups(),
-        engine.listOrphans(),
-        engine.checkVaultHealth(),
-        engine.listContents({ offset: 0, limit: 1000, sort: "size" }),
+        orNotYet(engine.listVaultFiles({ offset: 0, limit: 1000 }), {
+          total: 0,
+          offset: 0,
+          files: [] as VaultFile[],
+        }),
+        orNotYet(engine.listNameGroups(), [] as NameGroup[]),
+        orNotYet(engine.listOrphans(), [] as VaultFile[]),
+        orNotYet(engine.checkVaultHealth(), null),
+        orNotYet(engine.listContents({ offset: 0, limit: 1000, sort: "size" }), {
+          total: 0,
+          offset: 0,
+          rows: [] as ContentRow[],
+          scanId: null,
+        }),
       ]);
 
       batch(() => {

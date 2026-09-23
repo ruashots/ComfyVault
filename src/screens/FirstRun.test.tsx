@@ -170,6 +170,42 @@ describe("a vault that goes away between two calls", () => {
   });
 });
 
+describe("one command that becomes conditional later", () => {
+  it("costs that one answer, not the whole window", async () => {
+    const engine = new FixtureEngine();
+    // Any of these could grow a vault requirement the interface has not caught
+    // up with. Losing the window over it is the failure worth preventing.
+    engine.checkVaultHealth = async () => {
+      throw {
+        code: "notInitialized",
+        message: "No vault folder is open yet. Choose a vault folder to continue.",
+      };
+    };
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.ready());
+
+    expect(harness.app.failure()).toBeNull();
+    // The one answer it could not get is missing, and everything else is there.
+    expect(harness.app.health()).toBeNull();
+    expect(harness.app.installs().length).toBeGreaterThan(0);
+    expect(harness.app.plan()).not.toBeNull();
+    expect(harness.app.library().length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("could not read the vault");
+  });
+
+  it("still shows the failure screen when a call fails for a real reason", async () => {
+    const engine = new FixtureEngine();
+    engine.checkVaultHealth = async () => {
+      throw { code: "ioError", message: "The drive stopped responding." };
+    };
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.ready());
+
+    expect(harness.app.failure()).toBe("The drive stopped responding.");
+    expect(document.body.textContent).toContain("could not read the vault");
+  });
+});
+
 describe("a vault that really cannot be read", () => {
   it("still says so, because that one is a failure", async () => {
     const engine = new FixtureEngine();
