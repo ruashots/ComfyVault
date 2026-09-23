@@ -5,31 +5,7 @@ weight into a single vault folder and leaves a link in every place the file used
 to be. ComfyUI keeps loading the same models from the same paths, and the
 duplicate copies stop taking up room.
 
-![ComfyVault Home, after a scan of three ComfyUI installs](docs/img/home.png)
-
----
-
-## The problem this solves
-
-You run more than one ComfyUI install. A launcher put one there. A tutorial made
-you clone another. The portable build is still in Downloads.
-
-Every one of them has its own `models` folder, and the same weights sit in more
-than one of them. The same 6 GB checkpoint, twice. The same LoRA, three times.
-Nothing tells you which files are duplicates, so you keep them all, and the drive
-fills up.
-
-One measured example: a 1.82 TB drive, 93 percent full, holding about 600 GB of
-duplicate copies.
-
-ComfyVault reads every install you register, works out which files are byte for
-byte identical, keeps one copy, and links the rest.
-
----
-
-## What happens to your files
-
-**Before.** The same LoRA, in three installs, under three different folders:
+**Before.** The same LoRA in three installs, under three different folders:
 
 ```
 C:\ComfyUI-A\models\loras\awesome\style.safetensors      144 MB
@@ -53,6 +29,24 @@ model exactly where it listed it before.
 
 The copy that moves gets a link in its old place too. The rule is simple:
 wherever a file was, a link takes its place.
+
+---
+
+## Who this is for
+
+You run more than one ComfyUI install. A launcher put one there. A tutorial made
+you clone another. The portable build is still in Downloads.
+
+Every one of them has its own `models` folder, and the same weights sit in more
+than one of them. The same 6 GB checkpoint, twice. The same LoRA, three times.
+Nothing tells you which files are duplicates, so you keep them all, and the drive
+fills up.
+
+One measured example: a 1.82 TB drive, 93 percent full, holding about 600 GB of
+duplicate copies.
+
+If you run a single install and never download the same model twice, there is
+little here for you.
 
 ---
 
@@ -90,34 +84,30 @@ from Linux, are in [docs/BUILD.md](docs/BUILD.md).
 
 ---
 
-## The first five minutes
+## How a consolidation goes
 
-1. **Choose the vault folder first.** Open Settings and pick it. The vault is
-   one plain folder, and it can sit on any drive. It cannot sit inside a ComfyUI
-   install, and ComfyVault refuses that choice. Nothing else works until a vault
-   is open, because the vault is where ComfyVault keeps its record.
+1. **The vault folder comes first.** It is one plain folder, and it can sit on
+   any drive. It cannot sit inside a ComfyUI install, and ComfyVault refuses
+   that choice. Nothing else runs until a vault is open, because the vault is
+   where ComfyVault keeps its record.
 
-2. **Add your installs.** Browse to a ComfyUI folder. The picker tells you
-   whether the folder is a real ComfyUI install before you commit to it, and it
-   finds the root inside a launcher layout for you. Add as many as you have.
+2. **Then your installs.** ComfyVault checks that a folder really is a ComfyUI
+   install before it accepts it, and it finds the real root inside a launcher
+   layout. Register as many installs as you have.
 
-3. **Close ComfyUI, then press Scan.** ComfyVault reads every model file in
-   every install and takes a SHA-256 hash of each one. A first scan over a
-   terabyte takes a while, because every byte is read. Later scans reuse the
-   hashes of files that have not changed.
+3. **Close ComfyUI, then scan.** ComfyVault reads every model file in every
+   install and takes a SHA-256 hash of each one. A first scan over a terabyte
+   takes a while, because every byte is read. Later scans reuse the hashes of
+   files that have not changed.
 
 4. **Read the plan.** The Consolidate screen shows a dry run. Nothing has moved.
    It lists every model that exists more than once, which copy would move into
    the vault, which paths would become links, and how much space comes back.
    Untick anything you want left alone.
 
-5. **Press Apply.** ComfyVault moves the files, creates the links, and deletes
-   the duplicate copies. Every step is written to a journal first, so a crash is
+5. **Apply.** ComfyVault moves the files, creates the links, and deletes the
+   duplicate copies. Every step is written to a journal first, so a crash is
    recoverable. When it is done you can undo the whole run.
-
-![The Consolidate screen: a dry run, before anything moves](docs/img/consolidate.png)
-
-![The same run, finished: what moved, what was linked, and the button that undoes it](docs/img/apply-done.png)
 
 ---
 
@@ -231,13 +221,11 @@ under two different names are settled by picking which name the vault keeps, and
 the other name stays as a link so saved workflows keep opening. Vault files that
 nothing points at any more are listed last, with what deleting one costs.
 
-**Settings** is your installs, your vault folder, and the scan rules. It also
-re-checks Developer Mode and which ComfyUI processes are running.
-
 **Download** is the one screen that stands empty in this version, on purpose. It
 says what it will hold and what to do until then.
 
-![Cleanup: broken links, duplicate names, and vault files nothing points at](docs/img/cleanup.png)
+**Settings** is your installs, your vault folder, and the scan rules. It also
+re-checks Developer Mode and which ComfyUI processes are running.
 
 ---
 
