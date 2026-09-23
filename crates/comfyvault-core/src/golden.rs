@@ -749,8 +749,12 @@ fn the_contract_samples_on_disk_match_what_the_engine_serialises() {
         std::fs::create_dir_all(&dir).expect("create the golden folder");
     }
 
+    // An empty list would make every comparison below pass by making none.
+    let all = samples();
+    assert!(all.len() >= 50, "only {} samples were built, the check proves nothing", all.len());
+
     let mut stale = Vec::new();
-    for (name, value) in samples() {
+    for (name, value) in all {
         let file = dir.join(format!("{name}.json"));
         let mut text = serde_json::to_string_pretty(&value).expect("write sample");
         text.push('\n');
@@ -927,23 +931,24 @@ fn no_sample_carries_a_value_the_engine_would_never_send() {
     // the shape checks cannot see. Written by hand the hashes were lowercase
     // and the engine writes uppercase, which would have taught the interface
     // to compare the wrong text.
-    fn walk(name: &str, value: &serde_json::Value, wrong: &mut Vec<String>) {
+    fn walk(name: &str, value: &serde_json::Value, wrong: &mut Vec<String>, seen: &mut usize) {
         match value {
             serde_json::Value::Object(map) => {
                 for (k, v) in map {
                     if k == "sha256" {
                         if let Some(text) = v.as_str() {
+                            *seen += 1;
                             if crate::scan::hash::normalize_sha256(text).as_deref() != Some(text) {
                                 wrong.push(format!("{name}: {k} is {text:?}, which the engine would rewrite"));
                             }
                         }
                     }
-                    walk(name, v, wrong);
+                    walk(name, v, wrong, seen);
                 }
             }
             serde_json::Value::Array(items) => {
                 for v in items {
-                    walk(name, v, wrong);
+                    walk(name, v, wrong, seen);
                 }
             }
             _ => {}
@@ -951,9 +956,12 @@ fn no_sample_carries_a_value_the_engine_would_never_send() {
     }
 
     let mut wrong = Vec::new();
+    let mut seen = 0usize;
     for (name, value) in samples() {
-        walk(name, &value, &mut wrong);
+        walk(name, &value, &mut wrong, &mut seen);
     }
+    // A walk that stops finding hashes would pass by checking nothing.
+    assert!(seen >= 10, "only {seen} hashes were read, the check proves nothing");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
@@ -1009,6 +1017,7 @@ fn no_example_in_the_contract_shows_a_path_the_engine_would_not_send() {
 
     let doc = read_repo_file("docs/IPC-CONTRACT.md");
     let mut wrong = Vec::new();
+    let mut examined = 0usize;
     for (number, line) in doc.lines().enumerate() {
         let Some((declaration, comment)) = line.split_once("//") else { continue };
         let Some(field) = declaration.trim().split(':').next() else { continue };
@@ -1018,6 +1027,7 @@ fn no_example_in_the_contract_shows_a_path_the_engine_would_not_send() {
         }
         // Only the quoted example, so prose about separators is left alone.
         for example in comment.split('\'').skip(1).step_by(2) {
+            examined += 1;
             if example.contains('/') && !example.contains('\\') {
                 wrong.push(format!(
                     "line {}: {field} is shown as {example:?}, and the engine sends a backslash",
@@ -1026,5 +1036,9 @@ fn no_example_in_the_contract_shows_a_path_the_engine_would_not_send() {
             }
         }
     }
+    // Without this the check passes by reading nothing at all. If the way the
+    // document writes an example ever changes, this fails instead of going
+    // quiet, which is the failure this whole file exists to stop.
+    assert!(examined >= 2, "only {examined} examples were read, the check proves nothing");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
