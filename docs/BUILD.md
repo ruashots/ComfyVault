@@ -90,14 +90,66 @@ file target/x86_64-pc-windows-msvc/release/comfyvault.exe
 That must report `PE32+ executable (GUI) x86-64`. A report of `(console)` means
 the debug profile was built.
 
-To confirm the interface is inside it, search the executable for the built file
-names:
+To confirm the interface is inside it, look for every built file name in the
+bytes of the executable:
 
 ```
-strings target/x86_64-pc-windows-msvc/release/comfyvault.exe | grep '^/assets/'
+python3 - <<'EOF'
+import os
+exe = open('target/x86_64-pc-windows-msvc/release/comfyvault.exe', 'rb').read()
+missing = [f for f in sorted(os.listdir('dist/assets'))
+           if ('/assets/' + f).encode() not in exe]
+print('missing:', missing if missing else 'none')
+EOF
 ```
 
-Every file in `dist/assets/` must appear, apart from the `.map` files.
+The result must be `missing: none`. Every file in `dist/assets/` is embedded,
+the `.map` files included.
+
+Do not use `strings` for this check. `strings` joins a file name to the bytes
+that follow it, so an exact match fails on a name that is really there.
+
+### 2.6 A rebuilt interface does not go into the executable by itself
+
+Do not trust a rebuild to pick up a new interface. Tauri reads `dist/` once,
+during its build script. Cargo does not rerun that build script when only
+`dist/` changes. The build reports success and embeds the old interface.
+
+This was measured. A line was added to a file in `dist/assets/`, and the
+release build ran again. The build reported success in 1 minute 13 seconds.
+The new line was not in the executable.
+
+If the interface changed since the last build, force the capture:
+
+```
+touch src-tauri/build.rs src-tauri/src/lib.rs
+cargo xwin build -p comfyvault --release --features custom-protocol \
+  --target x86_64-pc-windows-msvc
+```
+
+Then run the check in section 2.5 again.
+
+Do not ship a build until that check reports `missing: none`. A stale
+interface fails in the same silent way as a missing `custom-protocol` feature.
+The application starts, and the person uses an old screen.
+
+Do not start a release build while the interface is being rebuilt. The build
+reads `dist/` at the start and takes about 70 seconds. A write to `dist/`
+during that time does not reach the executable.
+
+This was measured. A release build started at 18:40:57. The interface was
+written again at 18:41:28. The build ended at 18:42:09 and reported success.
+Four of the nine built files were not in it. The five that were in it had not
+changed name, so their names still matched.
+
+Before a release build, confirm that `dist/` is at rest:
+
+```
+ls -l --time-style=+%s dist/assets
+```
+
+Run the same command after the build. If the output differs, discard the
+executable and build again.
 
 ---
 
