@@ -132,6 +132,35 @@ person meets an error instead of the screen that asks for a folder.
 A refusal here is not a failure. It is the engine saying the person has not
 chosen a folder yet, which on first run is simply true.
 
+#### The order a first run must follow
+
+`select_vault` first, then everything else. There is no way around it, and the
+engine will not do it for you.
+
+1. `select_vault` with `{ path, createIfMissing: true }`. This is what makes
+   the vault: it creates the folder if it is not there, and creates the
+   database inside it. It answers with `VaultInfo`.
+2. `register_install` for the person's first ComfyUI folder.
+
+With `createIfMissing: false` and nothing at that path, `select_vault` rejects
+with `notFound` and creates nothing. Pass `true` on a first run.
+
+`register_install` before `select_vault` rejects with `notInitialized`, like
+every other command that reads or writes the vault. There is nowhere to record
+an install until a vault exists.
+
+**The engine has no default vault folder.** It never opens one on its own, and
+`C:\ComfyVault` is the interface's suggestion, not the engine's. On a machine
+where a vault was opened before, the engine reopens that one at startup, from
+the path it recorded. On a machine where one never was, nothing is open and
+nothing is created until `select_vault` is called.
+
+That is deliberate. The vault is a folder that will end up holding hundreds of
+gigabytes of the person's files, so it gets made because the person agreed to
+make it, not as a side effect of a button that says something else.
+`select_vault` is also where the engine refuses a folder inside a ComfyUI
+install, and that refusal is worth nothing if a vault can appear without it.
+
 ### 1.6 Concurrency rule
 
 The engine runs one long operation at a time. A scan, an apply, and a revert

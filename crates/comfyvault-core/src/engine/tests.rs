@@ -141,6 +141,42 @@ fn the_state_call_answers_before_a_vault_is_chosen() {
     assert_eq!(state.platform.os, crate::platform::os_name());
 }
 
+#[test]
+fn a_first_run_has_to_open_a_vault_before_it_can_add_an_install() {
+    // The order a new person's first minute depends on. Nothing exists yet:
+    // no folder, no database, no installs.
+    let f = Fixture::new();
+    let e = &f.engine;
+    let install_dir = f.dir.path().join("ComfyUI-Demo");
+    crate::install::detect::fixtures::make_install(&install_dir);
+    let vault = f.dir.path().join("ComfyVault");
+    assert!(!vault.exists(), "nothing has been created yet");
+
+    // Adding an install first is refused. There is nowhere to record it.
+    let refused = e.register_install(&install_dir, None).unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotInitialized);
+
+    // Opening a folder that is not there is refused unless asked to create it.
+    let missing = e.select_vault(&vault, false).unwrap_err();
+    assert_eq!(missing.code, ErrorCode::NotFound);
+    assert!(!vault.exists(), "a refusal must not leave a folder behind");
+
+    // Asked to create it, the engine makes the folder and the database.
+    let info = e.select_vault(&vault, true).expect("create the vault");
+    assert!(vault.is_dir(), "the vault folder was not created");
+    assert!(
+        vault.join(".comfyvault").join("vault.redb").is_file(),
+        "the vault database was not created"
+    );
+    assert_eq!(info.file_count, 0);
+    assert!(e.app_state().unwrap().vault_initialized);
+
+    // Only now does adding an install work.
+    let install = e.register_install(&install_dir, None).expect("register the install");
+    assert_eq!(e.installs().unwrap().len(), 1);
+    assert_eq!(install.root, crate::paths::canonicalize_clean(&install_dir).unwrap_or(install_dir));
+}
+
 // --- the vault -------------------------------------------------------------
 
 #[test]
