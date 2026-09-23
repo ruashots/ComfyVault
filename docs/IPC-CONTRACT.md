@@ -101,7 +101,38 @@ field. The engine never puts a secret in either field.
 | `cancelled` | The caller cancelled the operation. |
 | `conflict` | The operation contradicts the current state. Read `detail`. |
 
-### 1.5 Concurrency rule
+### 1.5 Before a vault is chosen
+
+A new person starts here, every time, and it is the state the window opens in.
+**Almost every command refuses until a vault is open.** They answer
+`notInitialized` with the sentence "No vault folder is open yet. Choose a vault
+folder to continue."
+
+These are the only calls that answer in that state:
+
+| Command | What it gives you |
+|---|---|
+| `get_app_state` | `vaultInitialized: false`, `vaultRoot: null`, `installCount: 0`, the real `platform`, and `settings` at their defaults |
+| `get_platform_report` | what this computer can do |
+| `validate_install_path` | so a folder can be checked before there is anywhere to record it |
+| `check_locked_files` | it asks the operating system, not the vault |
+
+`select_vault` is the way out of the state, and it works.
+
+Everything else refuses, `list_installs`, `get_last_scan`, `list_applies`,
+`get_interrupted_applies` and `get_running_comfy` included. Those five look
+harmless and are not: each reads something that lives inside the vault.
+
+**Draw the first screen from `get_app_state` alone.** It carries the platform
+and the default settings for exactly this reason, so that nothing else has to
+be asked. A start up sequence that fetches a handful of lists in parallel
+before checking `vaultInitialized` gets a refusal on the first frame, and the
+person meets an error instead of the screen that asks for a folder.
+
+A refusal here is not a failure. It is the engine saying the person has not
+chosen a folder yet, which on first run is simply true.
+
+### 1.6 Concurrency rule
 
 The engine runs one long operation at a time. A scan, an apply, and a revert
 are long operations. If a second long operation starts, the engine rejects it

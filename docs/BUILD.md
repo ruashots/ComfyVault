@@ -46,6 +46,42 @@ sudo apt install llvm clang lld
 
 Rust's own `llvm-tools` component does **not** include `llvm-rc`.
 
+#### If you cannot install packages
+
+`apt-get download` needs no root. Unpack the packages into a folder of your
+own and put that folder's `bin` on `PATH`:
+
+```
+mkdir -p ~/llvm-portable && cd ~/llvm-portable
+apt-get download llvm-18 clang-18 libclang-cpp18 libllvm18 lld-18 \
+  libclang-common-18-dev libgcc-13-dev
+for d in *.deb; do dpkg-deb -x "$d" root; done
+ln -sf clang root/usr/lib/llvm-18/bin/clang-cl
+export PATH="$PWD/root/usr/lib/llvm-18/bin:$PATH"
+```
+
+The download is about 71 MB and the unpacked folder about 329 MB. The
+`clang-cl` link is needed because the package does not ship one, and
+`cargo-xwin` looks for that name.
+
+Check it before building:
+
+```
+llvm-rc --version
+clang-cl --version
+```
+
+`llvm-rc` answers `Exactly one input file should be provided`, which means it
+runs. `clang-cl` prints a version. If either says `command not found`, `PATH`
+is not set in this shell.
+
+`export PATH` lasts only for the shell that ran it. A new terminal needs it
+again.
+
+This is the route the first Windows builds of this project were made with, and
+it was verified from an empty folder on a machine with no LLVM installed. Both
+routes work. Install the packages if you can, because one line beats seven.
+
 ### 2.2 Build the interface first
 
 ```

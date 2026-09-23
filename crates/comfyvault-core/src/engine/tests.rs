@@ -71,24 +71,60 @@ fn every_command_that_needs_a_vault_says_so_before_one_is_chosen() {
     let f = Fixture::new();
     let e = &f.engine;
 
-    let expect = |r: Result<()>| {
+    let expect = |name: &str, r: Result<()>| {
         assert_eq!(
-            r.unwrap_err().code,
+            r.expect_err(&format!("{name} answered when no vault is open")).code,
             ErrorCode::NotInitialized,
-            "this command answered something other than 'choose a vault first'"
+            "{name} answered something other than 'choose a vault first'"
         );
     };
-    expect(e.installs().map(|_| ()));
-    expect(e.settings().map(|_| ()));
-    expect(e.build_plan("x").map(|_| ()));
-    expect(e.applies().map(|_| ()));
-    expect(e.orphans().map(|_| ()));
-    expect(e.vault_health().map(|_| ()));
-    expect(e.name_groups().map(|_| ()));
-    expect(e.links(None, None, None).map(|_| ()));
-    expect(e.check_usage(&["m.safetensors".into()], None).map(|_| ()));
-    expect(e.running_comfy().map(|_| ()));
-    expect(e.register_install(f.dir.path(), None).map(|_| ()));
+    expect("list_installs", e.installs().map(|_| ()));
+    expect("get_settings", e.settings().map(|_| ()));
+    expect("build_plan", e.build_plan("x").map(|_| ()));
+    expect("list_applies", e.applies().map(|_| ()));
+    expect("list_orphans", e.orphans().map(|_| ()));
+    expect("check_vault_health", e.vault_health().map(|_| ()));
+    expect("list_name_groups", e.name_groups().map(|_| ()));
+    expect("list_links", e.links(None, None, None).map(|_| ()));
+    expect("check_model_usage", e.check_usage(&["m.safetensors".into()], None).map(|_| ()));
+    expect("get_running_comfy", e.running_comfy().map(|_| ()));
+    expect("register_install", e.register_install(f.dir.path(), None).map(|_| ()));
+    // The five the interface calls the moment the window opens. All of them
+    // refuse, so a boot sequence that calls them before a vault is chosen
+    // greets a new person with a failure.
+    expect("get_last_scan", e.last_scan().map(|_| ()));
+    expect("get_interrupted_applies", e.interrupted_applies().map(|_| ()));
+    expect("get_vault_info", e.vault_info().map(|_| ()));
+    expect("list_vault_files", e.vault_files(0, 10, &Default::default(), crate::vault::VaultSort::Name, false).map(|_| ()));
+    expect("list_contents", e.contents(0, 10, &Default::default(), crate::vault::VaultSort::Name, false).map(|_| ()));
+    expect("get_scan_entries", e.scan_entries("x", 0, 10, &Default::default()).map(|_| ()));
+    expect("update_settings", e.update_settings(&Default::default()).map(|_| ()));
+    expect("get_metadata", e.metadata("x", false).map(|_| ()));
+    expect("clear_metadata_cache", e.clear_metadata_cache().map(|_| ()));
+}
+
+#[test]
+fn the_calls_a_first_run_can_make_all_answer_before_a_vault_is_chosen() {
+    // The window opens on a machine with no vault. Whatever it may call then
+    // has to answer, because a refusal on the first frame is what the person
+    // sees instead of the screen that asks for a folder.
+    //
+    // This is the list the contract publishes. If a call is added to it, or
+    // one of these starts refusing, this fails and the contract is wrong.
+    let f = Fixture::new();
+    let e = &f.engine;
+
+    let state = e.app_state().expect("get_app_state must answer");
+    assert!(!state.vault_initialized, "nothing is open yet");
+    assert_eq!(state.vault_root, None);
+    // Enough to draw the first screen without asking anything else.
+    assert_eq!(state.settings, crate::settings::Settings::default());
+    assert_eq!(state.install_count, 0);
+
+    e.platform_report();
+    e.validate_install_path(f.dir.path()).expect("validate_install_path must answer");
+    assert!(e.locked_files(&[]).is_empty(), "check_locked_files must answer");
+    assert!(e.busy().is_none(), "get_app_state reports nothing running");
 }
 
 #[test]
