@@ -87,6 +87,18 @@ pub(super) fn drive_roots() -> Vec<PathBuf> {
     vec![PathBuf::from("/")]
 }
 
+/// Unix has no drive letters. The one root is reported with its real room, so
+/// the shape the interface receives is the same on either system.
+pub(super) fn drives() -> Vec<crate::platform::DriveInfo> {
+    let space = super::disk_space_via_sysinfo(Path::new("/")).ok();
+    vec![crate::platform::DriveInfo {
+        root: "/".to_string(),
+        kind: crate::platform::DriveKind::Fixed,
+        free_bytes: space.as_ref().map(|s| s.free_bytes),
+        total_bytes: space.as_ref().map(|s| s.total_bytes),
+    }]
+}
+
 /// `EXDEV` is 18 on Linux and on macOS. It is the one rename failure the caller
 /// recovers from, by copying instead.
 pub(super) fn is_cross_volume_error(e: &std::io::Error) -> bool {

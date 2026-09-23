@@ -116,6 +116,7 @@ These are the only calls that answer in that state:
 | `get_platform_report` | what this computer can do |
 | `validate_install_path` | so a folder can be checked before there is anywhere to record it |
 | `check_locked_files` | it asks the operating system, not the vault |
+| `list_drives` | every drive on this computer, with its size and its free space |
 
 `select_vault` is the way out of the state, and it works.
 
@@ -205,7 +206,55 @@ On Windows, `developerMode` reads the registry value
 If `supported` is `false`, the user interface must block Apply and show
 `guidance`.
 
-### 2.2 `get_app_state`
+### 2.2 `list_drives`
+
+Every drive on this computer, with how much room each one has. Answers before a
+vault exists, because it is what the first screen shows while asking where the
+vault should go.
+
+Arguments: none. Returns `DriveInfo[]`.
+
+```ts
+type DriveInfo = {
+  root: string                   // for example 'C:\\'
+  kind: 'fixed' | 'removable' | 'network' | 'optical' | 'ramDisk' | 'unknown'
+  freeBytes: number | null       // space this user may use, not raw free space
+  totalBytes: number | null
+}
+```
+
+On a system without drive letters the single root is reported instead, with
+the same shape, so the interface does not need two ways of reading this.
+
+**Every drive letter the operating system reports is listed, of every kind.**
+The engine does not decide which ones deserve to be offered, it says what is
+there and what kind each one is. On a computer with one drive the answer is one
+row.
+
+**`freeBytes` and `totalBytes` are null together when the drive cannot be
+read**, which happens with an empty card reader or a network drive that has
+stopped answering. They are never zero to mean "do not know". Zero of zero
+reads as a completely full drive, which is a different and wrong statement.
+A drive with null figures has no meter to draw.
+
+`freeBytes` is the space available to the person running the application, which
+on a drive with a quota is smaller than the volume's raw free space. The
+smaller number is the true one, because it is what they can actually use.
+
+**Which drive the vault should go on.** Usually the one the installs are
+already on, even when it looks like the one with the least room. Consolidating
+moves files rather than copying them, so on that drive each group is a rename:
+no bytes travel, and the space comes back as the run goes. A vault on a
+different drive has to receive a real copy of everything before any duplicate
+is removed, so it needs room for the whole collection up front, and the first
+run is as slow as reading and writing every file.
+
+A drive that can be unplugged, or that lives on another computer, is a poor
+home for a vault whatever its size. Every install points into the vault by
+link, so the day the drive is not there, every model in every install stops
+loading at once.
+
+### 2.3 `get_app_state`
 
 Arguments: none.
 
@@ -228,7 +277,7 @@ type AppState = {
 Call this command when the application starts. If `interruptedApplies` is not
 empty, the user interface must show the recovery screen before anything else.
 
-### 2.3 `select_vault`
+### 2.4 `select_vault`
 
 Opens a vault folder, or creates one. This command must run before any command
 that touches installs, scans, plans, or vault contents.
@@ -259,7 +308,7 @@ Errors: `ioError`, `permissionDenied`, `storeError`, `invalidArgument`.
 The engine refuses a vault path that sits inside a registered install. That
 refusal uses `conflict`.
 
-### 2.4 `get_vault_info`
+### 2.5 `get_vault_info`
 
 Returns the open vault's facts, above all how much room its drive has left.
 That number is the most-read one in the application, so reading it does not
@@ -269,7 +318,7 @@ Arguments: none. Returns `VaultInfo`, the same shape `select_vault` returns.
 
 Errors: `notInitialized` when no vault is open.
 
-### 2.5 `get_settings` and `update_settings`
+### 2.6 `get_settings` and `update_settings`
 
 ```ts
 type Settings = {

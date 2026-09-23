@@ -20,7 +20,7 @@ use comfyvault_core::install::{Install, InstallCandidate};
 use comfyvault_core::links::{CreateLinkRequest, LinkWithState, ModelDirNode};
 use comfyvault_core::metadata::ModelMetadata;
 use comfyvault_core::plan::ConsolidationPlan;
-use comfyvault_core::platform::{LockState, PlatformReport, RunningComfy};
+use comfyvault_core::platform::{DriveInfo, LockState, PlatformReport, RunningComfy};
 use comfyvault_core::scan::ScanProgress;
 use comfyvault_core::settings::{Settings, SettingsPatch};
 use comfyvault_core::store::{ApplyRecord, LinkRecord, LinkState, ScanRecord};
@@ -71,6 +71,15 @@ fn engine(state: &State<'_, AppEngine>) -> Arc<Engine> {
 pub async fn get_platform_report(state: State<'_, AppEngine>) -> Reply<PlatformReport> {
     let e = engine(&state);
     blocking(move || Ok(e.platform_report())).await
+}
+
+/// Every drive on this computer, with its size and its free space.
+///
+/// Answers before a vault exists.
+#[tauri::command]
+pub async fn list_drives(state: State<'_, AppEngine>) -> Reply<Vec<DriveInfo>> {
+    let e = engine(&state);
+    blocking(move || Ok(e.drives())).await
 }
 
 #[tauri::command]

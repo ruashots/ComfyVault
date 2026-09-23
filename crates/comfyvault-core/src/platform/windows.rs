@@ -35,9 +35,13 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, GetFileInformationByHandle, GetLogicalDrives, GetVolumePathNameW,
+    CreateFileW, GetDiskFreeSpaceExW, GetDriveTypeW, GetFileInformationByHandle, GetLogicalDrives,
+    GetVolumePathNameW,
     BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
     FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
+use windows_sys::Win32::System::WindowsProgramming::{
+    DRIVE_CDROM, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE,
 };
 use windows_sys::Win32::System::Registry::{
     RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
@@ -45,7 +49,7 @@ use windows_sys::Win32::System::Registry::{
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 use crate::error::{ErrorCode, Result, VaultError};
-use crate::platform::{LockState, VolumeId};
+use crate::platform::{DriveInfo, DriveKind, LockState, VolumeId};
 
 /// Encodes a path as a NUL-terminated wide string for the Windows API.
 fn wide(path: &Path) -> Vec<u16> {
@@ -433,4 +437,47 @@ mod tests {
             }
         }
     }
+}
+
+/// Every drive letter the operating system reports, with its room.
+///
+/// The letters come from `GetLogicalDrives`, which is the same list Explorer
+/// shows. The kind comes from `GetDriveTypeW`. The numbers come from
+/// `GetDiskFreeSpaceExW`, and when that call fails the numbers stay empty
+/// rather than becoming zero: an empty card reader is not a full drive.
+///
+/// The free figure is the space available to this user, not the raw free space
+/// on the volume. On a drive with a quota those differ, and the smaller one is
+/// what the person can actually use.
+pub(super) fn drives() -> Vec<DriveInfo> {
+    let mask = unsafe { GetLogicalDrives() };
+    if mask == 0 {
+        return Vec::new();
+    }
+    (0..26u32)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| {
+            let root = format!("{}:\\", (b'A' + i as u8) as char);
+            let wide = wide(Path::new(&root));
+            let kind = match unsafe { GetDriveTypeW(wide.as_ptr()) } {
+                DRIVE_FIXED => DriveKind::Fixed,
+                DRIVE_REMOVABLE => DriveKind::Removable,
+                DRIVE_REMOTE => DriveKind::Network,
+                DRIVE_CDROM => DriveKind::Optical,
+                DRIVE_RAMDISK => DriveKind::RamDisk,
+                _ => DriveKind::Unknown,
+            };
+
+            let mut available: u64 = 0;
+            let mut total: u64 = 0;
+            let mut free: u64 = 0;
+            let ok = unsafe {
+                GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, &mut total, &mut free)
+            };
+            let (free_bytes, total_bytes) =
+                if ok == 0 { (None, None) } else { (Some(available), Some(total)) };
+
+            DriveInfo { root, kind, free_bytes, total_bytes }
+        })
+        .collect()
 }

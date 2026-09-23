@@ -57,6 +57,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_platform_report,
+            commands::list_drives,
             commands::get_app_state,
             commands::select_vault,
             commands::close_vault,

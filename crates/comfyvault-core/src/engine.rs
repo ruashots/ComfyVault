@@ -157,6 +157,15 @@ impl Engine {
         self.platform.as_ref()
     }
 
+    /// Every drive on this computer, with its size and its free space.
+    ///
+    /// Answers with no vault open, because it is what the first screen shows
+    /// while asking where the vault should go. It reads the drives and nothing
+    /// in the vault, so there is nothing for it to need.
+    pub fn drives(&self) -> Vec<crate::platform::DriveInfo> {
+        self.platform.drives()
+    }
+
     pub fn platform_report(&self) -> PlatformReport {
         PlatformReport {
             os: crate::platform::os_name().to_string(),

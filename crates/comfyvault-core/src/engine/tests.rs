@@ -124,6 +124,8 @@ fn the_calls_a_first_run_can_make_all_answer_before_a_vault_is_chosen() {
     e.platform_report();
     e.validate_install_path(f.dir.path()).expect("validate_install_path must answer");
     assert!(e.locked_files(&[]).is_empty(), "check_locked_files must answer");
+    let drives = e.drives();
+    assert!(!drives.is_empty(), "list_drives must answer before a vault exists");
     assert!(e.busy().is_none(), "get_app_state reports nothing running");
 }
 

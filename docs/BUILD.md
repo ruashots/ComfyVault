@@ -228,14 +228,16 @@ Windows executable directly, so this works from Linux:
 
 ```
 cargo xwin test -p comfyvault-core --no-run --target x86_64-pc-windows-msvc
-cp target/x86_64-pc-windows-msvc/debug/deps/comfyvault_core-<hash>.exe \
+cp "$(ls -t target/x86_64-pc-windows-msvc/debug/deps/comfyvault_core-*.exe | head -1)" \
    /mnt/c/ComfyVault-Demo/core-tests.exe
 cd /mnt/c/ComfyVault-Demo
 COMFYVAULT_REPO='\\wsl.localhost\Ubuntu\home\user\ComfyVault' \
   WSLENV=COMFYVAULT_REPO ./core-tests.exe
 ```
 
-`cargo xwin test --no-run` prints the file name with the hash in it.
+Take the newest file, never a remembered name. The hash in that name changes
+whenever the crate's settings change, and a new file appears beside the old
+one. Copying yesterday's name runs yesterday's tests, and they pass.
 
 Three of the tests read files from the repository: the contract samples in
 `docs/golden/`, the contract itself, and the command layer's source. A test

@@ -48,7 +48,9 @@ use crate::plan::{
     BlockReason, BlockedRow, ConsolidationPlan, PlanGroup, PlanLink, PlanSource, PlanTotals,
     SourceChoice,
 };
-use crate::platform::{LockState, MatchReason, PlatformReport, RunningComfy, SymlinkCapability};
+use crate::platform::{
+    DriveInfo, DriveKind, LockState, MatchReason, PlatformReport, RunningComfy, SymlinkCapability,
+};
 use crate::reply::{
     Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted, DirEntryInfo, DirectoryListing,
     Removed, RemovedLinks, StartedApply, StartedScan, UnregisterResult,
@@ -392,6 +394,15 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
 
     vec![
         s("PlatformReport", platform()),
+        s(
+            "DriveInfo",
+            DriveInfo {
+                root: r"C:\".into(),
+                kind: DriveKind::Fixed,
+                free_bytes: Some(288_000_000_000),
+                total_bytes: Some(2_000_398_934_016),
+            },
+        ),
         s(
             "AppState",
             AppState {
@@ -1192,4 +1203,34 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
     }
     assert!(checked >= 35, "only {checked} values were compared, the check proves nothing");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn every_command_is_wired_into_the_window() {
+    // A command that is written but never listed in the handler does not exist
+    // at run time. The build says nothing, and the interface gets "command not
+    // found" from a function that is plainly there in the source.
+    let commands = read_repo_file("src-tauri/src/commands.rs");
+    let wiring = read_repo_file("src-tauri/src/lib.rs");
+
+    let mut declared = Vec::new();
+    for block in commands.split("#[tauri::command]").skip(1) {
+        let Some(after) = block.split("fn ").nth(1) else { continue };
+        let Some(name) = after.split('(').next() else { continue };
+        let name = name.trim();
+        if !name.is_empty() && !declared.contains(&name) {
+            declared.push(name);
+        }
+    }
+    assert!(declared.len() > 40, "only {} commands were parsed", declared.len());
+
+    let missing: Vec<&&str> = declared
+        .iter()
+        .filter(|n| !wiring.contains(&format!("commands::{n},")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "these commands are written but not listed in the handler, so the \
+         interface cannot call them: {missing:?}"
+    );
 }

@@ -150,6 +150,38 @@ pub struct FileIdentity(pub String);
 pub struct VolumeId(pub String);
 
 /// Space on the volume that holds a path.
+/// What kind of drive a letter is attached to.
+///
+/// The interface uses this to decide what to offer. A vault on a drive that
+/// can be unplugged or that lives on another machine turns every link in every
+/// install into a broken one the moment it goes away, so those are not the
+/// same kind of suggestion as a drive bolted into the computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DriveKind {
+    Fixed,
+    Removable,
+    Network,
+    Optical,
+    RamDisk,
+    Unknown,
+}
+
+/// One drive on this computer, with how much room it has.
+///
+/// `freeBytes` and `totalBytes` are null together when the drive could not be
+/// read: an empty card reader, or a network drive that is no longer answering.
+/// They are never zero to mean "do not know", because zero of zero reads as a
+/// full drive rather than as an unanswered question.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveInfo {
+    pub root: String,
+    pub kind: DriveKind,
+    pub free_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiskSpace {
@@ -215,6 +247,12 @@ pub trait Platform: Send + Sync {
     /// whose models live on `D:` must be able to reach them, and a picker that
     /// starts inside `C:\` can never get there.
     fn drive_roots(&self) -> Vec<PathBuf>;
+
+    /// Every drive on this computer, with its size and its free space.
+    ///
+    /// Answers before a vault exists, because it is what the first screen uses
+    /// to ask where the vault should go.
+    fn drives(&self) -> Vec<DriveInfo>;
 
     /// Renames a file, and reports whether the operating system refused because
     /// the two paths sit on different volumes.
@@ -309,6 +347,10 @@ impl Platform for NativePlatform {
 
     fn drive_roots(&self) -> Vec<PathBuf> {
         sys::drive_roots()
+    }
+
+    fn drives(&self) -> Vec<DriveInfo> {
+        sys::drives()
     }
 
     fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), RenameError> {
@@ -554,6 +596,7 @@ struct FakeState {
     rename_failures: HashMap<PathBuf, std::io::ErrorKind>,
     /// Stands in for a computer with several drives.
     drive_roots: Option<Vec<PathBuf>>,
+    drives: Option<Vec<DriveInfo>>,
 }
 
 impl FakePlatform {
@@ -596,6 +639,12 @@ impl FakePlatform {
             .unwrap()
             .volume_overrides
             .push((path.into(), VolumeId(id.to_string())));
+        self
+    }
+
+    /// Makes the machine look like it has these drives.
+    pub fn set_drives(&self, drives: Vec<DriveInfo>) -> &Self {
+        self.state.lock().unwrap().drives = Some(drives);
         self
     }
 
@@ -711,6 +760,13 @@ impl Platform for FakePlatform {
 
     fn long_paths_enabled(&self) -> Option<bool> {
         self.inner.long_paths_enabled()
+    }
+
+    fn drives(&self) -> Vec<DriveInfo> {
+        if let Some(d) = self.state.lock().unwrap().drives.clone() {
+            return d;
+        }
+        self.inner.drives()
     }
 
     fn drive_roots(&self) -> Vec<PathBuf> {
@@ -1055,5 +1111,55 @@ mod tests {
         let f = FakePlatform::new();
         f.set_free_bytes(1234);
         assert_eq!(f.disk_space(d.path()).unwrap().free_bytes, 1234);
+    }
+}
+
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    #[test]
+    fn a_drive_that_cannot_be_read_says_nothing_rather_than_zero() {
+        // Zero of zero reads as a completely full drive. The interface would
+        // draw a full meter for an empty card reader, which is a statement
+        // about the drive rather than an admission that it was not readable.
+        let unreadable = DriveInfo {
+            root: "E:\\".into(),
+            kind: DriveKind::Removable,
+            free_bytes: None,
+            total_bytes: None,
+        };
+        let v = serde_json::to_value(&unreadable).unwrap();
+        assert!(v["freeBytes"].is_null(), "free space must be null, not a number");
+        assert!(v["totalBytes"].is_null(), "total size must be null, not a number");
+        assert_ne!(v["freeBytes"], serde_json::json!(0));
+        assert_ne!(v["totalBytes"], serde_json::json!(0));
+
+        let back: DriveInfo = serde_json::from_value(v).unwrap();
+        assert_eq!(back, unreadable);
+    }
+
+    #[test]
+    fn the_drives_this_machine_reports_are_real_or_they_are_unknown() {
+        // Run against the real operating system, on whichever one this is.
+        let drives = Platform::drives(&NativePlatform);
+        assert!(!drives.is_empty(), "a computer has at least one drive");
+
+        for d in &drives {
+            assert!(!d.root.is_empty(), "a drive with no root");
+            // The pair moves together. One known and one unknown would let the
+            // interface compute a meter from half an answer.
+            assert_eq!(
+                d.free_bytes.is_some(),
+                d.total_bytes.is_some(),
+                "{} reported one figure without the other",
+                d.root
+            );
+            if let (Some(free), Some(total)) = (d.free_bytes, d.total_bytes) {
+                assert!(total > 0, "{} says it has no size at all", d.root);
+                assert!(free <= total, "{} says more is free than exists", d.root);
+            }
+        }
     }
 }
