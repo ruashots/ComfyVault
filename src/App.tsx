@@ -1,7 +1,8 @@
 import { Match, Show, Switch, onCleanup, onMount } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { Rail, Titlebar, Toaster } from "~/components/Shell";
+import { Boundary } from "~/components/Boundary";
+import { NAV, Rail, Titlebar, Toaster } from "~/components/Shell";
 import { ConfirmModalView } from "~/modals/confirm";
 import { PickerModalView } from "~/modals/picker";
 import { CleanupScreen } from "~/screens/Cleanup";
@@ -49,6 +50,7 @@ export function App() {
         <div class="main">
           <Show when={app.ready()} fallback={<Starting />}>
             <Show when={!app.failure()} fallback={<Unreachable />}>
+              <Boundary where={screenTitle(app.screen())}>
               <Switch fallback={<HomeScreen />}>
                 <Match when={app.screen() === "home"}>
                   <HomeScreen />
@@ -69,6 +71,7 @@ export function App() {
                   <SettingsScreen />
                 </Match>
               </Switch>
+              </Boundary>
             </Show>
           </Show>
         </div>
@@ -78,6 +81,11 @@ export function App() {
       <Toaster />
     </div>
   );
+}
+
+/** The name the rail gives a screen, for when that screen cannot draw itself. */
+function screenTitle(screen: string): string {
+  return NAV.find((item) => item.key === screen)?.title ?? "This screen";
 }
 
 /** The half second before the engine has answered. */

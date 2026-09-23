@@ -621,6 +621,20 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   word-break:break-all;line-height:1.45;
 }
 
+/* a panel that could not draw itself */
+.bnd{
+  border:1px solid color-mix(in srgb,var(--red) 40%,transparent);
+  background:rgba(220,58,31,.05);border-radius:var(--r2);
+  padding:11px 12px;margin-top:9px;
+}
+.bnd h4{
+  font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;color:var(--red-br);
+  margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.bnd p{font-size:10.5px;line-height:1.6;color:var(--t-body)}
+.bnd .readout{margin-top:8px}
+.bnd .btn{margin-top:9px}
+
 /* toast */
 .toast{
   position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:40;

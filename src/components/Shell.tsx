@@ -44,7 +44,7 @@ export function Titlebar() {
   );
 }
 
-const NAV: ReadonlyArray<{ key: Screen; icon: IconName; title: string }> = [
+export const NAV: ReadonlyArray<{ key: Screen; icon: IconName; title: string }> = [
   { key: "home", icon: "home", title: "Home" },
   { key: "library", icon: "library", title: "Library" },
   { key: "consolidate", icon: "consolidate", title: "Consolidate" },
