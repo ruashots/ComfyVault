@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import {
+  detailOf,
   messageOf,
   useApp,
   type AppStore,
@@ -25,6 +26,7 @@ export function openConfirm(
     action: options.action,
     running: false,
     error: null,
+    errorDetail: [],
   });
 }
 
@@ -46,6 +48,7 @@ export function ConfirmModalView() {
       if (m.kind === "confirm") {
         m.running = true;
         m.error = null;
+        m.errorDetail = [];
       }
     });
     try {
@@ -57,6 +60,7 @@ export function ConfirmModalView() {
         if (m.kind === "confirm") {
           m.running = false;
           m.error = messageOf(error);
+          m.errorDetail = detailOf(error);
         }
       });
     }
@@ -113,6 +117,13 @@ export function ConfirmModalView() {
                       That did not happen
                     </h4>
                     <p>{message()}</p>
+                    <Show when={current().errorDetail.length > 0}>
+                      <ul class="paths">
+                        <For each={current().errorDetail}>
+                          {(line) => <li>{line}</li>}
+                        </For>
+                      </ul>
+                    </Show>
                   </div>
                 )}
               </Show>

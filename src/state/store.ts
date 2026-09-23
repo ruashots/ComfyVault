@@ -126,6 +126,8 @@ export interface ConfirmModal {
   action: () => Promise<void> | void;
   running: boolean;
   error: string | null;
+  /** What the engine named as being in the way. One entry per line. */
+  errorDetail: readonly string[];
 }
 
 export type Modal = PickerModal | ConfirmModal;
@@ -219,6 +221,19 @@ export function messageOf(error: unknown): string {
   if (isVaultError(error)) return error.message;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/**
+ * The lines an engine refusal carries beyond its sentence. A refusal that names
+ * the paths in the way is the difference between knowing what happened and
+ * knowing what to do about it, so the interface never drops them.
+ */
+export function detailOf(error: unknown): readonly string[] {
+  if (!isVaultError(error) || !error.detail) return [];
+  return error.detail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 export function createAppStore(engine: Engine): AppStore {

@@ -614,6 +614,12 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .verdict.ok h4{color:var(--green-br)} .verdict.no h4{color:var(--red-br)}
 .verdict.wait h4{color:var(--t-label)}
 .verdict p + p{margin-top:8px}
+/* the paths an engine refusal names as being in the way */
+.verdict .paths{margin-top:7px;display:flex;flex-direction:column;gap:3px;list-style:none}
+.verdict .paths li{
+  font-family:var(--mono);font-size:9.5px;color:var(--t-dim);
+  word-break:break-all;line-height:1.45;
+}
 
 /* toast */
 .toast{
