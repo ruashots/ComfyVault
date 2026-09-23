@@ -909,9 +909,25 @@ pub async fn create_directory(args: CreateDirectoryArgs) -> Reply<CreatedDirecto
         if let Some(name) = path.file_name() {
             comfyvault_core::paths::validate_file_name(&name.to_string_lossy())?;
         }
+
+        // One folder, inside a folder the picker is already showing. Without
+        // this, create_dir_all builds a whole tree at any path on the machine,
+        // which is the half of the classic pairing that turns one rendering
+        // mistake into a machine-wide problem.
+        let parent = path
+            .parent()
+            .ok_or_else(|| VaultError::invalid("Choose where the new folder should go."))?;
+        if !parent.is_dir() {
+            return Err(VaultError::new(
+                ErrorCode::NotFound,
+                "That folder's parent does not exist, so the folder was not created. Browse to where it should go first.",
+            )
+            .with_path(parent));
+        }
+
         let existed = path.is_dir();
         if !existed {
-            std::fs::create_dir_all(&path)
+            std::fs::create_dir(&path)
                 .map_err(|e| VaultError::from_io(&e, &path, "creating the folder"))?;
         }
         Ok(CreatedDirectory {

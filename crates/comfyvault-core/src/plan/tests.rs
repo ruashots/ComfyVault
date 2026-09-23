@@ -620,11 +620,11 @@ fn every_block_reason_has_a_sentence_a_person_can_read() {
 #[test]
 fn an_adjusted_name_keeps_the_extension_and_is_stable() {
     let sha = "3F9A2C17".to_string() + &"0".repeat(56);
-    assert_eq!(adjusted_name("lora1.safetensors", &sha), "lora1__3F9A2C17.safetensors");
-    assert_eq!(adjusted_name("a.b.ckpt", &sha), "a.b__3F9A2C17.ckpt");
-    assert_eq!(adjusted_name("noext", &sha), "noext__3F9A2C17");
+    assert_eq!(adjusted_name("lora1.safetensors", &sha, 8), "lora1__3F9A2C17.safetensors");
+    assert_eq!(adjusted_name("a.b.ckpt", &sha, 8), "a.b__3F9A2C17.ckpt");
+    assert_eq!(adjusted_name("noext", &sha, 8), "noext__3F9A2C17");
     // A dotfile has no stem, so the whole name is kept and the tag appended.
-    assert_eq!(adjusted_name(".hidden", &sha), ".hidden__3F9A2C17");
+    assert_eq!(adjusted_name(".hidden", &sha, 8), ".hidden__3F9A2C17");
 }
 
 #[test]

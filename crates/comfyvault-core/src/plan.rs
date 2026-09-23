@@ -337,7 +337,22 @@ impl<'a> Planner<'a> {
             let key = (category.clone(), source_name.to_lowercase());
             let (vault_name, adjusted, clashes_with) = match taken_names.get(&key) {
                 Some(owner) if owner != sha => {
-                    (adjusted_name(&source_name, sha), true, Some(owner.clone()))
+                    // Widen the hash fragment until the adjusted name is free
+                    // too. Claiming a name another content owns would only
+                    // fail later, at the write, after the person read a plan
+                    // that said it would work.
+                    let mut width = 8;
+                    let mut candidate = adjusted_name(&source_name, sha, width);
+                    while width < 64
+                        && taken_names
+                            .get(&(category.clone(), candidate.to_lowercase()))
+                            .map(|o| o != sha)
+                            .unwrap_or(false)
+                    {
+                        width += 4;
+                        candidate = adjusted_name(&source_name, sha, width);
+                    }
+                    (candidate, true, Some(owner.clone()))
                 }
                 _ => (source_name.clone(), false, None),
             };
@@ -594,8 +609,9 @@ fn file_name_of(p: &Path) -> String {
 /// `lora1.safetensors` becomes `lora1__3F9A2C17.safetensors`.
 ///
 /// The hash fragment makes the name unique without hiding what the file is.
-fn adjusted_name(name: &str, sha256: &str) -> String {
-    let short: String = sha256.chars().take(8).collect();
+/// `width` grows only when the short form is itself taken.
+fn adjusted_name(name: &str, sha256: &str, width: usize) -> String {
+    let short: String = sha256.chars().take(width).collect();
     match name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}__{short}.{ext}"),
         _ => format!("{name}__{short}"),

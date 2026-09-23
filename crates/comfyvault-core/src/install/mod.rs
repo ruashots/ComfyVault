@@ -112,9 +112,23 @@ impl Install {
     ///
     /// A link outside these folders would be invisible to ComfyUI, so the
     /// engine refuses to create one there.
+    ///
+    /// An extra path wide enough to contain the install itself is dropped. A
+    /// line like `base_path: C:\ComfyUI` with `loras: .` makes the whole
+    /// install a declared model folder, and `custom_nodes` is then inside the
+    /// boundary. ComfyUI imports `custom_nodes/<pack>/__init__.py` at startup,
+    /// so a link written there is a link the engine put on the import path. An
+    /// extra path is a model folder; a folder that contains the whole install
+    /// is not one.
     pub fn link_boundaries(&self) -> Vec<PathBuf> {
+        let custom_nodes = self.custom_nodes_dir();
         let mut out = vec![self.models_dir.clone()];
-        out.extend(self.extra_paths.iter().map(|e| e.path.clone()));
+        out.extend(
+            self.extra_paths
+                .iter()
+                .map(|e| e.path.clone())
+                .filter(|p| !custom_nodes.starts_with(p) && !self.root.starts_with(p)),
+        );
         out.extend(self.output_model_dirs.iter().map(|o| o.path.clone()));
         out
     }

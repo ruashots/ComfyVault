@@ -263,6 +263,13 @@ impl<'a> Applier<'a> {
             match self.apply_group(&mut run, group, &installs, req.verify.into(), cancel, sink, index, groups.len()) {
                 Ok(()) => run.groups_applied += 1,
                 Err(e) => {
+                    // A group stopped because the person pressed cancel did
+                    // not fail. Recording it as a failure tells them something
+                    // went wrong when they are the one who stopped it.
+                    if e.code == ErrorCode::Cancelled {
+                        cancelled = true;
+                        break;
+                    }
                     let reason = block_reason_for(&e);
                     run.failures.push(ApplyFailure {
                         group_id: group.group_id.clone(),
@@ -270,10 +277,6 @@ impl<'a> Applier<'a> {
                         reason,
                         detail: e.message.clone(),
                     });
-                    if e.code == ErrorCode::Cancelled {
-                        cancelled = true;
-                        break;
-                    }
                     if req.stop_on_error {
                         break;
                     }
@@ -496,8 +499,20 @@ impl<'a> Applier<'a> {
 
         if let Err(e) = outcome {
             // Undo this group, so the disk looks the way it did before it
-            // started. Any failure to undo is reported with the original cause.
-            self.undo_entries(&mut done, cancel)?;
+            // started. If the undo itself fails, the person needs both: what
+            // went wrong, and the fact that putting it back also went wrong.
+            // Reporting only the second leaves them without the cause.
+            if let Err(undo_failed) = self.undo_entries(&mut done, cancel) {
+                return Err(VaultError::new(
+                    undo_failed.code,
+                    format!("{} {}", e.message, undo_failed.message),
+                )
+                .with_detail(format!(
+                    "what went wrong: {}; putting it back also failed: {}",
+                    e.detail.clone().unwrap_or_else(|| e.message.clone()),
+                    undo_failed.detail.unwrap_or(undo_failed.message)
+                )));
+            }
             return Err(e);
         }
 
@@ -518,13 +533,31 @@ impl<'a> Applier<'a> {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // Merged, not replaced. A later apply touching a content the vault
+        // already holds would otherwise drop names recorded earlier, while the
+        // links for those names stay on disk: the vault screen stops showing a
+        // name the model is still known by, and the health check calls that
+        // link a stray file.
+        let existing = self.store.vault_file(&group.sha256)?;
+        let mut aliases = existing
+            .as_ref()
+            .map(|e| e.aliases.clone())
+            .unwrap_or_default();
+        for a in &group.vault_aliases {
+            if !aliases.iter().any(|x| x.eq_ignore_ascii_case(a)) {
+                aliases.push(a.clone());
+            }
+        }
+        aliases.retain(|a| !a.eq_ignore_ascii_case(&canonical_name));
+        aliases.sort();
+
         self.store.put_vault_file(&VaultFileRecord {
             sha256: group.sha256.clone(),
             canonical_name,
             category: group.category.clone(),
             size_bytes: group.size_bytes,
-            added_at: Timestamp::now(),
-            aliases: group.vault_aliases.clone(),
+            added_at: existing.map(|e| e.added_at).unwrap_or_else(Timestamp::now),
+            aliases,
         })?;
 
         let record_link = |install_id: &str, abs: &Path, name: &str| -> Result<()> {
@@ -721,6 +754,13 @@ impl<'a> Applier<'a> {
             .filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending))
             .collect();
 
+        // The contract promises this and nothing implemented it. Renaming a
+        // model in the vault, or a later run touching the same files, leaves
+        // this run's steps describing a world that no longer exists. Undoing
+        // them anyway reported success while leaving the tree consolidated,
+        // and left a live link the database knew nothing about.
+        self.check_nothing_later_depends_on(apply_id, &to_undo)?;
+
         // Undoing needs room on the install's drive for every duplicate that
         // has to be copied back out of the vault. Checked first, so a revert
         // does not stop halfway for lack of space.
@@ -783,6 +823,65 @@ impl<'a> Applier<'a> {
             eta_ms: None,
         });
         Ok(record)
+    }
+
+    /// Refuses a revert when a later operation touched the paths this run
+    /// created.
+    fn check_nothing_later_depends_on(
+        &self,
+        apply_id: &str,
+        to_undo: &[JournalEntry],
+    ) -> Result<()> {
+        let mine: std::collections::HashSet<PathBuf> = to_undo
+            .iter()
+            .flat_map(|e| match &e.step {
+                JournalStep::MoveToVault { to, .. } => vec![to.clone()],
+                JournalStep::CreateLink { link, target } => vec![link.clone(), target.clone()],
+                JournalStep::DeleteStash { vault_path, .. } => vec![vault_path.clone()],
+                _ => Vec::new(),
+            })
+            .collect();
+
+        let started = self
+            .store
+            .apply(apply_id)?
+            .map(|r| r.started_at)
+            .unwrap_or_default();
+
+        let mut conflicts: Vec<String> = Vec::new();
+        for other in self.store.journal_ids()? {
+            if other == apply_id {
+                continue;
+            }
+            // A later apply, or any in-vault rename, which has no apply record.
+            let later = match self.store.apply(&other)? {
+                Some(r) => r.started_at >= started && r.state != ApplyState::Reverted,
+                None => true,
+            };
+            if !later {
+                continue;
+            }
+            for e in self.store.journal(&other)? {
+                if e.state == JournalState::Reverted {
+                    continue;
+                }
+                if let Some(p) = step_path_touched(&e.step) {
+                    if mine.contains(&p) {
+                        conflicts.push(crate::paths::display_path(&p));
+                    }
+                }
+            }
+        }
+
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+        conflicts.sort();
+        conflicts.dedup();
+        Err(VaultError::conflict(
+            "Something done after this run still uses these files, so it was not undone. Undo the later change first.",
+        )
+        .with_detail(conflicts.join(", ")))
     }
 
     /// A revert copies removed duplicates back out of the vault, so it needs
@@ -1025,6 +1124,16 @@ impl<'a> Applier<'a> {
 
 fn short_id(apply_id: &str) -> String {
     apply_id.chars().filter(|c| c.is_alphanumeric()).take(8).collect()
+}
+
+/// The path a step created or acted on, for the dependency check.
+fn step_path_touched(step: &JournalStep) -> Option<PathBuf> {
+    match step {
+        JournalStep::MoveToVault { to, .. } => Some(to.clone()),
+        JournalStep::CreateLink { link, .. } => Some(link.clone()),
+        JournalStep::RemoveLink { link, .. } => Some(link.clone()),
+        _ => None,
+    }
 }
 
 fn step_path(step: &JournalStep) -> Option<PathBuf> {

@@ -1344,3 +1344,89 @@ fn the_default_is_to_check() {
         "a fresh vault must prove a duplicate before deleting it"
     );
 }
+
+// ---------------------------------------------------------------------------
+// An undo must refuse when something later depends on the run.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn undoing_a_run_after_the_model_was_renamed_in_the_vault_is_refused() {
+    // Contract 6.8 promises this and nothing implemented it. Without it the
+    // undo reported success, left install A holding a live link, and deleted
+    // the database rows for both, so the vault screen showed nothing while an
+    // install was still loading that model through the link.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/x.safetensors", &weights("same"));
+    w.write_model(&b, "models/loras/y.safetensors", &weights("same"));
+
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    run_apply(&w, &plan);
+
+    // The person uses the vault screen to keep the other name.
+    crate::vault::Vault::new(&w.store, &w.platform)
+        .set_canonical_name(&weights_hash("same"), "y.safetensors")
+        .unwrap();
+
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(
+        err.detail.unwrap().contains("x.safetensors"),
+        "the person has to be told which files are in the way"
+    );
+
+    // And nothing was half undone: both installs still read their model.
+    for (install, name) in [(&a, "x.safetensors"), (&b, "y.safetensors")] {
+        let p = install.root.join(format!("models/loras/{name}"));
+        assert!(w.is_link(&p));
+        assert_eq!(w.read(&p), weights("same"));
+    }
+}
+
+#[test]
+fn an_unrelated_later_run_does_not_block_an_undo() {
+    // The control. A check this broad would be useless if it refused every
+    // undo as soon as a second consolidation had ever happened.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    for tag in ["first", "second"] {
+        w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+    }
+    let plan = w.plan(&[a.clone(), b.clone()]);
+
+    let one = |id: &str, tag: &str| {
+        applier(&w)
+            .apply(
+                id,
+                &plan,
+                &ApplyRequest {
+                    plan_id: plan.plan_id.clone(),
+                    group_ids: vec![group_for(&plan, tag).group_id.clone()],
+                    verify: VerifyModeArg::SizeAndMtime,
+                    stop_on_error: false,
+                },
+                &CancelToken::new(),
+                &NullSink,
+            )
+            .unwrap()
+    };
+    one("ap-first", "first");
+    one("ap-second", "second");
+
+    applier(&w)
+        .revert("ap-first", &CancelToken::new(), &NullSink)
+        .expect("an unrelated later run must not block this undo");
+
+    // The first is back, the second is untouched.
+    for install in [&a, &b] {
+        let p = install.root.join("models/loras/first.safetensors");
+        assert!(!w.is_link(&p));
+        assert_eq!(std::fs::read(&p).unwrap(), weights("first"));
+
+        let still = install.root.join("models/loras/second.safetensors");
+        assert!(w.is_link(&still), "the other run must stay applied");
+    }
+}

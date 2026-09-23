@@ -198,8 +198,21 @@ type Settings = {
   followExtraModelPaths: boolean    // default true
   scanOutputModelDirs: boolean      // default true
   huggingFaceCacheDirs: string[] | null   // default null
+  verifyBeforeDelete: boolean             // default true
 }
 ```
+
+`verifyBeforeDelete` reads a duplicate's bytes again, immediately before
+deleting it, and compares them against the copy being kept.
+
+Leave it on. Deleting is the one thing this app does that cannot be undone, and
+without it the proof that two files are identical is a hash from an earlier
+scan, which may itself have come from a cache row rather than from the file. A
+drive with coarse timestamps, which external model drives often have, can hide
+a difference from the size and the time alone.
+
+Turning it off makes a consolidation faster and makes the delete a matter of
+trust rather than proof.
 
 `huggingFaceCacheDirs` says where the Hugging Face libraries keep their
 downloaded models. `null` means work it out from the environment, which is what
@@ -762,6 +775,7 @@ type BlockReason =
   | 'vaultInsideInstall'
   | 'targetExistsNotLink'   // something already sits at the vault path
   | 'notEnoughSpace'
+  | 'unsafeVaultPath'      // the folder name would put it outside the vault
   | 'readError'
 ```
 
@@ -795,6 +809,10 @@ Errors: `vaultBusy`, `notFound`, `symlinkUnsupported`, `notInitialized`.
 
 `groupIds` must be explicit. The engine never applies a group the caller did
 not name. To apply everything, send every group identifier.
+
+The engine stores the list. `resume_apply` finishes only those groups, never
+the rest of the plan. A run recorded by an older build has no stored list, and
+then a resume does nothing.
 
 ### 6.2 What Apply guarantees
 
@@ -885,9 +903,12 @@ type ApplyFailure = {
 
 Arguments: `{ applyId: string }`. Returns `{ cancelled: true }`.
 
-The engine finishes the group it is working on, then stops. It does not
-interrupt a group. The result reports `cancelled`. Everything already applied
-stays applied, and stays revertible.
+The engine stops as soon as it can. A group that was part way through is undone
+first, so a group is still all or nothing. Everything already applied stays
+applied, and stays revertible.
+
+A group stopped by a cancel is **not** reported as a failure. The person
+stopped it, so `failures` stays empty and `state` is `cancelled`.
 
 ### 6.6 `get_apply_result` and `list_applies`
 
@@ -930,7 +951,13 @@ the engine copies them back from the vault, because the content is identical by
 hash. A revert therefore needs free space on the install volume. The engine
 checks that space first, and rejects with `notEnoughSpace` if it is short.
 
-`revert_apply` rejects with `conflict` when a later apply depends on the run.
+`revert_apply` rejects with `conflict` when anything done later still uses the
+files this run created. Renaming a model in the vault with
+`set_canonical_name` is the common case. `detail` lists the paths in the way.
+Undo the later change first.
+
+A resumed run is undone as one run. Resuming continues the same journal rather
+than starting a new one, so the whole of it comes back.
 
 ---
 

@@ -93,6 +93,18 @@ impl<'a> Links<'a> {
         };
         crate::paths::validate_file_name(&name)?;
 
+        // A link this engine creates is always a model file. Without this, a
+        // caller can name one `__init__.py`, and ComfyUI imports that at
+        // startup, so the engine would be putting a file of someone's choosing
+        // on the import path. Nothing legitimate is lost by requiring it.
+        let settings = self.store.settings()?;
+        if !settings.matches_extension(&name) {
+            return Err(VaultError::invalid(format!(
+                "A model file has to end in one of {}. Nothing was created.",
+                settings.scan_extensions.join(", ")
+            )));
+        }
+
         let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
         let link_path = target_dir.join(&name);
 
@@ -209,9 +221,14 @@ impl<'a> Links<'a> {
             .install(install_id)?
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?;
 
+        // Only the folders a link may actually be written to. Offering a
+        // folder the engine would then refuse is a worse experience than not
+        // offering it, and offering one it would accept but should not is
+        // worse still.
+        let boundaries = install.link_boundaries();
         let mut out = Vec::new();
         for root in install.scan_roots(true, true) {
-            if !root.path.is_dir() {
+            if !root.path.is_dir() || !boundaries.iter().any(|b| root.path.starts_with(b)) {
                 continue;
             }
             let rel = root
@@ -776,6 +793,105 @@ mod tests {
 
         let ckpt = models.children.iter().find(|c| c.rel_path.ends_with("checkpoints")).unwrap();
         assert_eq!(ckpt.file_count, 1);
+    }
+
+    #[test]
+    fn an_extra_model_path_cannot_widen_the_boundary_to_the_whole_install() {
+        // A line like `base_path: C:\ComfyUI` with `loras: .` makes the whole
+        // install a declared model folder. custom_nodes is then inside the
+        // boundary, and ComfyUI imports custom_nodes/<pack>/__init__.py at
+        // startup, so a link written there is on the import path.
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let i = w.add_extra_model_path(&i, "loras", &i.root.clone());
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+
+        assert!(
+            !i.link_boundaries().contains(&i.root),
+            "the install root is not a model folder: {:?}",
+            i.link_boundaries()
+        );
+
+        let err = links(&w)
+            .create(&CreateLinkRequest {
+                install_id: i.id.clone(),
+                sha256: sha,
+                relative_dir: "custom_nodes/EvilPack".into(),
+                link_name: Some("lora1.safetensors".into()),
+                create_dir: true,
+            })
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+        assert!(!i.root.join("custom_nodes/EvilPack/lora1.safetensors").exists());
+    }
+
+    #[test]
+    fn a_link_name_has_to_be_a_model_file() {
+        // The second layer, independent of the boundary. A link this engine
+        // creates is always a model, so a name ComfyUI would import instead is
+        // refused whatever folder it was aimed at.
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+
+        for bad in ["__init__.py", "evil.dll", "run.bat", "notes.txt"] {
+            let err = links(&w)
+                .create(&CreateLinkRequest {
+                    install_id: i.id.clone(),
+                    sha256: sha.clone(),
+                    relative_dir: "models/loras".into(),
+                    link_name: Some(bad.into()),
+                    create_dir: true,
+                })
+                .unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidArgument, "{bad} was allowed");
+            assert!(!i.root.join("models/loras").join(bad).exists());
+        }
+
+        // The control, so this cannot pass by refusing everything.
+        assert!(links(&w)
+            .create(&CreateLinkRequest {
+                install_id: i.id,
+                sha256: sha,
+                relative_dir: "models/loras".into(),
+                link_name: Some("renamed.safetensors".into()),
+                create_dir: true,
+            })
+            .is_ok());
+    }
+
+    #[test]
+    fn the_folder_picker_never_offers_a_folder_a_link_cannot_go_in() {
+        // The person picks a folder the product showed them. Offering one the
+        // engine would refuse is bad; offering one it would accept but should
+        // not is worse.
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        std::fs::create_dir_all(i.root.join("custom_nodes/SomePack")).unwrap();
+        let i = w.add_extra_model_path(&i, "loras", &i.root.clone());
+
+        let offered = links(&w).model_dirs(&i.id).unwrap();
+        fn every_path(nodes: &[ModelDirNode], out: &mut Vec<PathBuf>) {
+            for n in nodes {
+                out.push(n.abs_path.clone());
+                every_path(&n.children, out);
+            }
+        }
+        let mut paths = Vec::new();
+        every_path(&offered, &mut paths);
+
+        assert!(!paths.is_empty(), "the picker offered nothing at all");
+        let boundaries = i.link_boundaries();
+        for p in &paths {
+            assert!(
+                boundaries.iter().any(|b| p.starts_with(b)),
+                "the picker offered {p:?}, which is outside every boundary"
+            );
+        }
+        assert!(
+            !paths.iter().any(|p| p.starts_with(i.root.join("custom_nodes"))),
+            "the picker offered custom_nodes"
+        );
     }
 
     #[test]

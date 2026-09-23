@@ -530,6 +530,25 @@ impl Store {
         self.append_journal(e)
     }
 
+    /// Every run that has journal entries, including the `rename-*` runs the
+    /// vault screen writes. A revert needs this to find out whether anything
+    /// later depends on the run being undone.
+    pub fn journal_ids(&self) -> Result<Vec<String>> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(JOURNAL)?;
+        let mut out: Vec<String> = Vec::new();
+        for row in t.iter()? {
+            let (k, _) = row?;
+            if let Some((id, _)) = k.value().split_once(SEP) {
+                if out.last().map(|l| l != id).unwrap_or(true) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+        out.dedup();
+        Ok(out)
+    }
+
     pub fn journal(&self, apply_id: &str) -> Result<Vec<JournalEntry>> {
         self.list_prefix(JOURNAL, &format!("{apply_id}{SEP}"))
     }

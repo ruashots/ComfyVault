@@ -200,10 +200,24 @@ fn convert(v: &ApiVersion, sha256: &str, ambiguous: bool) -> ModelMetadata {
             .map(|m| format!("{DEFAULT_BASE_URL}/models/{m}?modelVersionId={}", v.id)),
         download_url: file
             .and_then(|f| f.download_url.clone())
-            .or_else(|| v.download_url.clone()),
+            .or_else(|| v.download_url.clone())
+            .and_then(|u| safe_download_url(&u)),
         preview_image_urls: v.images.iter().filter_map(|i| i.url.clone()).collect(),
         ambiguous,
     }
+}
+
+/// Keeps a download address only when it really points at Civitai over HTTPS.
+///
+/// The value arrives from the network and crosses to the interface, where one
+/// day something will hand it to the operating system to open. A compromised
+/// or hostile response would then choose the address. Checking it here costs
+/// one function and closes it before anyone wires that button.
+fn safe_download_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?.split('@').next_back()?;
+    let host = host.split(':').next()?.to_lowercase();
+    (host == "civitai.com" || host.ends_with(".civitai.com")).then(|| url.to_string())
 }
 
 /// Splits the trigger words into usable tokens.
@@ -278,3 +292,29 @@ pub struct ApiImage {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod url_tests {
+    use super::safe_download_url;
+
+    #[test]
+    fn only_a_real_civitai_address_over_https_survives() {
+        assert!(safe_download_url("https://civitai.com/api/download/models/1").is_some());
+        assert!(safe_download_url("https://cdn.civitai.com/x").is_some());
+
+        // Everything a hostile or compromised response might send instead.
+        for bad in [
+            "http://civitai.com/x",
+            "file:///C:/Windows/System32/calc.exe",
+            "https://evil.example/x",
+            "https://civitai.com.evil.example/x",
+            "https://evil.example/?civitai.com",
+            "https://user@evil.example/x",
+            "javascript:alert(1)",
+            "ms-msdt:/id",
+            "",
+        ] {
+            assert!(safe_download_url(bad).is_none(), "{bad} was accepted");
+        }
+    }
+}
