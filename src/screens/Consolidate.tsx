@@ -272,7 +272,7 @@ function DryRun() {
                                 faint: !group.vaultNameAdjusted,
                               }}
                             >
-                              {group.vaultRelPath.replace("/", "\\")}
+                              {group.vaultRelPath}
                             </span>
                           </span>
                         </div>
@@ -462,12 +462,14 @@ function DuplicateGroup(props: { group: PlanGroup }) {
                     <span class="amb">{link.linkName}</span>
                   </Show>
                 </span>
-                <span class="to">
+                <span class="to" classList={{ none: link.sharesBytesWithAnother }}>
                   {isSource()
                     ? props.group.vaultNameAdjusted
-                      ? `→ vault\\${props.group.vaultRelPath.replace("/", "\\")}`
+                      ? `→ vault\\${props.group.vaultRelPath}`
                       : `→ vault\\${props.group.category}\\`
-                    : `${fmt(props.group.sizeBytes)} back`}
+                    : link.sharesBytesWithAnother
+                      ? "frees nothing"
+                      : `${fmt(props.group.sizeBytes)} back`}
                 </span>
               </div>
             );
@@ -476,6 +478,10 @@ function DuplicateGroup(props: { group: PlanGroup }) {
       </div>
       <div class="grp-why">
         {chosenBecauseText(props.group, volume())}
+        <Show when={props.group.occurrences > props.group.distinctFiles}>
+          {" "}
+          &middot; {sharedNames(props.group)}
+        </Show>
         <Show when={props.group.crossVolume}>
           {" "}
           &middot; one copy is on another drive, so it is copied across and checked
@@ -484,6 +490,19 @@ function DuplicateGroup(props: { group: PlanGroup }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Why the figure counts fewer files than there are paths. Windows lets two
+ * names point at one set of bytes, and removing one of them returns nothing
+ * while the other name remains. Without this the total quietly disagrees with
+ * the paths listed right above it.
+ */
+function sharedNames(group: PlanGroup): string {
+  const extra = group.occurrences - group.distinctFiles;
+  return extra === 1
+    ? "one of these paths is a second name for a file already listed, so removing it returns no space"
+    : `${extra} of these paths are extra names for files already listed, so removing them returns no space`;
 }
 
 function BlockedRowView(props: { row: BlockedRow }) {

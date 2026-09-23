@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fmt } from "~/domain/format";
+import { fileNameOf } from "~/domain/view";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { ConsolidateScreen } from "~/screens/Consolidate";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
@@ -123,7 +124,7 @@ describe("the commit bar moves as rows are ticked and unticked", () => {
     const before = app.selection();
 
     const row = screen.getByRole("button", {
-      name: `Include ${biggest.vaultRelPath.split("/").pop()}`,
+      name: `Include ${fileNameOf(biggest.vaultRelPath)}`,
     });
     await userEvent.click(row);
     await waitFor(() => app.selection().moves === before.moves - 1);
@@ -139,7 +140,7 @@ describe("the commit bar moves as rows are ticked and unticked", () => {
     const biggest = app.planView()!.duplicates[0]!;
     const before = app.selection().bytes;
     const row = screen.getByRole("button", {
-      name: `Include ${biggest.vaultRelPath.split("/").pop()}`,
+      name: `Include ${fileNameOf(biggest.vaultRelPath)}`,
     });
     await userEvent.click(row);
     await waitFor(() => app.selection().bytes !== before);
@@ -210,6 +211,34 @@ describe("the report says what is holding Apply back", () => {
         expect(link.absPath).not.toBe(escaped.absPath);
       }
     }
+  });
+
+  it("says why a path frees nothing when it is a second name for one file", async () => {
+    const { app } = await mount(clearMachine);
+    await waitFor(() => app.gate().can);
+    const group = app
+      .plan()!
+      .groups.find((g) => g.links.some((l) => l.sharesBytesWithAnother))!;
+    expect(group, "the fixture must hold this case").toBeDefined();
+
+    // The row itself says it, not some heading elsewhere on the screen, so
+    // the total never quietly disagrees with the paths listed above it.
+    const row = [...document.querySelectorAll(".grp")].find((el) =>
+      el.textContent?.includes(fileNameOf(group.vaultRelPath)),
+    )!;
+    expect(row, "the group must be on screen").toBeDefined();
+    const frees = [...row.querySelectorAll(".cp .to")].map((el) => el.textContent);
+    expect(frees.filter((t) => t === "frees nothing")).toHaveLength(
+      group.occurrences - group.distinctFiles,
+    );
+    expect(row.querySelector(".grp-why")!.textContent).toContain(
+      "is a second name for a file already listed",
+    );
+    expect(row.querySelector(".grp-why")!.textContent).toContain("returns no space");
+    // And no engine token reaches the glass.
+    const screenText = document.body.textContent ?? "";
+    expect(screenText).not.toContain("sharesBytesWithAnother");
+    expect(screenText).not.toContain("distinctFiles");
   });
 
   it("does not repeat the links-are-off message once per file", async () => {

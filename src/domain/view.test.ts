@@ -58,13 +58,29 @@ describe("the plan the screen shows", () => {
     );
   });
 
-  it("frees one file's size for every copy after the first", async () => {
+  it("frees one file's size for every real file after the first", async () => {
     const { plan } = await readyPlan();
     for (const group of plan.groups) {
+      // Real files, not paths. Two names for one file free nothing.
       expect(group.bytesFreed, group.vaultRelPath).toBe(
-        (group.occurrences - 1) * group.sizeBytes,
+        (group.distinctFiles - 1) * group.sizeBytes,
       );
       expect(group.singleCopy).toBe(group.occurrences === 1);
+      expect(group.distinctFiles).toBeLessThanOrEqual(group.occurrences);
+    }
+  });
+
+  it("counts a second name for one file as one file, not two", async () => {
+    const { plan } = await readyPlan();
+    const shared = plan.groups.filter((g) =>
+      g.links.some((l) => l.sharesBytesWithAnother),
+    );
+    expect(shared.length, "the fixture must hold this case").toBeGreaterThan(0);
+    for (const group of shared) {
+      const extraNames = group.links.filter((l) => l.sharesBytesWithAnother).length;
+      expect(group.distinctFiles).toBe(group.occurrences - extraNames);
+      // Every path still gets a link. Only the space they return differs.
+      expect(group.links).toHaveLength(group.occurrences);
     }
   });
 
@@ -179,9 +195,11 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
     sha256: "A".repeat(64),
     sizeBytes: 100,
     category: "loras",
-    vaultRelPath: "loras/x.safetensors",
+    vaultRelPath: "loras\\x.safetensors",
     vaultNameAdjusted: false,
     clashesWith: null,
+    vaultAliases: [],
+    distinctFiles: 2,
     source: {
       installId: "a",
       installLabel: "Production",
@@ -189,6 +207,8 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
       relPath: "models\\loras\\x.safetensors",
       sameVolumeAsVault: true,
       chosenBecause: "sameVolume",
+      sizeBytes: 100,
+      mtimeNanos: "1757491200000000000",
       ...over.source,
     },
     links: [],
@@ -267,7 +287,7 @@ describe("every place one content is reachable from", () => {
       vaultRelPath: group.vaultRelPath,
       createdAt: "2026-09-20T00:00:00.000Z",
       createdBy: "apply" as const,
-      state: "ok" as const,
+      applyId: null,
     };
     const places = placesOf(group.sha256, plan, [asLink], new Map());
     expect(new Set(places.map((p) => p.absPath)).size).toBe(places.length);
