@@ -175,6 +175,8 @@ export class FixtureEngine implements Engine {
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private applyTimer: ReturnType<typeof setInterval> | null = null;
   private applyCancelling = false;
+  /** Vault files this run created that were renamed after it finished. */
+  private renamedSinceApply = new Set<string>();
 
   private scanProgressEvent = new Emitter<ScanProgress>();
   private scanDoneEvent = new Emitter<ScanResult>();
@@ -287,7 +289,6 @@ export class FixtureEngine implements Engine {
   async getSettings(): Promise<Settings> {
     return {
       metadataLookupsEnabled: this.world.metadataLookupsEnabled,
-      civitaiApiKey: null,
       hashCacheEnabled: true,
       scanExtensions: [
         ".safetensors", ".ckpt", ".pt", ".pth", ".bin",
@@ -296,12 +297,17 @@ export class FixtureEngine implements Engine {
       minFileSizeBytes: 1048576,
       followExtraModelPaths: true,
       scanOutputModelDirs: true,
+      huggingFaceCacheDirs: null,
+      verifyBeforeDelete: this.world.verifyBeforeDelete,
     };
   }
 
   async updateSettings(patch: Partial<Settings>): Promise<Settings> {
     if (patch.metadataLookupsEnabled !== undefined) {
       this.world.metadataLookupsEnabled = patch.metadataLookupsEnabled;
+    }
+    if (patch.verifyBeforeDelete !== undefined) {
+      this.world.verifyBeforeDelete = patch.verifyBeforeDelete;
     }
     return this.getSettings();
   }
@@ -602,6 +608,7 @@ export class FixtureEngine implements Engine {
     this.busy = { kind: "apply", id: applyId };
     this.applyCancelling = false;
     this.worldBeforeApply = cloneWorld(this.world);
+    this.renamedSinceApply.clear();
     const freeBefore = this.world.freeBytes;
 
     const bytesToMove = groups.reduce((s, g) => s + g.sizeBytes, 0);
@@ -612,9 +619,15 @@ export class FixtureEngine implements Engine {
 
     this.applyTimer = setInterval(() => {
       const elapsed = Date.now() - started;
-      const span = this.applyCancelling ? this.applyMs * 0.35 : this.applyMs;
-      const overall = Math.min(1, elapsed / span);
-      const upto = Math.min(groups.length, Math.floor(overall * groups.length));
+      // A cancel stops where the run is. The group it was part way through is
+      // undone, which here means it is simply never committed, and no group
+      // after it is started.
+      const overall = this.applyCancelling
+        ? 1
+        : Math.min(1, elapsed / this.applyMs);
+      const upto = this.applyCancelling
+        ? reached
+        : Math.min(groups.length, Math.floor(overall * groups.length));
 
       while (reached < upto) {
         const group = groups[reached]!;
@@ -639,21 +652,20 @@ export class FixtureEngine implements Engine {
         linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
         failures: changesAt >= 0 && reached > changesAt ? 1 : 0,
         elapsedMs: elapsed,
-        etaMs: Math.max(0, span - elapsed),
+        etaMs: Math.max(0, this.applyMs - elapsed),
       });
 
       if (overall >= 1) {
         this.stopApplyTimer();
         this.busy = null;
-        const failed = changesAt >= 0 ? groups[changesAt] : undefined;
+        // A group stopped by a cancel is rolled back, not failed. The person
+        // asked for it to stop, so there is nothing to report as gone wrong.
+        const cancelled = this.applyCancelling;
+        const failed = !cancelled && changesAt >= 0 ? groups[changesAt] : undefined;
         const result: ApplyResult = {
           applyId,
           planId: args.planId,
-          state: this.applyCancelling
-            ? "cancelled"
-            : failed
-              ? "completedWithErrors"
-              : "completed",
+          state: cancelled ? "cancelled" : failed ? "completedWithErrors" : "completed",
           startedAt: new Date(started).toISOString(),
           finishedAt: new Date().toISOString(),
           groupsRequested: groups.length,
@@ -767,8 +779,19 @@ export class FixtureEngine implements Engine {
   async revertApply(applyId: string): Promise<{ applyId: string }> {
     const before = this.worldBeforeApply;
     if (!before) throw error("conflict", "There is nothing to put back.");
+    if (this.renamedSinceApply.size > 0) {
+      const paths = vaultFilesOf(this.world)
+        .filter((f) => this.renamedSinceApply.has(f.sha256))
+        .map((f) => `${VAULT_ROOT}\\${f.vaultRelPath.replace(/\//g, "\\")}`);
+      throw error(
+        "conflict",
+        "Files this run created have been renamed since, so putting them back would lose the new names.",
+        paths.join("\n"),
+      );
+    }
     this.world = before;
     this.worldBeforeApply = null;
+    this.renamedSinceApply.clear();
     this.applies = this.applies.map((a) =>
       a.applyId === applyId ? { ...a, state: "reverted" as const, revertible: false } : a,
     );
@@ -922,6 +945,10 @@ export class FixtureEngine implements Engine {
   async setCanonicalName(sha256: string, name: string): Promise<VaultFile> {
     const entry = this.world.vault.get(sha256);
     if (!entry) throw error("notFound", "The vault does not hold that file.");
+    if (this.worldBeforeApply && !this.worldBeforeApply.vault.has(sha256)) {
+      // This run put the file in the vault and it has been renamed since.
+      this.renamedSinceApply.add(sha256);
+    }
     const names = [entry.canonicalName, ...entry.aliases];
     if (!names.includes(name)) names.push(name);
     entry.canonicalName = name;
@@ -1004,6 +1031,7 @@ export class FixtureEngine implements Engine {
       return names.map((name) => ({
         name,
         used: false,
+        searched: false,
         matches: [],
         method: NOTHING_SEARCHED,
       }));
@@ -1016,6 +1044,7 @@ export class FixtureEngine implements Engine {
       return {
         name,
         used: hits > 0,
+        searched: true,
         matches: Array.from({ length: Math.min(hits, 4) }, (_, i) => ({
           installId: "prod",
           installLabel: "Production",
@@ -1169,8 +1198,8 @@ function parentOf(path: string): string | null {
   return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
 }
 
-function error(code: VaultError["code"], message: string): VaultError {
-  return { code, message };
+function error(code: VaultError["code"], message: string, detail?: string): VaultError {
+  return detail === undefined ? { code, message } : { code, message, detail };
 }
 
 function cloneWorld(world: World): World {

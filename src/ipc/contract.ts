@@ -69,12 +69,18 @@ export interface PlatformReport {
 export interface Settings {
   metadataLookupsEnabled: boolean;
   /** "***" when a key is stored, null when none is. Never the value. */
-  civitaiApiKey: string | null;
   hashCacheEnabled: boolean;
   scanExtensions: string[];
   minFileSizeBytes: number;
   followExtraModelPaths: boolean;
   scanOutputModelDirs: boolean;
+  huggingFaceCacheDirs: string[] | null;
+  /**
+   * Read a duplicate's bytes again, immediately before deleting it, and
+   * compare them against the copy being kept. On by default. Deleting is the
+   * one thing this app does that cannot be undone.
+   */
+  verifyBeforeDelete: boolean;
 }
 
 export interface AppState {
@@ -324,7 +330,9 @@ export type BlockReason =
   | "vaultInsideInstall"
   | "targetExistsNotLink"
   | "notEnoughSpace"
-  | "readError";
+  | "readError"
+  /** A folder name from extra_model_paths.yaml would put it outside the vault. */
+  | "unsafeVaultPath";
 
 export interface BlockedRow {
   absPath: string;
@@ -546,6 +554,12 @@ export interface UsageMatch {
 export interface UsageResult {
   name: string;
   used: boolean;
+  /**
+   * Were any saved workflow files searched at all? When this is false,
+   * `used: false` is not an answer about the model and must not be shown as
+   * one.
+   */
+  searched: boolean;
   matches: UsageMatch[];
   /**
    * One of exactly two sentences, saying what the check actually did. The
@@ -560,13 +574,10 @@ export interface UsageResult {
 
 /**
  * True when the engine had no saved workflow file to look in, so every "not
- * used" is "not checked".
- *
- * This reads the engine's own sentence, because the contract gives no flag for
- * it. comfyvault-core has been asked for one.
+ * used" is really "not checked".
  */
 export function nothingWasSearched(result: UsageResult): boolean {
-  return result.method.startsWith("No saved workflow files were found");
+  return !result.searched;
 }
 
 // ── metadata ────────────────────────────────────────────────────────────────

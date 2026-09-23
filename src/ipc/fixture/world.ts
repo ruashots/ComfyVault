@@ -49,7 +49,7 @@ type Row = [
   [string, string, string, string, string]?,
 ];
 
-/** A copy: "installId:folder" + optional " >nameUsedThere" + optional " !locked|denied|drive" */
+/** A copy: "installId:folder" + optional " >nameUsedThere" + optional " !locked|denied|drive|escaped" */
 const ROWS: Row[] = [
   ["wan2.1_i2v_720p_14B_fp8_scaled.safetensors","diffusion_models",16793,7,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan\\"]],
   ["wan2.1_i2v_480p_14B_fp8_scaled.safetensors","diffusion_models",16793,4,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan\\"]],
@@ -113,6 +113,7 @@ const ROWS: Row[] = [
   ["hunyuan_video_vae_bf16.safetensors","vae",505,3,["prod:models\\vae\\","norm:models\\vae\\"]],
   ["ltxv-vae-0.9.7.safetensors","vae",1649,5,["prod:models\\vae\\","norm:D:\\ai-models\\ltx\\ !drive"]],
   ["sdxl_vae.safetensors","vae",327,4,["prod:models\\vae\\","norm:models\\vae\\"]],
+  ["ltxv-spatial-upscaler-0.9.7.safetensors","checkpoints",2109,0,["norm:D:\\ai-models\\spare\\ !escaped"]],
   ["qwen_image_vae.safetensors","vae",249,6,["prod:models\\vae\\","norm:models\\vae\\qwen\\"]],
   ["vae-ft-mse-840000-ema-pruned.safetensors","vae",327,0,["prod:models\\vae\\","norm:models\\vae\\"]],
   ["Wan21_CausVid_14B_T2V_lora_rank32.safetensors","loras",1352,5,["prod:models\\loras\\awesomeloras\\","prod:models\\loras\\","norm:models\\loras\\newloras\\"]],
@@ -155,6 +156,7 @@ const ROWS: Row[] = [
 const BLOCK_FLAGS: Record<string, BlockReason> = {
   locked: "fileLocked",
   denied: "permissionDenied",
+  escaped: "unsafeVaultPath",
 };
 
 export interface Copy {
@@ -199,6 +201,7 @@ export interface World {
   metadataLookupsEnabled: boolean;
   /** Saved workflow files there are to search. Zero means nothing was searched. */
   workflowsOnDisk: number;
+  verifyBeforeDelete: boolean;
 }
 
 /** A stable stand-in for a real SHA-256, so identifiers never move. */
@@ -251,6 +254,14 @@ function buildInstalls(): Install[] {
           category: "checkpoints",
           rawCategory: "checkpoints",
           path: "D:\\ai-models\\ltx",
+          isDefault: false,
+          exists: true,
+        },
+        {
+          section: "comfyui",
+          category: "..\\..\\ESCAPED",
+          rawCategory: "..\\..\\ESCAPED",
+          path: "D:\\ai-models\\spare",
           isDefault: false,
           exists: true,
         },
@@ -352,6 +363,7 @@ export function buildWorld(): World {
     symlinksSupported: false,
     metadataLookupsEnabled: true,
     workflowsOnDisk: 42,
+    verifyBeforeDelete: true,
   };
 }
 
@@ -499,7 +511,10 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
         sizeBytes: content.bytes,
         sha256: content.sha256,
         reason: copy.blocked,
-        detail: `${copy.absPath} could not be prepared.`,
+        detail:
+          copy.blocked === "unsafeVaultPath"
+            ? `The category "..\\..\\ESCAPED" in extra_model_paths.yaml names the folder this file would take inside the vault.`
+            : `${copy.absPath} could not be prepared.`,
       });
     }
 
