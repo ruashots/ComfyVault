@@ -171,6 +171,16 @@ export interface AppStore {
    * printed that as files it could not move.
    */
   readonly appliedPlan: Accessor<ConsolidationPlan | null>;
+  /**
+   * The last scan is the one the last run consumed, so it describes the world
+   * as it was before that run.
+   *
+   * A run does not scan. Every figure taken from that scan, the models on
+   * disk, what each install holds, what could be reclaimed, was true before
+   * the run and is not afterwards, and printing it as current sits it beside a
+   * panel saying the space has already come back.
+   */
+  readonly scanPredatesRun: Accessor<boolean>;
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
@@ -295,6 +305,11 @@ export function createAppStore(engine: Engine): AppStore {
   const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
   const [lastApply, setLastApply] = createSignal<ApplyRecord | null>(null);
   const [appliedPlan, setAppliedPlan] = createSignal<ConsolidationPlan | null>(null);
+  const scanPredatesRun = createMemo(() => {
+    const ran = appliedPlan();
+    const last = scan();
+    return ran !== null && last !== null && ran.scanId === last.scanId;
+  });
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
@@ -653,6 +668,7 @@ export function createAppStore(engine: Engine): AppStore {
     interrupted,
     lastApply,
     appliedPlan,
+    scanPredatesRun,
     usage,
     usageMethod,
     scanProgress,

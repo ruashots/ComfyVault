@@ -252,9 +252,11 @@ function HomeReport() {
       <Header
         title="Home"
         sub={
-          app.scan()
-            ? `last scan ${relativeTime(app.scan()!.finishedAt)}`
-            : "not scanned yet"
+          !app.scan()
+            ? "not scanned yet"
+            : app.scanPredatesRun()
+              ? "not scanned since the run"
+              : `last scan ${relativeTime(app.scan()!.finishedAt)}`
         }
       >
         <button
@@ -272,7 +274,14 @@ function HomeReport() {
           <Show when={totals()} fallback={<NotScannedYet />}>
             {(t) => (
               <>
-                <div class="tiles">
+                <Show when={app.scanPredatesRun()}>
+            <div class="note" style={{ "margin-bottom": "9px" }}>
+              These figures come from the scan taken before the run, so they
+              describe the installs as they were then. Scan again to see what is
+              on disk now.
+            </div>
+          </Show>
+          <div class="tiles">
                   <Tile
                     value={String(app.installs().length)}
                     label="Instances"

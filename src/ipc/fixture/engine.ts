@@ -819,7 +819,9 @@ export class FixtureEngine implements Engine {
           revertible: true,
         };
         this.applies = [result, ...this.applies];
-        this.recordScan(this.lastScan?.scanId ?? "scan-1");
+        // Measured against the real engine: a run does not record a scan. The
+        // last scan still describes the world as it was before the run, and
+        // anything built from it afterwards describes that older world.
         this.applyDoneEvent.emit(result);
       }
     };
@@ -931,7 +933,6 @@ export class FixtureEngine implements Engine {
     this.applies = this.applies.map((a) =>
       a.applyId === applyId ? { ...a, state: "reverted" as const, revertible: false } : a,
     );
-    this.recordScan(this.lastScan?.scanId ?? "scan-1");
     this.revertDoneEvent.emit(await this.getApplyResult(applyId));
     return { applyId };
   }

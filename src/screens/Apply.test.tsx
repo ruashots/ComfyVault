@@ -210,3 +210,44 @@ describe("the numbers on the finished screen", () => {
     }
   });
 });
+
+describe("the world after a run, before anything has scanned again", () => {
+  it("does not present the old scan's figures as current", async () => {
+    const h = await runApply();
+    const before = { ...h.app.scan()! };
+    await finish(h);
+    await waitFor(() => h.app.appliedPlan() !== null, 6000);
+
+    // Measured against the real engine: a run does not scan. The last scan is
+    // the same scan, untouched, not one re-recorded as the run finished.
+    expect(h.app.scan()!.scanId).toBe(before.scanId);
+    expect(h.app.scan()!.finishedAt).toBe(before.finishedAt);
+    expect(h.app.scan()!.totals).toEqual(before.totals);
+    expect(h.app.scan()!.scanId).toBe(h.app.appliedPlan()!.scanId);
+    expect(h.app.scanPredatesRun()).toBe(true);
+
+    h.app.actions.go("home");
+    await waitFor(() => document.body.textContent?.includes("Instances") === true);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("not scanned since the run");
+    expect(text).toContain("come from the scan taken before the run");
+    // And never a claim that the scan is the most recent thing that happened.
+    expect(text).not.toContain("last scan just now");
+  });
+
+  it("says nothing of the kind once a scan has run since", async () => {
+    const h = await runApply();
+    await finish(h);
+    await waitFor(() => h.app.appliedPlan() !== null, 6000);
+
+    await h.engine.startScan();
+    h.engine.devFinish();
+    await h.app.actions.refresh();
+    await waitFor(() => !h.app.scanPredatesRun(), 6000);
+
+    h.app.actions.go("home");
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("not scanned since the run");
+    expect(text).not.toContain("come from the scan taken before the run");
+  });
+});
