@@ -4,9 +4,11 @@ import { Icon, Mark, type IconName } from "~/components/Icon";
 import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
-import { driveOf, fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
+import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
+import { driveFor } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
+import type { DriveInfo } from "~/ipc/contract";
 import { ScanScreen } from "~/screens/Scan";
 
 export function HomeScreen() {
@@ -27,44 +29,59 @@ export function HomeScreen() {
  * Installs lead. Once one is registered the screen can say which drive it is
  * on, which is the fact that makes the vault-folder choice an informed one.
  */
+/**
+ * The two things a person sets before anything else works, each ticked when it
+ * is done, and what happens after they are.
+ *
+ * The vault comes first because the engine cannot record an install without
+ * one, and because a tick that only lives in this window would be a promise
+ * the disk is not keeping. Nothing here states a size: a size comes from a
+ * scan, and a scan needs the vault that step one is choosing.
+ */
 function Setup() {
   const app = useApp();
-  const installs = () => app.installs();
   const vault = () => app.vault();
   const hasInstalls = () => app.hasInstalls();
   const hasVault = () => app.hasVault();
-  const done = () => Number(hasInstalls()) + Number(hasVault());
+  const vaultDrive = () =>
+    vault() ? driveFor(vault()!.root, app.drives()) : null;
 
-  /** Every install folder set so far, registered or still waiting for a vault. */
-  const roots = () => {
-    const waiting = app.pendingInstall();
-    return [...installs().map((i) => i.root), ...(waiting ? [waiting] : [])];
+  const vaultSub = () => {
+    const info = vault();
+    if (!info) return "not chosen yet";
+    const drive = vaultDrive();
+    return drive && drive.freeBytes !== null
+      ? `${info.root}  ·  ${fmt(drive.freeBytes)} free on ${letterOf(drive)}`
+      : info.root;
   };
-  const installDrive = () => driveOf(roots()[0] ?? "");
+
+  const installSub = () =>
+    hasInstalls()
+      ? app.installs().map((i) => i.root).join("  ·  ")
+      : hasVault()
+        ? "none registered yet"
+        : "waiting for the vault folder";
 
   return (
     <>
-      <Header
-        title="Setup"
-        sub={done() === 0 ? "nothing set yet" : `${done()} of 2 done`}
-      />
+      <Header title="Setup" sub={hasVault() ? "1 of 2 done" : "nothing set yet"} />
       <div class="screen">
         <div class="scroll">
-          <div style={{ "text-align": "center", padding: "14px 0 2px" }}>
-            <Mark size={30} />
+          <div style={{ "text-align": "center", padding: "6px 0 0" }}>
+            <Mark size={26} />
             <div
               class="lbl"
-              style={{ "margin-top": "10px", "letter-spacing": "1.8px" }}
+              style={{ "margin-top": "8px", "letter-spacing": "1.8px" }}
             >
               Set ComfyVault up
             </div>
             <div
               class="note"
-              style={{ "max-width": "450px", margin: "9px auto 0" }}
+              style={{ "max-width": "470px", margin: "7px auto 0" }}
             >
-              ComfyVault keeps one copy of every model in a single folder and
-              leaves a link behind in every place a file used to be. ComfyUI goes
-              on reading them from the paths it already uses.
+              One copy of every model in a single folder, and a link left behind
+              in every place a file used to be. ComfyUI goes on reading them from
+              the paths it already uses.
             </div>
           </div>
 
@@ -74,37 +91,13 @@ function Setup() {
 
           <StepRow
             number={1}
-            title="Your ComfyUI installs"
-            sub={
-              hasInstalls() ? roots().join("  ·  ") : "none registered yet"
-            }
-            done={hasInstalls()}
-          >
-            <button
-              class="btn"
-              classList={{ pri: !hasInstalls() }}
-              onClick={() => void openInstallPicker(app)}
-            >
-              <Icon name="folder" size={13} />
-              {hasInstalls() ? "Add another" : "Choose an install folder"}
-            </button>
-          </StepRow>
-
-          <StepRow
-            number={2}
             title="Where the vault goes"
-            sub={
-              hasVault()
-                ? (vault()?.root ?? "")
-                : hasInstalls()
-                  ? `not chosen yet · your installs are on ${installDrive()}`
-                  : "not chosen yet"
-            }
+            sub={vaultSub()}
             done={hasVault()}
           >
             <button
               class="btn"
-              classList={{ pri: hasInstalls() && !hasVault() }}
+              classList={{ pri: !hasVault() }}
               onClick={() => void openVaultPicker(app)}
             >
               <Icon name="folder" size={13} />
@@ -112,25 +105,62 @@ function Setup() {
             </button>
           </StepRow>
 
+          <StepRow
+            number={2}
+            title="Your ComfyUI installs"
+            sub={installSub()}
+            done={hasInstalls()}
+          >
+            <Show
+              when={hasVault()}
+              fallback={
+                <button
+                  class="btn"
+                  disabled
+                  title="The vault has to exist before an install can point into it"
+                >
+                  <Icon name="folder" size={13} />
+                  Choose an install folder
+                </button>
+              }
+            >
+              <button
+                class="btn"
+                classList={{ pri: !hasInstalls() }}
+                onClick={() => void openInstallPicker(app)}
+              >
+                <Icon name="folder" size={13} />
+                {hasInstalls() ? "Add another" : "Choose an install folder"}
+              </button>
+            </Show>
+          </StepRow>
+
           <div class="note up">
             <Show
-              when={hasInstalls()}
+              when={hasVault()}
               fallback={
                 <>
-                  Put the vault on the same drive as your installs. Files are
-                  moved there rather than copied, so it needs no free space of
-                  its own. On any other drive every file is copied first, so that
-                  drive needs the room up front.
+                  Put the vault on the same drive as your ComfyUI installs. Files
+                  are moved there rather than copied, so the vault needs no free
+                  space of its own and the room comes back as it goes. On any
+                  other drive every file is copied across first, so that drive
+                  needs the room up front.
                 </>
               }
             >
-              Put the vault on drive {installDrive()}, the drive your installs
-              are already on. Files are moved there rather than copied, so the
-              vault needs no free space of its own and the room comes back as it
-              goes. On any other drive every file has to be copied across first,
-              so that drive needs the room up front.
+              The vault is on {vault()?.volume}. An install on {vault()?.volume}{" "}
+              has its files moved, which is instant and needs no spare room. An
+              install on any other drive has them copied across instead, and
+              ComfyVault says what that needs before anything happens.
             </Show>
           </div>
+          <Show when={!hasVault()}>
+            <div class="note" style={{ "margin-top": "7px" }}>
+              Not a removable or network drive. Every install points into the
+              vault by link, so on any day that drive is missing, every model in
+              every install stops loading at once.
+            </div>
+          </Show>
 
           <div class="sec secgap">
             <span class="t">What happens after this</span>
@@ -152,6 +182,11 @@ function Setup() {
       </div>
     </>
   );
+}
+
+/** "C:" from a drive's root, which the engine writes as "C:\\". */
+function letterOf(drive: DriveInfo): string {
+  return drive.root.replace(/\\+$/, "");
 }
 
 function StepRow(props: {
@@ -236,7 +271,7 @@ function HomeReport() {
                   <Tile
                     value={String(app.installs().length)}
                     label="Instances"
-                    note={app.installs().map((i) => i.label).join(" \u00b7 ")}
+                    note={app.installs().map((i) => i.label).join(" · ")}
                   />
                   <Tile
                     value={String(t().uniqueContents)}
@@ -453,7 +488,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   if (scan) {
     lines.push({
       event: scan.cancelled ? "vault.scan.cancelled" : "vault.scan.complete",
-      detail: `${scan.totals.uniqueContents} models \u00b7 ${scan.totals.duplicateFiles} duplicate copies \u00b7 ${fmt(scan.totals.reclaimableBytes)} reclaimable`,
+      detail: `${scan.totals.uniqueContents} models · ${scan.totals.duplicateFiles} duplicate copies · ${fmt(scan.totals.reclaimableBytes)} reclaimable`,
       when: scan.finishedAt,
     });
   }
@@ -461,14 +496,14 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   if (run?.finishedAt) {
     lines.push({
       event: `vault.apply.${run.state}`,
-      detail: `${run.filesMoved} files moved \u00b7 ${run.linksCreated} links \u00b7 ${fmt(run.bytesFreed)} freed`,
+      detail: `${run.filesMoved} files moved · ${run.linksCreated} links · ${fmt(run.bytesFreed)} freed`,
       when: run.finishedAt,
     });
   }
   for (const install of app.installs()) {
     lines.push({
       event: "instance.add",
-      detail: `${install.label} \u00b7 ${install.root}`,
+      detail: `${install.label} · ${install.root}`,
       when: install.addedAt,
     });
   }
@@ -476,7 +511,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   if (vault) {
     lines.push({
       event: "vault.create",
-      detail: `${vault.root} \u00b7 drive ${vault.volume}`,
+      detail: `${vault.root} · drive ${vault.volume}`,
       when: vault.createdAt,
     });
   }

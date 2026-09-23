@@ -2,6 +2,7 @@ import { For, Show, createMemo } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
+import { driveKindShort, isReadable } from "~/domain/drives";
 import { dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
@@ -38,10 +39,10 @@ export function SettingsScreen() {
     const running = app.running().length;
     app.actions.showToast(
       links && running === 0
-        ? "Checked \u00b7 nothing is in the way"
+        ? "Checked · nothing is in the way"
         : !links
-          ? "Checked \u00b7 Windows still will not create links"
-          : `Checked \u00b7 ${running} ComfyUI ${running === 1 ? "process is" : "processes are"} still running`,
+          ? "Checked · Windows still will not create links"
+          : `Checked · ${running} ComfyUI ${running === 1 ? "process is" : "processes are"} still running`,
       links && running === 0 ? "ok" : "bad",
     );
   };
@@ -62,7 +63,7 @@ export function SettingsScreen() {
       action: async () => {
         const result = await app.engine.unregisterInstall(install.id);
         app.actions.showToast(
-          `Removed ${install.label} \u00b7 ${result.linksLeftInPlace} links left exactly where they are`,
+          `Removed ${install.label} · ${result.linksLeftInPlace} links left exactly where they are`,
         );
       },
     });
@@ -237,7 +238,17 @@ export function SettingsScreen() {
                     "margin-top": "2px",
                   }}
                 >
-                  nothing is read or written until it is
+                  {/* Readable drives only: a drive that did not answer has no
+                      figure to print, and printing one anyway is how "has
+                      undefined MB free" happens. */}
+                  {app
+                    .drives()
+                    .filter(isReadable)
+                    .map((d) => {
+                      const kind = driveKindShort(d.kind);
+                      return `${d.root.replace(/\\+$/, "")} has ${fmt(d.freeBytes!)} free${kind ? ` (${kind})` : ""}`;
+                    })
+                    .join(" · ")}
                 </div>
               </div>
               <button class="btn sm pri" onClick={() => void openVaultPicker(app)}>
@@ -328,8 +339,8 @@ export function SettingsScreen() {
                     }}
                   >
                     {app.running().length > 0
-                      ? `${app.running().map((p) => `${p.name} (pid ${p.pid})`).join(", ")} \u00b7 files they hold open cannot move`
-                      : "none running \u00b7 every file can move"}
+                      ? `${app.running().map((p) => `${p.name} (pid ${p.pid})`).join(", ")} · files they hold open cannot move`
+                      : "none running · every file can move"}
                   </span>
                   <button
                     class="btn sm"
@@ -575,8 +586,8 @@ export function SettingsScreen() {
                     const broken = app.danglingLinks().length;
                     app.actions.showToast(
                       broken > 0
-                        ? `${broken} ${broken === 1 ? "link points" : "links point"} at a file that is not there \u00b7 see Cleanup`
-                        : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files \u00b7 all well`,
+                        ? `${broken} ${broken === 1 ? "link points" : "links point"} at a file that is not there · see Cleanup`
+                        : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files · all well`,
                       broken > 0 ? "bad" : "ok",
                     );
                     if (broken > 0) app.actions.go("cleanup");

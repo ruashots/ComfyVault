@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal, onMount, type JSX } from "solid-js
 import { Icon } from "~/components/Icon";
 import { fmt, joinPath, leafOf } from "~/domain/format";
 import { folderNameError } from "~/domain/foldername";
+import { driveFor, driveKindWord, isReadable } from "~/domain/drives";
 import {
   messageOf,
   useApp,
@@ -303,32 +304,18 @@ export function PickerModalView() {
     try {
       if (current.purpose === "install") {
         const root = current.candidate?.root ?? path;
-        if (app.hasVault()) {
-          await app.engine.registerInstall(root);
-          app.setModal(null);
-          await app.actions.refresh();
-          app.actions.showToast(`Added ${root} · run a scan to read it`);
-        } else {
-          // There is nowhere to record it yet. The vault folder is the next
-          // thing the person sets, and this is registered the moment it is.
-          app.setPendingInstall(root);
-          app.setModal(null);
-          await app.actions.refresh();
-          app.actions.showToast(`Added ${root} · now choose where the vault goes`);
-        }
+        await app.engine.registerInstall(root);
+        app.setModal(null);
+        await app.actions.refresh();
+        app.actions.showToast(`Added ${root} · run a scan to read it`);
       } else if (current.purpose === "vault") {
         await app.engine.selectVault(path, true);
-        const waiting = app.pendingInstall();
-        if (waiting) {
-          await app.engine.registerInstall(waiting);
-          app.setPendingInstall(null);
-        }
         app.setModal(null);
         await app.actions.refresh();
         app.actions.showToast(
-          waiting
-            ? `Vault folder set to ${path} · setup is done`
-            : `Vault folder set to ${path}`,
+          app.hasInstalls()
+            ? `Vault folder set to ${path}`
+            : `Vault folder set to ${path} · now register a ComfyUI install`,
         );
       } else if (current.sha256) {
         const install = app
@@ -364,6 +351,22 @@ export function PickerModalView() {
     if (current.checking) return null;
     return verdictFor(app, current.purpose, current.picked, current.candidate);
   });
+
+  /** The drive the chosen folder is on, when it did not answer. */
+  const deadDrive = () => {
+    const picked = modal()?.picked;
+    if (!picked) return false;
+    const drive = driveFor(picked, app.drives());
+    return drive !== null && !isReadable(drive);
+  };
+
+  /** ComfyVault will not try to create a folder on a drive it cannot see. */
+  const canCreateFolder = () => {
+    const current = modal();
+    return (
+      current?.picked != null && current.newFolder === null && !deadDrive()
+    );
+  };
 
   const canConfirm = () => {
     const current = modal();
@@ -551,7 +554,11 @@ export function PickerModalView() {
                 {(v) => (
                   <div
                     class="verdict"
-                    classList={{ ok: v().ok, no: !v().ok }}
+                    classList={{
+                      warn: v().warn === true,
+                      ok: v().ok && v().warn !== true,
+                      no: !v().ok,
+                    }}
                     // The tree is tall, so the answer about the folder they
                     // just clicked can land below the fold. Bring it to them
                     // rather than leaving them to find it.
@@ -566,7 +573,10 @@ export function PickerModalView() {
                     }
                   >
                     <h4>
-                      <Icon name={v().ok ? "check" : "x"} size={12} />
+                      <Icon
+                        name={v().warn ? "warn" : v().ok ? "check" : "x"}
+                        size={12}
+                      />
                       {v().title}
                     </h4>
                     {v().body}
@@ -588,18 +598,20 @@ export function PickerModalView() {
             <div class="mf">
               <button
                 class="btn"
-                disabled={!current().picked || current().newFolder !== null}
+                disabled={!canCreateFolder()}
                 title={
-                  current().picked
-                    ? `Create a folder inside ${current().picked}`
-                    : "Pick a folder first"
+                  deadDrive()
+                    ? "That drive cannot be read"
+                    : current().picked
+                      ? `Create a folder inside ${current().picked}`
+                      : "Pick a folder first"
                 }
                 onClick={() => void startNewFolder()}
               >
                 <Icon name="plus" size={11} />
                 New folder
               </button>
-              <Show when={current().picked && !current().newFolder}>
+              <Show when={canCreateFolder()}>
                 <span class="note">
                   inside {leafOf(current().picked!) || current().picked}
                 </span>
@@ -609,11 +621,12 @@ export function PickerModalView() {
                 Cancel
               </button>
               <button
-                class="btn pri"
+                class="btn"
+                classList={{ dng: verdict()?.warn === true, pri: verdict()?.warn !== true }}
                 disabled={!canConfirm()}
                 onClick={() => void confirm()}
               >
-                {cta()}
+                {verdict()?.warn === true ? "Use it anyway" : cta()}
               </button>
             </div>
           </div>
@@ -655,6 +668,11 @@ export interface VerdictCopy {
   ok: boolean;
   title: string;
   body: JSX.Element;
+  /**
+   * The folder can be used and there is a real cost to using it. The choice
+   * stays available, and the button that takes it says so.
+   */
+  warn?: boolean;
 }
 
 /** Every sentence the picker says about a folder it looked into. */
@@ -711,6 +729,38 @@ export function verdictFor(
   }
 
   if (purpose === "vault") {
+    const drive = driveFor(path, app.drives());
+    if (drive && !isReadable(drive)) {
+      return {
+        ok: false,
+        title: "This drive cannot be read",
+        body: (
+          <p>
+            ComfyVault cannot see inside <span class="emph">{path}</span>. It is a{" "}
+            {driveKindWord(drive.kind) ?? "drive"} and it is not answering.
+            Reconnect it and pick again, or choose another drive.
+          </p>
+        ),
+      };
+    }
+    if (drive && drive.kind !== "fixed") {
+      return {
+        ok: true,
+        warn: true,
+        title: "This drive can go away",
+        body: (
+          <p>
+            Every install points into the vault by link, so the vault has to be
+            there whenever ComfyUI runs. On any day this{" "}
+            {driveKindWord(drive.kind)} is not connected,{" "}
+            <span class="emph">
+              every model in every install stops loading at once
+            </span>
+            . Free space is not what decides this.
+          </p>
+        ),
+      };
+    }
     const inside = app
       .installs()
       .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
@@ -728,6 +778,19 @@ export function verdictFor(
       };
     }
     const volume = path.slice(0, 2).toUpperCase();
+    if (app.installs().length === 0) {
+      return {
+        ok: true,
+        title: `Drive ${volume} accepted`,
+        body: (
+          <p>
+            Put your ComfyUI installs on this same drive and their files are moved
+            into the vault rather than copied, so it needs no free space of its
+            own.
+          </p>
+        ),
+      };
+    }
     const elsewhere = app
       .installs()
       .filter((i) => i.root.slice(0, 2).toUpperCase() !== volume);
@@ -749,7 +812,8 @@ export function verdictFor(
     const needed = app.scan()?.totals.uniqueBytes ?? 0;
     return {
       ok: true,
-      title: "This is on another drive",
+      warn: true,
+      title: "Not the drive your installs are on",
       body: (
         <p>
           {elsewhere.map((i) => i.label).join(" and ")}{" "}

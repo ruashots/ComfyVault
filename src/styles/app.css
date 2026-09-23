@@ -555,7 +555,7 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 /* ── modal ────────────────────────────────────────────────── */
 .veil{position:absolute;inset:0;background:rgba(4,6,10,.72);display:flex;align-items:center;justify-content:center;z-index:30}
 .modal{
-  width:560px;max-height:470px;background:var(--bg-rail);border:1px solid var(--div2);
+  width:560px;max-height:534px;background:var(--bg-rail);border:1px solid var(--div2);
   border-radius:var(--r2);display:flex;flex-direction:column;box-shadow:0 14px 44px rgba(0,0,0,.6);
 }
 .modal.sm{width:420px}
@@ -611,6 +611,8 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .verdict.no{border:1px solid color-mix(in srgb,var(--red) 40%,transparent);background:rgba(220,58,31,.05);color:var(--t-body)}
 .verdict.wait{border:1px solid var(--div2);background:var(--bg-inset);color:var(--t-dim)}
 .verdict h4{font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.verdict.warn{border:1px solid color-mix(in srgb,var(--red) 40%,transparent);background:rgba(220,58,31,.05);color:var(--t-body)}
+.verdict.warn h4{color:var(--red-br)}
 .verdict.ok h4{color:var(--green-br)} .verdict.no h4{color:var(--red-br)}
 .verdict.wait h4{color:var(--t-label)}
 .verdict p + p{margin-top:8px}

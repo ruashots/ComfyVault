@@ -1,6 +1,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 
 import { Icon, Mark, type IconName } from "~/components/Icon";
+import { driveKindShort, isReadable } from "~/domain/drives";
 import { fmt, usedPercent } from "~/domain/format";
 import { gateBlockers } from "~/domain/selection";
 import { useApp, type Screen } from "~/state/store";
@@ -185,18 +186,32 @@ export function Rail() {
             {(drive) => (
               <>
                 <div class="rail-drive">
-                  <span class="dl">{drive.root.replace(/\\$/, "")}</span>
+                  <span class="dl">{drive.root.replace(/\\+$/, "")}</span>
                   <span class="dv">
                     <Show
-                      when={drive.freeBytes !== null}
-                      fallback={<>not readable</>}
+                      when={isReadable(drive)}
+                      fallback={
+                        <span style={{ color: "var(--t-dim)" }}>not readable</span>
+                      }
                     >
                       <b>{fmt(drive.freeBytes!)}</b> free
                     </Show>
                   </span>
                 </div>
-                <Show when={drive.totalBytes !== null}>
+                <Show when={isReadable(drive)}>
                   <div class="rail-drive-sub">of {fmt(drive.totalBytes!)}</div>
+                </Show>
+                {/* The kind matters here, because a vault on a drive that can
+                    go away takes every install's models with it. */}
+                <Show when={driveKindShort(drive.kind)}>
+                  {(word) => (
+                    <div
+                      class="rail-drive-sub"
+                      style={{ color: "var(--t-muted)" }}
+                    >
+                      {word()}
+                    </div>
+                  )}
                 </Show>
               </>
             )}

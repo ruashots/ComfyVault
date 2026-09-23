@@ -158,6 +158,10 @@ const DISK: FakeFolder[] = [
   { path: "C:\\Users\\alex\\Downloads", children: [] },
   { path: "C:\\Users\\alex\\Documents", children: [] },
   { path: "D:\\", children: ["D:\\ai-models", "D:\\ComfyUI-Backup"] },
+  { path: "E:\\", children: ["E:\\Backups"] },
+  { path: "E:\\Backups", children: [] },
+  // Listed, because the operating system lists it. Opening it fails.
+  { path: "Z:\\", children: [], readable: false },
   { path: "D:\\ai-models", children: ["D:\\ai-models\\ltx"] },
   { path: "D:\\ai-models\\ltx", children: [] },
   ...installTree("D:\\ComfyUI-Backup"),
@@ -346,8 +350,10 @@ export class FixtureEngine implements Engine {
     return [
       { root: "C:\\", kind: "fixed", freeBytes: this.world.freeBytes, totalBytes: VAULT_TOTAL_BYTES },
       { root: "D:\\", kind: "fixed", freeBytes: 442_381_631_488, totalBytes: 1_024_209_543_168 },
-      // An empty card reader: it is there, and it cannot say how big it is.
-      { root: "E:\\", kind: "removable", freeBytes: null, totalBytes: null },
+      { root: "E:\\", kind: "removable", freeBytes: 3_199_827_968_000, totalBytes: 4_000_787_030_016 },
+      // A network drive that has stopped answering. It is there, and it cannot
+      // say how big it is, which is a different thing from being empty.
+      { root: "Z:\\", kind: "network", freeBytes: null, totalBytes: null },
     ];
   }
 

@@ -193,8 +193,6 @@ export interface AppStore {
    * choice an informed one.
    */
   readonly drives: Accessor<readonly DriveInfo[]>;
-  readonly pendingInstall: Accessor<string | null>;
-  readonly setPendingInstall: (path: string | null) => void;
   /** Both things a person has to set before any screen has anything to show. */
   readonly setupDone: Accessor<boolean>;
   /**
@@ -346,24 +344,15 @@ export function createAppStore(engine: Engine): AppStore {
   );
 
   const [drives, setDrives] = createSignal<readonly DriveInfo[]>([]);
-  const [pendingInstall, setPendingInstall] = createSignal<string | null>(null);
-  const hasInstalls = createMemo(
-    () => installs().length > 0 || pendingInstall() !== null,
-  );
+  const hasInstalls = createMemo(() => installs().length > 0);
   const hasVault = createMemo(() => appState()?.vaultInitialized === true);
   const setupDone = createMemo(() => hasInstalls() && hasVault());
   const missingStep = createMemo(() => {
     if (setupDone()) return null;
-    if (!hasInstalls() && !hasVault()) {
-      return "Register a ComfyUI install and choose where the vault goes.";
-    }
-    if (!hasInstalls()) {
-      return "Register a ComfyUI install. The vault folder is already set.";
-    }
-    // "set" rather than "registered": an install chosen before there is a
-    // vault is held in the window until one exists, so it is not registered
-    // anywhere yet and saying so would be untrue.
-    return "Choose where the vault goes. Your ComfyUI installs are set.";
+    // The vault comes first because an install cannot be recorded without one,
+    // so there is no state where installs are set and the vault is not.
+    if (!hasVault()) return "Choose where the vault goes, then register a ComfyUI install.";
+    return "Register a ComfyUI install. The vault folder is already set.";
   });
 
   const danglingLinks = createMemo<readonly LinkRecord[]>(
@@ -651,8 +640,6 @@ export function createAppStore(engine: Engine): AppStore {
     hasInstalls,
     hasVault,
     drives,
-    pendingInstall,
-    setPendingInstall,
     setupDone,
     missingStep,
     unusedCount,
