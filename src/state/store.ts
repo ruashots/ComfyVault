@@ -162,6 +162,15 @@ export interface AppStore {
   readonly running: Accessor<readonly RunningComfy[]>;
   readonly interrupted: Accessor<readonly InterruptedApply[]>;
   readonly lastApply: Accessor<ApplyRecord | null>;
+  /**
+   * The plan the last run actually applied, as the engine stored it.
+   *
+   * Not a fresh one built from the same scan. After a run every consolidated
+   * path differs from what that scan recorded, so a rebuilt plan reports the
+   * whole tree as changed under it, and a screen saying the run succeeded
+   * printed that as files it could not move.
+   */
+  readonly appliedPlan: Accessor<ConsolidationPlan | null>;
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
@@ -285,6 +294,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [running, setRunning] = createSignal<readonly RunningComfy[]>([]);
   const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
   const [lastApply, setLastApply] = createSignal<ApplyRecord | null>(null);
+  const [appliedPlan, setAppliedPlan] = createSignal<ConsolidationPlan | null>(null);
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
@@ -454,6 +464,7 @@ export function createAppStore(engine: Engine): AppStore {
           setRunning([]);
           setInterrupted([]);
           setLastApply(null);
+          setAppliedPlan(null);
           setUsage(new Map());
           setNothingSearched(false);
           setFailure(null);
@@ -513,6 +524,13 @@ export function createAppStore(engine: Engine): AppStore {
         setFailure(null);
         setReady(true);
       });
+
+      // The plan that ran, read back as the engine stored it. It is the only
+      // authority on what that run could not move.
+      const ran = applies.find((a) => a.state !== "reverted") ?? null;
+      setAppliedPlan(
+        ran ? await orNotYet(engine.getPlan(ran.planId), null) : null,
+      );
 
       await loadUsage(contents.rows);
     } catch (error) {
@@ -634,6 +652,7 @@ export function createAppStore(engine: Engine): AppStore {
     running,
     interrupted,
     lastApply,
+    appliedPlan,
     usage,
     usageMethod,
     scanProgress,

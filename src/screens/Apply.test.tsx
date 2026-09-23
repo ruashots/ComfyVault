@@ -178,36 +178,35 @@ describe("the numbers on the finished screen", () => {
     expect(text).toContain("free before and has");
   });
 
-  it("does not call a finished file one that cannot move", async () => {
+  it("does not count the run's own links as files it could not move", async () => {
     const h = await runApply();
     await finish(h);
-    // After a run every consolidated path reads as already in the vault, and
-    // the engine reports each one as a blocked row. That is the state this
-    // test is about, so it fails if the state is not there to test.
-    await waitFor(() =>
-      (h.app.plan()?.blocked ?? []).some((b) => b.reason === "alreadyInVault"),
+
+    // Measured against the real engine: a plan rebuilt from the scan that ran
+    // reports every consolidated path as changed, because the scan recorded a
+    // file and the path is a link now. That is the state this test is about,
+    // so it fails if the state is not there to test.
+    await waitFor(
+      () => (h.app.plan()?.blocked ?? []).some((b) => b.reason === "fileChanged"),
       6000,
     );
-    const raw = h.app.plan()!;
-    const finished = raw.blocked.filter((b) => b.reason === "alreadyInVault");
-    expect(finished.length).toBeGreaterThan(5);
+    const rebuilt = h.app.plan()!;
+    expect(
+      rebuilt.blocked.filter((b) => b.reason === "fileChanged").length,
+    ).toBeGreaterThan(5);
 
-    // None of them reaches the person as a file that could not move.
-    const view = h.app.planView()!;
-    expect(view.blocked.some((b) => b.reason === "alreadyInVault")).toBe(false);
-    expect(view.blocked.length).toBeLessThan(raw.blocked.length);
-
-    // The count and the size on screen come from the same set of rows. They
-    // used to come from two, which is how 9 of 9 done sat above 18 files stuck.
-    expect(view.blockedBytes).toBe(
-      view.blocked.reduce((sum, row) => sum + row.sizeBytes, 0),
-    );
-    expect(view.blockedBytes).toBeLessThan(raw.totals.blockedBytes);
+    // The screen reads the plan that ran, which knows what it could not move.
+    const ran = h.app.appliedPlan()!;
+    expect(ran).not.toBeNull();
+    expect(ran.planId).toBe(h.app.lastApply()!.planId);
+    expect(ran.blocked.length).toBeLessThan(rebuilt.blocked.length);
 
     const text = document.body.textContent ?? "";
-    expect(text).not.toContain(fmt(raw.totals.blockedBytes));
-    if (view.blocked.length === 0) {
-      expect(text).not.toContain("Still cannot move");
+    expect(text).not.toContain(fmt(rebuilt.totals.blockedBytes));
+    // And never more files than the run was even asked about.
+    const match = /Still cannot move(\d+) file/.exec(text.replace(/\s+/g, ""));
+    if (match) {
+      expect(Number(match[1])).toBeLessThanOrEqual(ran.blocked.length);
     }
   });
 });

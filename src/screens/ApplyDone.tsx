@@ -2,7 +2,7 @@ import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
-import { blockedWhy } from "~/domain/blocked";
+import { blockedWhy, isSkippedByDesign } from "~/domain/blocked";
 import { fmt, fmtN, fmtU, usedPercent } from "~/domain/format";
 import { fileNameOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
@@ -21,6 +21,11 @@ export function ApplyDone() {
   const app = useApp();
   const run = () => app.lastApply()!;
   const drive = () => app.vault();
+  /** What the run's own plan said it could not move, and nothing else. */
+  const stuck = () =>
+    (app.appliedPlan()?.blocked ?? []).filter(
+      (row) => !isSkippedByDesign(row.reason),
+    );
 
   const revert = () => {
     openConfirm(app, {
@@ -125,13 +130,15 @@ export function ApplyDone() {
               </Show>
             </span>
           </div>
-          <Show when={(app.planView()?.blocked.length ?? 0) > 0}>
+          {/* What the plan that ran could not move, read from that plan. A
+              plan rebuilt from the same scan reports every consolidated path
+              as changed, because it is a link now and the scan saw a file. */}
+          <Show when={stuck().length > 0}>
             <div class="kv">
               <span class="k w150">Still cannot move</span>
               <span class="v">
-                {app.planView()!.blocked.length}{" "}
-                {app.planView()!.blocked.length === 1 ? "file" : "files"} &middot;{" "}
-                {fmt(app.planView()?.blockedBytes ?? 0)}{" "}
+                {stuck().length} {stuck().length === 1 ? "file" : "files"} &middot;{" "}
+                {fmt(stuck().reduce((sum, row) => sum + row.sizeBytes, 0))}{" "}
                 <span class="dim">&middot; the reasons are still in the report</span>
               </span>
             </div>

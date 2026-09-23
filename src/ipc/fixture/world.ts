@@ -508,10 +508,11 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
 
   for (const content of world.contents) {
     for (const copy of content.copies) {
-      // A path that is already a link into the vault is reported the way the
-      // engine reports it: a blocked row saying there is nothing left to do.
-      // Every path reads this way after a run, and the interface must not
-      // present that as a file that could not move.
+      // Measured against the real engine: a plan built from a scan taken
+      // before a run reports every consolidated path as `fileChanged`, because
+      // the scan recorded a real file and the path is a link now. The whole
+      // tree reads that way, which is why the finished screen must read the
+      // plan that ran rather than a fresh one built from the old scan.
       if (copy.isLink && !copy.blocked) {
         blocked.push({
           absPath: copy.absPath,
@@ -519,8 +520,8 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
           installLabel: installLabel(copy.installId),
           sizeBytes: content.bytes,
           sha256: content.sha256,
-          reason: "alreadyInVault",
-          detail: `${copy.absPath} is already a link into the vault.`,
+          reason: "fileChanged",
+          detail: `${copy.absPath} is a link now, and the scan recorded a file.`,
         });
         continue;
       }
