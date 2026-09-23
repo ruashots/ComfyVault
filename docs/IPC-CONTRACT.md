@@ -227,7 +227,20 @@ nobody can see.
 applies only the fields that are present.
 
 `get_settings` never returns the API key value. It returns `"***"` when a key
-is stored and `null` when no key is stored.
+is stored and `null` when no key is stored. Sending `"***"` back keeps the
+stored key. Sending an empty string clears it.
+
+**The interface must say where the key is kept.** Put this next to the key
+field, in these words or closer:
+
+> This key is stored unencrypted inside your vault folder.
+
+The key is written to the vault database, and this product invites the person
+to carry that vault on a portable drive. They may hand that drive to someone,
+lend it, sell it, or back it up somewhere shared, and the key rides along. It
+never leaves the machine on its own, it never appears in a log, and it travels
+only in an `Authorization` header. But it is at rest in a folder the person is
+encouraged to move, and that is theirs to know.
 
 ---
 
