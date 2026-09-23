@@ -3,7 +3,7 @@ import { For, Show } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
-import type { Link } from "~/ipc/contract";
+import type { LinkRecord } from "~/ipc/contract";
 
 /**
  * Links that point at a file that is not there.
@@ -18,7 +18,7 @@ export function DanglingLinks() {
   const app = useApp();
   const links = () => app.danglingLinks();
 
-  const removeOne = (link: Link) => {
+  const removeOne = (link: LinkRecord) => {
     void app.actions.run(
       () => app.engine.removeLink(link.id),
       `Removed the broken link at ${link.absPath}`,

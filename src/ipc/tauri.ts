@@ -19,7 +19,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 import type {
   ApplyProgress,
-  ApplyResult,
+  ApplyRecord,
   AppState,
   ConsolidationPlan,
   ContentPage,
@@ -28,7 +28,8 @@ import type {
   Install,
   InstallCandidate,
   InterruptedApply,
-  Link,
+  LinkRecord,
+  LinkWithState,
   LockState,
   ModelDirNode,
   ModelMetadata,
@@ -37,7 +38,7 @@ import type {
   RunningComfy,
   ScanEntryPage,
   ScanProgress,
-  ScanResult,
+  ScanRecord,
   Settings,
   Unsubscribe,
   UsageResult,
@@ -104,10 +105,10 @@ export function createTauriEngine(): Engine {
     startScan: (installIds) =>
       call<{ scanId: string }>("start_scan", installIds ? { installIds } : {}),
     cancelScan: (scanId) => call<{ cancelled: true }>("cancel_scan", { scanId }),
-    getLastScan: () => callNoArgs<ScanResult | null>("get_last_scan"),
+    getLastScan: () => callNoArgs<ScanRecord | null>("get_last_scan"),
     getScanEntries: (args) => call<ScanEntryPage>("get_scan_entries", { ...args }),
     onScanProgress: (fn) => subscribe<ScanProgress>("scan:progress", fn),
-    onScanDone: (fn) => subscribe<ScanResult>("scan:done", fn),
+    onScanDone: (fn) => subscribe<ScanRecord>("scan:done", fn),
     onScanError: (fn) => subscribe<VaultError>("scan:error", fn),
 
     buildPlan: (scanId) => call<ConsolidationPlan>("build_plan", { scanId }),
@@ -117,27 +118,27 @@ export function createTauriEngine(): Engine {
     cancelApply: (applyId) =>
       call<{ cancelled: true }>("cancel_apply", { applyId }),
     getApplyResult: (applyId) =>
-      call<ApplyResult>("get_apply_result", { applyId }),
-    listApplies: () => callNoArgs<ApplyResult[]>("list_applies"),
+      call<ApplyRecord>("get_apply_result", { applyId }),
+    listApplies: () => callNoArgs<ApplyRecord[]>("list_applies"),
     getInterruptedApplies: () =>
       callNoArgs<InterruptedApply[]>("get_interrupted_applies"),
     resumeApply: (applyId) => call<{ applyId: string }>("resume_apply", { applyId }),
     revertApply: (applyId) => call<{ applyId: string }>("revert_apply", { applyId }),
     onApplyProgress: (fn) => subscribe<ApplyProgress>("apply:progress", fn),
-    onApplyDone: (fn) => subscribe<ApplyResult>("apply:done", fn),
+    onApplyDone: (fn) => subscribe<ApplyRecord>("apply:done", fn),
     onApplyError: (fn) => subscribe<VaultError>("apply:error", fn),
     onRevertProgress: (fn) => subscribe<ApplyProgress>("revert:progress", fn),
-    onRevertDone: (fn) => subscribe<ApplyResult>("revert:done", fn),
+    onRevertDone: (fn) => subscribe<ApplyRecord>("revert:done", fn),
     onRevertError: (fn) => subscribe<VaultError>("revert:error", fn),
 
-    createLink: (args) => call<Link>("create_link", { createDir: false, ...args }),
+    createLink: (args) => call<LinkRecord>("create_link", { createDir: false, ...args }),
     removeLink: (linkId) => call<{ removed: true }>("remove_link", { linkId }),
     createModelFolder: (installId, relativeDir) =>
       call<{ absPath: string; created: boolean }>("create_model_folder", {
         installId,
         relativeDir,
       }),
-    listLinks: (filter) => call<Link[]>("list_links", { ...(filter ?? {}) }),
+    listLinks: (filter) => call<LinkWithState[]>("list_links", { ...(filter ?? {}) }),
 
     listVaultFiles: (args) => call<VaultFilePage>("list_vault_files", { ...args }),
     listContents: (args) => call<ContentPage>("list_contents", { ...args }),

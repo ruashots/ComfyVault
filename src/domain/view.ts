@@ -12,7 +12,7 @@ import type {
   BlockedRow,
   ConsolidationPlan,
   Install,
-  Link,
+  LinkRecord,
   NameGroup,
   PlanGroup,
   ScanTotals,
@@ -170,7 +170,7 @@ export interface Place {
 export function placesOf(
   sha256: string,
   plan: ConsolidationPlan | null,
-  links: readonly Link[],
+  links: readonly LinkRecord[],
   installLabels: ReadonlyMap<string, string>,
 ): Place[] {
   const label = (id: string) => installLabels.get(id) ?? id;

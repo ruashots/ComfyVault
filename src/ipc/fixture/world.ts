@@ -20,14 +20,14 @@ import type {
   ContentRow,
   Install,
   InstallScanTotals,
-  Link,
+  LinkRecord,
   ModelMetadata,
   NameGroup,
   PlanGroup,
   PlanLink,
   PlanSource,
-  ScanEntry,
-  ScanResult,
+  ScanEntryWithCount,
+  ScanRecord,
   ScanTotals,
   VaultFile,
 } from "~/ipc/contract";
@@ -49,12 +49,12 @@ type Row = [
   [string, string, string, string, string]?,
 ];
 
-/** A copy: "installId:folder" + optional " >nameUsedThere" + optional " !locked|denied|drive|escaped" */
+/** A copy: "installId:folder" + optional " >nameUsedThere" + optional " !locked|denied|drive|escaped|twin" */
 const ROWS: Row[] = [
   ["wan2.1_i2v_720p_14B_fp8_scaled.safetensors","diffusion_models",16793,7,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan\\"]],
   ["wan2.1_i2v_480p_14B_fp8_scaled.safetensors","diffusion_models",16793,4,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan\\"]],
   ["wan2.1_t2v_14B_fp8_scaled.safetensors","diffusion_models",16793,3,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan\\"]],
-  ["wan2.1_i2v_480p_14B_bf16.safetensors","diffusion_models",33587,0,["prod:models\\diffusion_models\\bf16\\","norm:models\\diffusion_models\\wan\\"]],
+  ["wan2.1_i2v_480p_14B_bf16.safetensors","diffusion_models",33587,0,["prod:models\\diffusion_models\\bf16\\","prod:models\\diffusion_models\\ !twin","norm:models\\diffusion_models\\wan\\"]],
   ["wan2.1_t2v_1.3B_fp16.safetensors","diffusion_models",5836,2,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\"]],
   ["wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors","diffusion_models",14234,9,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan22\\"]],
   ["wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors","diffusion_models",14234,9,["prod:models\\diffusion_models\\","norm:models\\diffusion_models\\wan22\\"]],
@@ -116,7 +116,7 @@ const ROWS: Row[] = [
   ["ltxv-spatial-upscaler-0.9.7.safetensors","checkpoints",2109,0,["norm:D:\\ai-models\\spare\\ !escaped"]],
   ["qwen_image_vae.safetensors","vae",249,6,["prod:models\\vae\\","norm:models\\vae\\qwen\\"]],
   ["vae-ft-mse-840000-ema-pruned.safetensors","vae",327,0,["prod:models\\vae\\","norm:models\\vae\\"]],
-  ["Wan21_CausVid_14B_T2V_lora_rank32.safetensors","loras",1352,5,["prod:models\\loras\\awesomeloras\\","prod:models\\loras\\","norm:models\\loras\\newloras\\"]],
+  ["Wan21_CausVid_14B_T2V_lora_rank32.safetensors","loras",1352,5,["prod:models\\loras\\awesomeloras\\","prod:models\\loras\\ !twin","norm:models\\loras\\newloras\\"]],
   ["Wan2.1_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors","loras",1270,7,["prod:models\\loras\\awesomeloras\\","norm:models\\loras\\newloras\\"]],
   ["wan2.2_i2v_lightx2v_4step_lora_high_noise.safetensors","loras",625,6,["prod:models\\loras\\","norm:models\\loras\\newloras\\"]],
   ["wan2.2_i2v_lightx2v_4step_lora_low_noise.safetensors","loras",625,6,["prod:models\\loras\\","norm:models\\loras\\newloras\\"]],
@@ -160,6 +160,8 @@ const BLOCK_FLAGS: Record<string, BlockReason> = {
 };
 
 export interface Copy {
+  /** A second name for the bytes of the copy before it. Removing it frees nothing. */
+  sharesBytes?: boolean;
   installId: string;
   /** Folder as written in the install, or an absolute folder from the yaml. */
   folder: string;
@@ -193,7 +195,7 @@ export interface World {
   installs: Install[];
   contents: Content[];
   vault: Map<string, VaultEntry>;
-  links: Link[];
+  links: LinkRecord[];
   freeBytes: number;
   /** ComfyUI is running out of these installs. */
   running: string[];
@@ -279,9 +281,11 @@ function parseCopy(raw: string, filename: string): Copy {
   let blocked: BlockReason | null = null;
   let name = filename;
 
+  let sharesBytes = false;
   const flag = /\s!(\w+)$/.exec(s);
   if (flag) {
-    blocked = BLOCK_FLAGS[flag[1]!] ?? null;
+    if (flag[1] === "twin") sharesBytes = true;
+    else blocked = BLOCK_FLAGS[flag[1]!] ?? null;
     s = s.slice(0, flag.index);
   }
   const alias = /\s>(\S+)$/.exec(s);
@@ -304,6 +308,7 @@ function parseCopy(raw: string, filename: string): Copy {
     volume: absPath.slice(0, 2).toUpperCase(),
     isLink: false,
     blocked,
+    sharesBytes,
   };
 }
 
@@ -444,7 +449,7 @@ export function scanTotalsOf(
   };
 }
 
-export function scanResultOf(world: World, scanId: string, cancelled = false): ScanResult {
+export function scanResultOf(world: World, scanId: string, cancelled = false): ScanRecord {
   const perInstall: InstallScanTotals[] = world.installs.map((install) => ({
     ...scanTotalsOf(world, install.id),
     installId: install.id,
@@ -462,7 +467,7 @@ export function scanResultOf(world: World, scanId: string, cancelled = false): S
   };
 }
 
-export function scanEntriesOf(world: World): ScanEntry[] {
+export function scanEntriesOf(world: World): ScanEntryWithCount[] {
   return movableCopies(world).map(({ content, copy }) => ({
     absPath: copy.absPath,
     relPath: copy.relPath,
@@ -470,7 +475,7 @@ export function scanEntriesOf(world: World): ScanEntry[] {
     category: content.category,
     sizeBytes: content.bytes,
     sha256: content.sha256,
-    modifiedAt: "2026-09-10T08:00:00.000Z",
+    mtimeNanos: "1757491200000000000",
     classification: copy.isLink ? "alreadyInVault" : "movable",
     occurrenceCount: content.copies.length,
     linkTarget: copy.isLink
@@ -548,6 +553,8 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       relPath: sourceCopy.relPath,
       sameVolumeAsVault: sourceCopy.volume === VAULT_VOLUME,
       chosenBecause,
+      sizeBytes: content.bytes,
+      mtimeNanos: "1757491200000000000",
     };
 
     // Every place that held the file gets a link, the one the bytes move out
@@ -560,20 +567,31 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       linkName: copy.name,
       nameDiffersFromVault: copy.name !== vaultName,
       isSource: copy.absPath === sourceCopy.absPath,
+      sharesBytesWithAnother: copy.sharesBytes === true,
+      sizeBytes: content.bytes,
+      mtimeNanos: "1757491200000000000",
     }));
+
+    // Paths that are second names for bytes already counted free nothing when
+    // they go, so the space this group returns counts real files, not paths.
+    const distinctFiles = sorted.filter((c) => c.sharesBytes !== true).length;
 
     groups.push({
       groupId: `g-${content.sha256.slice(0, 12)}`,
       sha256: content.sha256,
       sizeBytes: content.bytes,
       category: content.category,
-      vaultRelPath: `${content.category}/${vaultName}`,
+      vaultRelPath: `${content.category}\\${vaultName}`,
       vaultNameAdjusted: adjusted,
       clashesWith: adjusted ? (owner ?? null) : null,
+      vaultAliases: [...new Set(sorted.map((c) => c.name))].filter(
+        (name) => name !== vaultName,
+      ),
       source,
       links,
       occurrences: sorted.length,
-      bytesFreed: (sorted.length - 1) * content.bytes,
+      distinctFiles,
+      bytesFreed: (distinctFiles - 1) * content.bytes,
       singleCopy: sorted.length === 1,
       crossVolume: sorted.some((c) => c.volume !== VAULT_VOLUME),
     });

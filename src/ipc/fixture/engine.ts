@@ -11,17 +11,20 @@ import { fileNameOf } from "~/domain/view";
 import { leafOf } from "~/domain/format";
 import type {
   ApplyProgress,
-  ApplyResult,
+  ApplyRecord,
   AppState,
   ConsolidationPlan,
   ContentFilter,
   ContentPage,
   DirectoryListing,
   Engine,
+  ExtraPath,
   Install,
   InstallCandidate,
   InterruptedApply,
-  Link,
+  LinkRecord,
+  LinkState,
+  LinkWithState,
   LockState,
   ModelDirNode,
   ModelMetadata,
@@ -31,7 +34,7 @@ import type {
   RunningComfy,
   ScanEntryPage,
   ScanProgress,
-  ScanResult,
+  ScanRecord,
   Settings,
   Unsubscribe,
   UsageResult,
@@ -103,6 +106,31 @@ function installTree(root: string): FakeFolder[] {
   ];
 }
 
+/**
+ * What an unregistered folder's extra_model_paths.yaml holds. A person adding
+ * an install meets its yaml for the first time here, complaints and all.
+ */
+const YAML_ON_DISK: Record<string, ExtraPath[]> = {
+  "C:\\ComfyUI-Portable": [
+    {
+      section: "comfyui",
+      category: "loras",
+      rawCategory: "loras",
+      path: "D:\\ai-models\\loras",
+      isDefault: false,
+      exists: true,
+    },
+    {
+      section: "comfyui",
+      category: "..\\..\\ESCAPED",
+      rawCategory: "..\\..\\ESCAPED",
+      path: "D:\\ai-models\\spare",
+      isDefault: false,
+      exists: true,
+    },
+  ],
+};
+
 const DISK: FakeFolder[] = [
   {
     path: "C:\\",
@@ -166,9 +194,9 @@ export class FixtureEngine implements Engine {
   private world: World = buildWorld();
   private disk: FakeFolder[] = DISK.map((f) => ({ ...f, children: [...f.children] }));
   private vaultOpen = true;
-  private lastScan: ScanResult | null = null;
+  private lastScan: ScanRecord | null = null;
   private plans = new Map<string, ConsolidationPlan>();
-  private applies: ApplyResult[] = [];
+  private applies: ApplyRecord[] = [];
   private worldBeforeApply: World | null = null;
   private busy: AppState["busy"] = null;
 
@@ -179,13 +207,13 @@ export class FixtureEngine implements Engine {
   private renamedSinceApply = new Set<string>();
 
   private scanProgressEvent = new Emitter<ScanProgress>();
-  private scanDoneEvent = new Emitter<ScanResult>();
+  private scanDoneEvent = new Emitter<ScanRecord>();
   private scanErrorEvent = new Emitter<VaultError>();
   private applyProgressEvent = new Emitter<ApplyProgress>();
-  private applyDoneEvent = new Emitter<ApplyResult>();
+  private applyDoneEvent = new Emitter<ApplyRecord>();
   private applyErrorEvent = new Emitter<VaultError>();
   private revertProgressEvent = new Emitter<ApplyProgress>();
-  private revertDoneEvent = new Emitter<ApplyResult>();
+  private revertDoneEvent = new Emitter<ApplyRecord>();
   private revertErrorEvent = new Emitter<VaultError>();
 
   /** Everything is this many times faster. Tests pass a large number. */
@@ -215,7 +243,7 @@ export class FixtureEngine implements Engine {
     this.lastScan = null;
   }
 
-  private recordScan(scanId: string): ScanResult {
+  private recordScan(scanId: string): ScanRecord {
     const result = scanResultOf(this.world, scanId);
     this.lastScan = result;
     this.world.installs = this.world.installs.map((install) => ({
@@ -297,8 +325,7 @@ export class FixtureEngine implements Engine {
       minFileSizeBytes: 1048576,
       followExtraModelPaths: true,
       scanOutputModelDirs: true,
-      // The name the engine puts on the wire today. See `cacheDirsOf`.
-      huggingfaceCacheDirs: null,
+      huggingFaceCacheDirs: null,
       verifyBeforeDelete: this.world.verifyBeforeDelete,
     };
   }
@@ -323,6 +350,12 @@ export class FixtureEngine implements Engine {
     if (!folder.children.some((c) => leafOf(c).toLowerCase() === "models")) {
       return invalidCandidate("No models folder was found inside that folder.");
     }
+    // An install this world already knows carries its real yaml, complaints
+    // and all, so the picker shows what registering it will really read.
+    const known = this.world.installs.find(
+      (i) => i.root.toLowerCase() === path.toLowerCase(),
+    );
+    const extraPaths = known?.extraPaths ?? YAML_ON_DISK[path] ?? [];
     return {
       valid: true,
       root: path,
@@ -334,13 +367,18 @@ export class FixtureEngine implements Engine {
       markersMissing: [],
       contentCheckPassed: true,
       otherCandidates: [],
-      version: "0.29.1",
-      versionSource: "comfyui_version.py",
+      version: known?.version ?? "0.29.1",
+      versionSource: known?.versionSource ?? "comfyui_version.py",
       modelsDir: `${path}\\models`,
       modelsDirExists: true,
-      extraPathsFile: null,
-      extraPaths: [],
-      extraPathsError: null,
+      extraPathsFile: extraPaths.length > 0 ? `${path}\\extra_model_paths.yaml` : null,
+      extraPaths: extraPaths.filter((e) => !refusedCategory(e.rawCategory)),
+      extraPathsProblems: extraPaths
+        .filter((e) => refusedCategory(e.rawCategory))
+        .map(
+          (e) =>
+            `In section "${e.section}", "${e.rawCategory}" cannot be a model folder name, so it was skipped. A model folder name cannot contain a path separator.`,
+        ),
       outputModelDirs: [],
       reason: null,
     };
@@ -554,7 +592,7 @@ export class FixtureEngine implements Engine {
     this.scanTimer = null;
   }
 
-  async getLastScan(): Promise<ScanResult | null> {
+  async getLastScan(): Promise<ScanRecord | null> {
     return this.lastScan;
   }
 
@@ -574,7 +612,7 @@ export class FixtureEngine implements Engine {
   onScanProgress(fn: (p: ScanProgress) => void): Unsubscribe {
     return this.scanProgressEvent.on(fn);
   }
-  onScanDone(fn: (r: ScanResult) => void): Unsubscribe {
+  onScanDone(fn: (r: ScanRecord) => void): Unsubscribe {
     return this.scanDoneEvent.on(fn);
   }
   onScanError(fn: (e: VaultError) => void): Unsubscribe {
@@ -659,13 +697,15 @@ export class FixtureEngine implements Engine {
       if (overall >= 1) {
         this.stopApplyTimer();
         this.busy = null;
-        // A group stopped by a cancel is rolled back, not failed. The person
-        // asked for it to stop, so there is nothing to report as gone wrong.
+        // The group a cancel interrupts is rolled back, not failed: the person
+        // asked for it to stop. A group that genuinely failed before they
+        // pressed stop is still reported, because nothing else mentions it.
         const cancelled = this.applyCancelling;
-        const failed = !cancelled && changesAt >= 0 ? groups[changesAt] : undefined;
-        const result: ApplyResult = {
+        const failed = changesAt >= 0 && reached > changesAt ? groups[changesAt] : undefined;
+        const result: ApplyRecord = {
           applyId,
           planId: args.planId,
+          groupIds: args.groupIds,
           state: cancelled ? "cancelled" : failed ? "completedWithErrors" : "completed",
           startedAt: new Date(started).toISOString(),
           finishedAt: new Date().toISOString(),
@@ -732,7 +772,7 @@ export class FixtureEngine implements Engine {
         vaultRelPath: group.vaultRelPath,
         createdAt: new Date().toISOString(),
         createdBy: "apply",
-        state: "ok",
+        applyId: this.busy?.id ?? null,
       });
     }
     this.world.freeBytes += group.bytesFreed;
@@ -748,13 +788,13 @@ export class FixtureEngine implements Engine {
     this.applyTimer = null;
   }
 
-  async getApplyResult(applyId: string): Promise<ApplyResult> {
+  async getApplyResult(applyId: string): Promise<ApplyRecord> {
     const result = this.applies.find((a) => a.applyId === applyId);
     if (!result) throw error("notFound", "That run is not on record.");
     return result;
   }
 
-  async listApplies(): Promise<ApplyResult[]> {
+  async listApplies(): Promise<ApplyRecord[]> {
     return this.applies;
   }
 
@@ -804,7 +844,7 @@ export class FixtureEngine implements Engine {
   onApplyProgress(fn: (p: ApplyProgress) => void): Unsubscribe {
     return this.applyProgressEvent.on(fn);
   }
-  onApplyDone(fn: (r: ApplyResult) => void): Unsubscribe {
+  onApplyDone(fn: (r: ApplyRecord) => void): Unsubscribe {
     return this.applyDoneEvent.on(fn);
   }
   onApplyError(fn: (e: VaultError) => void): Unsubscribe {
@@ -813,7 +853,7 @@ export class FixtureEngine implements Engine {
   onRevertProgress(fn: (p: ApplyProgress) => void): Unsubscribe {
     return this.revertProgressEvent.on(fn);
   }
-  onRevertDone(fn: (r: ApplyResult) => void): Unsubscribe {
+  onRevertDone(fn: (r: ApplyRecord) => void): Unsubscribe {
     return this.revertDoneEvent.on(fn);
   }
   onRevertError(fn: (e: VaultError) => void): Unsubscribe {
@@ -827,7 +867,7 @@ export class FixtureEngine implements Engine {
     sha256: string;
     relativeDir: string;
     linkName?: string;
-  }): Promise<Link> {
+  }): Promise<LinkRecord> {
     const install = this.world.installs.find((i) => i.id === args.installId);
     if (!install) throw error("notFound", "That install is not registered.");
     const entry = this.world.vault.get(args.sha256);
@@ -837,7 +877,7 @@ export class FixtureEngine implements Engine {
     if (this.world.links.some((l) => l.absPath === absPath)) {
       throw error("conflict", "Something already sits at that name.");
     }
-    const link: Link = {
+    const link: LinkRecord = {
       id: `link-${this.world.links.length + 1}`,
       installId: args.installId,
       absPath,
@@ -847,7 +887,7 @@ export class FixtureEngine implements Engine {
       vaultRelPath: entry.canonicalName,
       createdAt: new Date().toISOString(),
       createdBy: "manual",
-      state: "ok",
+      applyId: null,
     };
     this.world.links.push(link);
     return link;
@@ -867,10 +907,21 @@ export class FixtureEngine implements Engine {
     return { absPath: `${install.root}\\${relativeDir}`, created: true };
   }
 
-  async listLinks(filter?: { sha256?: string }): Promise<Link[]> {
-    return filter?.sha256
+  async listLinks(filter?: { sha256?: string }): Promise<LinkWithState[]> {
+    const links = filter?.sha256
       ? this.world.links.filter((l) => l.sha256 === filter.sha256)
       : this.world.links;
+    // State is a fact about the drive, read now rather than remembered.
+    return links.map((link) => ({ ...link, state: this.stateOf(link) }));
+  }
+
+  /** What is actually at a link's path this moment. */
+  private stateOf(link: LinkRecord): LinkState {
+    if (!this.world.vault.has(link.sha256)) return "dangling";
+    const content = this.world.contents.find((c) => c.sha256 === link.sha256);
+    const copy = content?.copies.find((x) => x.absPath === link.absPath);
+    if (copy === undefined) return "missing";
+    return copy.isLink ? "ok" : "replaced";
   }
 
   // ── vault contents ────────────────────────────────────────────────────────
@@ -1183,7 +1234,7 @@ function invalidCandidate(reason: string): InstallCandidate {
     modelsDirExists: false,
     extraPathsFile: null,
     extraPaths: [],
-    extraPathsError: null,
+    extraPathsProblems: [],
     outputModelDirs: [],
     reason,
   };
@@ -1197,6 +1248,11 @@ function parentOf(path: string): string | null {
   if (at < 0) return null;
   const parent = trimmed.slice(0, at);
   return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
+
+/** A category name that would put a file outside the vault. */
+function refusedCategory(rawCategory: string): boolean {
+  return rawCategory.includes("\\") || rawCategory.includes("/");
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {

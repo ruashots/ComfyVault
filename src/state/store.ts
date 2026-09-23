@@ -34,7 +34,7 @@ import {
 import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
-  ApplyResult,
+  ApplyRecord,
   AppState,
   ConsolidationPlan,
   ContentRow,
@@ -43,11 +43,11 @@ import type {
   Install,
   InstallCandidate,
   InterruptedApply,
-  Link,
+  LinkRecord,
   NameGroup,
   RunningComfy,
   ScanProgress,
-  ScanResult,
+  ScanRecord,
   UsageResult,
   VaultFile,
   VaultHealth,
@@ -138,7 +138,7 @@ export interface AppStore {
   readonly appState: Accessor<AppState | null>;
   readonly vault: Accessor<VaultInfo | null>;
   readonly installs: Accessor<readonly Install[]>;
-  readonly scan: Accessor<ScanResult | null>;
+  readonly scan: Accessor<ScanRecord | null>;
   readonly plan: Accessor<ConsolidationPlan | null>;
   readonly vaultFiles: Accessor<readonly VaultFile[]>;
   readonly nameGroups: Accessor<readonly NameGroup[]>;
@@ -150,10 +150,10 @@ export interface AppStore {
    * "missing" model writes straight through it into the vault, so this is the
    * first thing the interface says.
    */
-  readonly danglingLinks: Accessor<readonly Link[]>;
+  readonly danglingLinks: Accessor<readonly LinkRecord[]>;
   readonly running: Accessor<readonly RunningComfy[]>;
   readonly interrupted: Accessor<readonly InterruptedApply[]>;
-  readonly lastApply: Accessor<ApplyResult | null>;
+  readonly lastApply: Accessor<ApplyRecord | null>;
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
@@ -240,7 +240,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [appState, setAppState] = createSignal<AppState | null>(null);
   const [vault, setVault] = createSignal<VaultInfo | null>(null);
   const [installs, setInstalls] = createSignal<readonly Install[]>([]);
-  const [scan, setScan] = createSignal<ScanResult | null>(null);
+  const [scan, setScan] = createSignal<ScanRecord | null>(null);
   const [plan, setPlan] = createSignal<ConsolidationPlan | null>(null);
   const [vaultFiles, setVaultFiles] = createSignal<readonly VaultFile[]>([]);
   const [nameGroups, setNameGroups] = createSignal<readonly NameGroup[]>([]);
@@ -248,7 +248,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [health, setHealth] = createSignal<VaultHealth | null>(null);
   const [running, setRunning] = createSignal<readonly RunningComfy[]>([]);
   const [interrupted, setInterrupted] = createSignal<readonly InterruptedApply[]>([]);
-  const [lastApply, setLastApply] = createSignal<ApplyResult | null>(null);
+  const [lastApply, setLastApply] = createSignal<ApplyRecord | null>(null);
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
@@ -318,7 +318,7 @@ export function createAppStore(engine: Engine): AppStore {
 
   const hasInstalls = createMemo(() => installs().length > 0);
 
-  const danglingLinks = createMemo<readonly Link[]>(
+  const danglingLinks = createMemo<readonly LinkRecord[]>(
     () => health()?.danglingLinks ?? [],
   );
 

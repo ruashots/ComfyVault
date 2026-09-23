@@ -14,8 +14,8 @@ afterEach(() => {
 });
 
 /** Start a run over every group, with the machine clear and the clock fast. */
-async function runApply(): Promise<Harness> {
-  const engine = new FixtureEngine({ speed: 200 });
+async function runApply(speed = 200): Promise<Harness> {
+  const engine = new FixtureEngine({ speed });
   engine.devSetSymlinksSupported(true);
   engine.devSetComfyRunning(false);
   harness = await renderWithApp(() => <App />, { engine });
@@ -29,26 +29,31 @@ async function runApply(): Promise<Harness> {
   return harness;
 }
 
+/** The fixture's one file that changes under the run, at group 6. */
+const CHANGES_AT = 6;
+
 describe("stopping a run", () => {
-  it("reports nothing as a failure, because the person asked it to stop", async () => {
-    const { app, engine } = await runApply();
+  it("adds no failure of its own, because the person asked it to stop", async () => {
+    // Slow enough to stop before the one file that changes under the run.
+    const { app, engine } = await runApply(20);
     await waitFor(() => app.applyProgress() !== null);
     await engine.cancelApply();
     await waitFor(() => app.lastApply() !== null);
 
     const run = app.lastApply()!;
+    expect(run.groupsApplied).toBeLessThan(CHANGES_AT);
     expect(run.state).toBe("cancelled");
+    // The group the stop interrupted was put back, not reported as gone wrong.
     expect(run.failures).toEqual([]);
     expect(run.groupsFailed).toBe(0);
     // It stopped where it was. It did not race to the end of the plan.
-    expect(run.groupsApplied).toBeLessThan(run.groupsRequested);
     expect(run.groupsApplied).toBeGreaterThan(0);
     // And what it did finish is still there to undo.
     expect(run.revertible).toBe(true);
   });
 
-  it("shows no list of files left alone, and says the person stopped it", async () => {
-    const { app, engine } = await runApply();
+  it("says the person stopped it, and lists nothing as left alone", async () => {
+    const { app, engine } = await runApply(20);
     await waitFor(() => app.applyProgress() !== null);
     await engine.cancelApply();
     await waitFor(() => app.lastApply() !== null);
@@ -57,6 +62,23 @@ describe("stopping a run", () => {
     expect(text).toContain("stopped when you asked");
     expect(text).not.toContain("was left alone");
     expect(text).not.toContain("were left alone");
+  });
+
+  it("still reports a file that failed before the person pressed stop", async () => {
+    const { app, engine } = await runApply();
+    await waitFor(() => (app.applyProgress()?.groupIndex ?? 0) > CHANGES_AT);
+    await engine.cancelApply();
+    await waitFor(() => app.lastApply() !== null);
+
+    const run = app.lastApply()!;
+    expect(run.state).toBe("cancelled");
+    // Nothing else in the interface mentions this file, so the stop must not
+    // swallow it.
+    expect(run.failures).toHaveLength(1);
+    expect(run.groupsFailed).toBe(1);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("stopped when you asked");
+    expect(text).toContain("One file was left alone");
   });
 
   it("promises only what stopping now does", async () => {

@@ -31,21 +31,7 @@ const CONTRACT = join(ROOT, "src", "ipc", "contract.ts");
  * one a decision rather than an accident. Anything not listed here is a
  * disagreement, and a disagreement is how a panel ends up empty.
  */
-const AGREED: Record<string, readonly string[]> = {
-  // The engine's field is `huggingface_cache_dirs` and serde reads
-  // "huggingface" as one word. comfyvault-core is renaming it to the two-word
-  // spelling. `cacheDirsOf` reads whichever arrives, so both names are correct
-  // while the rename is in flight. Remove both entries once it has landed.
-  Settings: ["huggingfaceCacheDirs", "huggingFaceCacheDirs"],
-
-  // Every name the vault holds for this content. Cleanup reads them from
-  // `list_name_groups`, which is the screen that acts on them.
-  PlanGroup: ["vaultAliases", "distinctFiles"],
-  // Size and modification time are what the engine re-checks at apply time.
-  // No screen shows them, and the report shows the group's size instead.
-  PlanLink: ["sharesBytesWithAnother", "sizeBytes", "mtimeNanos"],
-  PlanSource: ["sizeBytes", "mtimeNanos"],
-};
+const AGREED: Record<string, readonly string[]> = {};
 
 function rustFiles(dir: string): string[] {
   const out: string[] = [];

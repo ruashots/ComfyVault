@@ -66,6 +66,15 @@ export interface PlatformReport {
   longPathsEnabled: boolean | null;
 }
 
+/**
+ * A file's modification time, in nanoseconds since 1970, as text.
+ *
+ * Not a number. The engine sends 1758240123456789012 and `JSON.parse` hands
+ * back 1758240123456789000, because a JavaScript number cannot hold the last
+ * digits. Divide by 1000000 for milliseconds if a date is what is wanted.
+ */
+export type NanoTime = string;
+
 export interface Settings {
   metadataLookupsEnabled: boolean;
   hashCacheEnabled: boolean;
@@ -78,15 +87,10 @@ export interface Settings {
    * means work it out from the environment, an empty list means do not look,
    * and a list covers a cache moved to another drive.
    *
-   * It arrives under one of two names. The engine's field is
-   * `huggingface_cache_dirs`, and serde reads "huggingface" as one word, so
-   * the wire name today is `huggingfaceCacheDirs`. comfyvault-core is renaming
-   * it to the two-word spelling the product uses everywhere else. Until that
-   * lands, both are possible, so nothing reads either one directly: read
-   * `cacheDirsOf`. Drop `huggingfaceCacheDirs` once the rename is in.
+   * Read it through `cacheDirsOf`, which tells a field the engine did not send
+   * apart from one it sent as `null`.
    */
   huggingFaceCacheDirs?: string[] | null;
-  huggingfaceCacheDirs?: string[] | null;
   /**
    * Read a duplicate's bytes again, immediately before deleting it, and
    * compare them against the copy being kept. On by default. Deleting is the
@@ -101,9 +105,7 @@ export interface Settings {
  * same as `null`: `null` is "work it out from the environment".
  */
 export function cacheDirsOf(settings: Settings): string[] | null | undefined {
-  return settings.huggingFaceCacheDirs !== undefined
-    ? settings.huggingFaceCacheDirs
-    : settings.huggingfaceCacheDirs;
+  return settings.huggingFaceCacheDirs;
 }
 
 export interface AppState {
@@ -158,16 +160,24 @@ export interface InstallCandidate {
    * writing it to disk in 0.3.11, so an older install has no answer and the
    * interface must say unknown rather than guess.
    */
-  versionSource: "comfyui_version.py" | "pyproject.toml" | null;
+  versionSource: VersionSource | null;
   modelsDir: string | null;
   modelsDirExists: boolean;
   extraPathsFile: string | null;
   extraPaths: ExtraPath[];
-  extraPathsError: string | null;
+  /**
+   * One complaint per entry, empty when the file is clean. It used to be one
+   * string, so a file with three bad categories named three different lines in
+   * one run-on sentence.
+   */
+  extraPathsProblems: string[];
   outputModelDirs: string[];
   /** Why valid is false. */
   reason: string | null;
 }
+
+/** Where an install's version number was read from. */
+export type VersionSource = "comfyui_version.py" | "pyproject.toml";
 
 export interface Install {
   id: string;
@@ -176,7 +186,7 @@ export interface Install {
   root: string;
   modelsDir: string;
   version: string | null;
-  versionSource: string | null;
+  versionSource: VersionSource | null;
   extraPaths: ExtraPath[];
   outputModelDirs: string[];
   addedAt: string;
@@ -246,7 +256,7 @@ export interface ScanError {
   detail: string;
 }
 
-export interface ScanResult {
+export interface ScanRecord {
   scanId: string;
   startedAt: string;
   finishedAt: string;
@@ -265,18 +275,24 @@ export type Classification =
   | "externalLink"
   | "unreadable";
 
-export interface ScanEntry {
+export interface ScanEntryRecord {
   absPath: string;
   relPath: string;
   installId: string;
   category: string;
   sizeBytes: number;
   sha256: string | null;
-  modifiedAt: string;
+  mtimeNanos: NanoTime;
   classification: Classification;
-  /** How many paths hold these bytes. */
-  occurrenceCount: number;
   linkTarget: string | null;
+}
+
+/**
+ * A scan entry with how many paths in the whole scan hold those bytes. The
+ * count is over the whole scan, not over the rows a filter left behind.
+ */
+export interface ScanEntryWithCount extends ScanEntryRecord {
+  occurrenceCount: number;
 }
 
 export interface ScanEntryFilter {
@@ -291,7 +307,7 @@ export interface ScanEntryFilter {
 export interface ScanEntryPage {
   total: number;
   offset: number;
-  entries: ScanEntry[];
+  entries: ScanEntryRecord[];
 }
 
 // ── plan ────────────────────────────────────────────────────────────────────
@@ -303,6 +319,9 @@ export interface PlanSource {
   relPath: string;
   sameVolumeAsVault: boolean;
   chosenBecause: "sameVolume" | "onlyCopy" | "firstByPath";
+  /** As measured during the scan. */
+  sizeBytes: number;
+  mtimeNanos: NanoTime;
 }
 
 export interface PlanLink {
@@ -315,6 +334,16 @@ export interface PlanLink {
   nameDiffersFromVault: boolean;
   /** This copy's bytes become the vault file. Its old place gets a link too. */
   isSource: boolean;
+  /**
+   * This path is a second name for a file already counted in this group. Two
+   * names, one set of bytes, so removing this one returns no space while the
+   * other name remains. The row says so, rather than the total quietly
+   * disagreeing with the paths above it.
+   */
+  sharesBytesWithAnother: boolean;
+  /** As measured during the scan. */
+  sizeBytes: number;
+  mtimeNanos: NanoTime;
 }
 
 export interface PlanGroup {
@@ -327,6 +356,8 @@ export interface PlanGroup {
   vaultNameAdjusted: boolean;
   /** The SHA-256 that already owns the plain name. */
   clashesWith: string | null;
+  /** Other names these copies use, kept beside the vault file as aliases. */
+  vaultAliases: string[];
   source: PlanSource;
   /**
    * Every place that gets a link, the one the bytes move out of included, so
@@ -335,6 +366,12 @@ export interface PlanGroup {
    */
   links: PlanLink[];
   occurrences: number;
+  /**
+   * How many real files those paths are. Lower than `occurrences` when some of
+   * them are second names for one set of bytes, and `bytesFreed` counts these
+   * rather than the paths.
+   */
+  distinctFiles: number;
   bytesFreed: number;
   singleCopy: boolean;
   crossVolume: boolean;
@@ -432,9 +469,11 @@ export type ApplyState =
   | "interrupted"
   | "reverted";
 
-export interface ApplyResult {
+export interface ApplyRecord {
   applyId: string;
   planId: string;
+  /** The groups this run was asked for, so a resume finishes only those. */
+  groupIds: string[];
   state: ApplyState;
   startedAt: string;
   finishedAt: string | null;
@@ -461,7 +500,7 @@ export interface InterruptedApply {
 
 // ── links ───────────────────────────────────────────────────────────────────
 
-export interface Link {
+export interface LinkRecord {
   id: string;
   installId: string;
   absPath: string;
@@ -471,8 +510,22 @@ export interface Link {
   vaultRelPath: string;
   createdAt: string;
   createdBy: "apply" | "manual";
-  state: "ok" | "dangling" | "replaced" | "missing";
+  /** The run that made it, or null for one made by hand. */
+  applyId: string | null;
 }
+
+/**
+ * A stored link with its state measured on disk just now.
+ *
+ * `LinkRecord` carries no state of its own, because state is a fact about the
+ * drive and a stored copy of it goes stale the moment something else moves a
+ * file.
+ */
+export interface LinkWithState extends LinkRecord {
+  state: LinkState;
+}
+
+export type LinkState = "ok" | "dangling" | "replaced" | "missing";
 
 // ── vault contents ──────────────────────────────────────────────────────────
 
@@ -486,7 +539,7 @@ export interface VaultFile {
   /** Other names this content carries inside the vault. */
   aliases: string[];
   linkCount: number;
-  links: Link[];
+  links: LinkRecord[];
   metadata: ModelMetadata | null;
   present: boolean;
 }
@@ -558,8 +611,8 @@ export interface VaultHealth {
   checkedLinks: number;
   checkedFiles: number;
   /** The link exists, the target does not. The most serious result. */
-  danglingLinks: Link[];
-  replacedLinks: Link[];
+  danglingLinks: LinkRecord[];
+  replacedLinks: LinkRecord[];
   missingVaultFiles: VaultFile[];
   foreignFiles: string[];
   ok: boolean;
@@ -706,7 +759,7 @@ export interface Engine {
   // scan
   startScan(installIds?: string[]): Promise<{ scanId: string }>;
   cancelScan(scanId: string): Promise<{ cancelled: true }>;
-  getLastScan(): Promise<ScanResult | null>;
+  getLastScan(): Promise<ScanRecord | null>;
   getScanEntries(args: {
     scanId: string;
     offset: number;
@@ -714,7 +767,7 @@ export interface Engine {
     filter?: ScanEntryFilter;
   }): Promise<ScanEntryPage>;
   onScanProgress(fn: (p: ScanProgress) => void): Unsubscribe;
-  onScanDone(fn: (r: ScanResult) => void): Unsubscribe;
+  onScanDone(fn: (r: ScanRecord) => void): Unsubscribe;
   onScanError(fn: (e: VaultError) => void): Unsubscribe;
 
   // plan
@@ -729,16 +782,16 @@ export interface Engine {
     stopOnError?: boolean;
   }): Promise<{ applyId: string }>;
   cancelApply(applyId: string): Promise<{ cancelled: true }>;
-  getApplyResult(applyId: string): Promise<ApplyResult>;
-  listApplies(): Promise<ApplyResult[]>;
+  getApplyResult(applyId: string): Promise<ApplyRecord>;
+  listApplies(): Promise<ApplyRecord[]>;
   getInterruptedApplies(): Promise<InterruptedApply[]>;
   resumeApply(applyId: string): Promise<{ applyId: string }>;
   revertApply(applyId: string): Promise<{ applyId: string }>;
   onApplyProgress(fn: (p: ApplyProgress) => void): Unsubscribe;
-  onApplyDone(fn: (r: ApplyResult) => void): Unsubscribe;
+  onApplyDone(fn: (r: ApplyRecord) => void): Unsubscribe;
   onApplyError(fn: (e: VaultError) => void): Unsubscribe;
   onRevertProgress(fn: (p: ApplyProgress) => void): Unsubscribe;
-  onRevertDone(fn: (r: ApplyResult) => void): Unsubscribe;
+  onRevertDone(fn: (r: ApplyRecord) => void): Unsubscribe;
   onRevertError(fn: (e: VaultError) => void): Unsubscribe;
 
   // links
@@ -748,17 +801,18 @@ export interface Engine {
     relativeDir: string;
     linkName?: string;
     createDir?: boolean;
-  }): Promise<Link>;
+  }): Promise<LinkRecord>;
   removeLink(linkId: string): Promise<{ removed: true }>;
   createModelFolder(
     installId: string,
     relativeDir: string,
   ): Promise<{ absPath: string; created: boolean }>;
+  /** Each stored link with its state read off the drive just now. */
   listLinks(filter?: {
     installId?: string;
     sha256?: string;
-    state?: Link["state"];
-  }): Promise<Link[]>;
+    state?: LinkState;
+  }): Promise<LinkWithState[]>;
 
   // vault contents
   listVaultFiles(args: {
