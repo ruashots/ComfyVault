@@ -294,14 +294,29 @@ Returns:
 type VaultInfo = {
   root: string
   createdAt: string
-  volume: string          // 'C:' on Windows, the mount point on Linux
-  freeBytes: number
-  totalBytes: number
+  volume: string          // the drive root: 'C:\\', with the separator
+  freeBytes: number | null    // null when the drive could not be read
+  totalBytes: number | null
   fileCount: number
   totalStoredBytes: number
   schemaVersion: number
 }
 ```
+
+**`volume` is the drive root and it carries a trailing separator.** Windows
+answers `C:\`, not `C:`, and the engine passes that through. Do not compare it
+against the first characters of a path. Comparing `C:\` with `C:` makes every
+install on the vault's own drive look like it is on a different one, and the
+person is told their files will be copied when they will in fact be renamed.
+Normalise both sides before comparing, or compare drives by asking the engine.
+
+On a system without drive letters `volume` is an opaque identifier for the
+device, not a path. Treat it as a value to compare for equality and never as
+something to display or to join onto.
+
+`freeBytes` and `totalBytes` are null together when the drive could not be
+read, which is the same rule as `list_drives`. Never zero for unknown.
+
 
 Errors: `ioError`, `permissionDenied`, `storeError`, `invalidArgument`.
 

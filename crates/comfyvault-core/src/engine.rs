@@ -108,9 +108,18 @@ pub struct AppState {
 pub struct VaultInfo {
     pub root: String,
     pub created_at: crate::time_util::Timestamp,
+    /// Which drive the vault is on, as the operating system names it.
+    ///
+    /// On Windows this is the drive root and it carries a trailing separator:
+    /// `C:\`, not `C:`. Do not compare it against the first characters of a
+    /// path. Comparing `C:\` with `C:` said every install on the vault's own
+    /// drive was on a different one, and the person was told their files would
+    /// be copied when they would in fact be renamed.
     pub volume: String,
-    pub free_bytes: u64,
-    pub total_bytes: u64,
+    /// Null together when the drive could not be read. Never zero: zero of
+    /// zero reads as a completely full drive, which is a different statement.
+    pub free_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
     pub file_count: u64,
     pub total_stored_bytes: u64,
     pub schema_version: u32,
@@ -281,8 +290,8 @@ impl Engine {
                 .volume_id(store.vault_root())
                 .map(|v| v.0)
                 .unwrap_or_default(),
-            free_bytes: space.map(|s| s.free_bytes).unwrap_or(0),
-            total_bytes: space.map(|s| s.total_bytes).unwrap_or(0),
+            free_bytes: space.map(|s| s.free_bytes),
+            total_bytes: space.map(|s| s.total_bytes),
             file_count: files.len() as u64,
             total_stored_bytes: files.iter().map(|f| f.size_bytes).sum(),
             schema_version: crate::store::SCHEMA_VERSION,

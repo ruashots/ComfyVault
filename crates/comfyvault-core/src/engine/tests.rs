@@ -9,16 +9,16 @@ use crate::testkit::{weights, weights_hash};
 struct Fixture {
     dir: tempfile::TempDir,
     engine: Arc<Engine>,
+    platform: Arc<FakePlatform>,
 }
 
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let engine = Engine::with_platform(
-            dir.path().join("config/config.json"),
-            Arc::new(FakePlatform::new()),
-        );
-        Self { dir, engine }
+        let platform = Arc::new(FakePlatform::new());
+        let engine =
+            Engine::with_platform(dir.path().join("config/config.json"), platform.clone());
+        Self { dir, engine, platform }
     }
 
     fn open_vault(&self) -> VaultInfo {
@@ -177,6 +177,29 @@ fn a_first_run_has_to_open_a_vault_before_it_can_add_an_install() {
     let install = e.register_install(&install_dir, None).expect("register the install");
     assert_eq!(e.installs().unwrap().len(), 1);
     assert_eq!(install.root, crate::paths::canonicalize_clean(&install_dir).unwrap_or(install_dir));
+}
+
+#[test]
+fn a_vault_on_a_drive_that_stops_answering_says_nothing_rather_than_zero() {
+    // Zero of zero reads as a completely full drive, with a tick beside it.
+    // The number is the most-read one in the application, so it says nothing
+    // when nothing is known.
+    let f = Fixture::new();
+    let vault = f.dir.path().join("ComfyVault");
+    let info = f.engine.select_vault(&vault, true).expect("create the vault");
+    assert!(info.free_bytes.is_some(), "a readable drive reports its space");
+
+    f.platform.fail_disk_space(true);
+    let info = f.engine.vault_info().expect("the vault is still open");
+    assert_eq!(info.free_bytes, None, "free space must be unknown, not zero");
+    assert_eq!(info.total_bytes, None, "total size must be unknown, not zero");
+
+    let v = serde_json::to_value(&info).unwrap();
+    assert!(v["freeBytes"].is_null());
+    assert_ne!(v["freeBytes"], serde_json::json!(0));
+    // The rest of the answer still arrives. One unreadable figure does not
+    // take the screen down.
+    assert!(!v["root"].as_str().unwrap().is_empty());
 }
 
 // --- the vault -------------------------------------------------------------
@@ -610,8 +633,11 @@ fn vault_facts_can_be_read_without_reopening_the_vault() {
 
     assert_eq!(again.root, opened.root);
     assert_eq!(again.created_at, opened.created_at);
-    assert!(again.total_bytes > 0, "the drive has a size");
-    assert!(again.free_bytes <= again.total_bytes);
+    // A readable drive reports both figures, and null would mean it was not.
+    let total = again.total_bytes.expect("the drive the vault is on is readable");
+    let free = again.free_bytes.expect("the drive the vault is on is readable");
+    assert!(total > 0, "the drive has a size");
+    assert!(free <= total);
     assert_eq!(again.file_count, 0);
 }
 

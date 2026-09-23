@@ -592,6 +592,7 @@ struct FakeState {
     force_cross_volume: bool,
     processes: Option<Vec<ProcessInfo>>,
     free_bytes_override: Option<u64>,
+    disk_space_fails: bool,
     /// Paths where a rename fails outright, with the error kind to raise.
     rename_failures: HashMap<PathBuf, std::io::ErrorKind>,
     /// Stands in for a computer with several drives.
@@ -665,6 +666,13 @@ impl FakePlatform {
 
     pub fn set_drive_roots(&self, roots: Vec<PathBuf>) -> &Self {
         self.state.lock().unwrap().drive_roots = Some(roots);
+        self
+    }
+
+    /// Makes the drive stop answering, the way a card reader with nothing in
+    /// it or a network drive that went away does.
+    pub fn fail_disk_space(&self, yes: bool) -> &Self {
+        self.state.lock().unwrap().disk_space_fails = yes;
         self
     }
 
@@ -744,6 +752,13 @@ impl Platform for FakePlatform {
     }
 
     fn disk_space(&self, path: &Path) -> Result<DiskSpace> {
+        if self.state.lock().unwrap().disk_space_fails {
+            return Err(crate::VaultError::new(
+                crate::ErrorCode::IoError,
+                "Could not read how much space that drive has.",
+            )
+            .with_path(path));
+        }
         let mut space = self.inner.disk_space(path)?;
         if let Some(free) = self.state.lock().unwrap().free_bytes_override {
             space.free_bytes = free;

@@ -424,9 +424,13 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             VaultInfo {
                 root: r"C:\ComfyVault".into(),
                 created_at: ADDED_AT,
-                volume: "C:".into(),
-                free_bytes: 288_000_000_000,
-                total_bytes: 2_000_398_934_016,
+                // The drive root, with its separator, which is what Windows
+                // returns. Written "C:" here once, and the interface compared
+                // it against a path's first two characters and told people
+                // their files would be copied.
+                volume: r"C:\".into(),
+                free_bytes: Some(288_000_000_000),
+                total_bytes: Some(2_000_398_934_016),
                 file_count: 241,
                 total_stored_bytes: 388_000_000_000,
                 schema_version: 1,
@@ -748,6 +752,11 @@ fn read_repo_file(relative: &str) -> String {
              repository folder as this machine sees it."
         , path.display())
     })
+}
+
+/// A drive root ends with a separator on every system this runs on.
+fn ends_with_a_separator(s: &str) -> bool {
+    s.ends_with('\\') || s.ends_with('/')
 }
 
 fn golden_dir() -> PathBuf {
@@ -1234,5 +1243,77 @@ fn every_command_is_wired_into_the_window() {
         missing.is_empty(),
         "these commands are written but not listed in the handler, so the \
          interface cannot call them: {missing:?}"
+    );
+}
+
+#[test]
+fn the_sample_values_that_come_from_the_operating_system_have_the_shape_it_gives() {
+    // Most sample values are the engine's own data, and a wrong one shows up
+    // the moment anyone looks. A few are whatever the operating system hands
+    // back, and for those the literal here says what somebody typed rather
+    // than what the engine will send.
+    //
+    // It has already cost a person a wrong message. `volume` was written "C:"
+    // and Windows returns "C:\\". The interface compared the two, decided the
+    // vault was on a different drive from every install, and said their files
+    // would be copied when they would in fact be renamed.
+    //
+    // Neither a check on names nor a check on kinds can see this: the name was
+    // right and both are strings. So the value is compared against a live
+    // answer from the platform this is running on.
+    let platform = crate::platform::NativePlatform;
+    let all = samples();
+    let by_name = |name: &str| -> serde_json::Value {
+        all.iter().find(|(n, _)| *n == name).expect("sample").1.clone()
+    };
+
+    // volume: the real shape, asked of the real operating system.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let real = crate::platform::Platform::volume_id(&platform, dir.path())
+        .expect("this machine must be able to name its own drive")
+        .0;
+    let info = by_name("VaultInfo");
+    let sampled = info["volume"].as_str().expect("volume is text").to_string();
+    assert!(!real.is_empty(), "the platform named no drive at all");
+    // On Windows naming a drive gives its root, which ends with a separator.
+    // On other systems it is an opaque device number and has no shape to
+    // check, so only the live Windows answer is held to the rule. The sample
+    // shows a Windows machine either way, so it is always held to it.
+    if cfg!(windows) {
+        assert!(
+            ends_with_a_separator(&real),
+            "this system named a drive as {real:?}, with no separator on the end"
+        );
+    }
+    assert!(
+        ends_with_a_separator(&sampled),
+        "the sample says volume is {sampled:?}. A drive root ends with a \
+         separator, and an interface that compares this against the start of a \
+         path will decide the vault is somewhere it is not"
+    );
+
+    // os: the sample claims to show a Windows machine, and the name must be
+    // one the engine really produces rather than a word chosen here.
+    let report = by_name("PlatformReport");
+    let os = report["os"].as_str().expect("os is text");
+    assert!(
+        ["windows", "linux", "macos"].contains(&os),
+        "the sample's operating system name is {os:?}, which the engine never sends"
+    );
+
+    // drive roots: same rule as volume.
+    let drives = crate::platform::Platform::drives(&platform);
+    let first = drives.first().expect("a computer has a drive");
+    let drive = by_name("DriveInfo");
+    let sampled_root = drive["root"].as_str().expect("root is text");
+    assert!(
+        ends_with_a_separator(&first.root),
+        "this system reported a drive root as {:?}, with no separator",
+        first.root
+    );
+    let _ = &drives;
+    assert!(
+        ends_with_a_separator(sampled_root),
+        "the sample says a drive root is {sampled_root:?}, with no separator"
     );
 }
