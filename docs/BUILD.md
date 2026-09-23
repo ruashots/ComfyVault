@@ -142,6 +142,13 @@ EOF
 The result must be `missing: none`. Every file in `dist/assets/` is embedded,
 the `.map` files included.
 
+The check looks for names, not contents, because the contents are compressed
+inside the executable and do not appear as readable text. Names are enough.
+The interface build derives each file name from a hash of that file's
+contents, so different contents produce a different name. Measured here across
+three builds: the files that changed got new names each time, and the font and
+the `tauri` helper, which did not change, kept theirs.
+
 Do not use `strings` for this check. `strings` joins a file name to the bytes
 that follow it, so an exact match fails on a name that is really there.
 
@@ -151,9 +158,11 @@ Do not trust a rebuild to pick up a new interface. Tauri reads `dist/` once,
 during its build script. Cargo does not rerun that build script when only
 `dist/` changes. The build reports success and embeds the old interface.
 
-This was measured. A line was added to a file in `dist/assets/`, and the
-release build ran again. The build reported success in 1 minute 13 seconds.
-The new line was not in the executable.
+This was measured by name. The interface was built again, which gave its two
+changed files new names. The release build ran again and reported success.
+Four of the nine names in `dist/assets/` were not in the executable: the two
+new ones and their two maps. The five that were in it were the files whose
+contents had not changed, so their names had not changed either.
 
 If the interface changed since the last build, force the capture:
 
