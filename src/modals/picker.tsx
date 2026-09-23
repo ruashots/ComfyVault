@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onMount, type JSX } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { fmt, joinPath, leafOf } from "~/domain/format";
@@ -184,7 +184,7 @@ export function PickerModalView() {
           modelsDirExists: false,
           extraPathsFile: null,
           extraPaths: [],
-          extraPathsError: null,
+          extraPathsProblems: [],
           outputModelDirs: [],
           reason: messageOf(error),
         };
@@ -515,7 +515,22 @@ export function PickerModalView() {
               </Show>
               <Show when={verdict()}>
                 {(v) => (
-                  <div class="verdict" classList={{ ok: v().ok, no: !v().ok }}>
+                  <div
+                    class="verdict"
+                    classList={{ ok: v().ok, no: !v().ok }}
+                    // The tree is tall, so the answer about the folder they
+                    // just clicked can land below the fold. Bring it to them
+                    // rather than leaving them to find it.
+                    ref={(el) =>
+                      onMount(() => {
+                        // Not every runtime has it, and a missing scroll is
+                        // never a reason to take the screen down.
+                        if (typeof el.scrollIntoView === "function") {
+                          el.scrollIntoView({ block: "nearest" });
+                        }
+                      })
+                    }
+                  >
                     <h4>
                       <Icon name={v().ok ? "check" : "x"} size={12} />
                       {v().title}
@@ -776,13 +791,19 @@ export function verdictFor(
             : "not found"}
           . Every file in there is read on the next scan.
         </p>
-        <Show when={candidate.extraPathsError}>
-          {(problem) => (
-            <p>
-              Its extra_model_paths.yaml could not be read: {problem()}. ComfyVault
-              will register the install and skip that file.
-            </p>
-          )}
+        <Show when={candidate.extraPathsProblems.length > 0}>
+          <p>
+            ComfyVault will register the install and read the rest of
+            extra_model_paths.yaml.{" "}
+            {candidate.extraPathsProblems.length === 1
+              ? "One line in it was skipped."
+              : `${candidate.extraPathsProblems.length} lines in it were skipped.`}
+          </p>
+          <ul class="paths">
+            <For each={candidate.extraPathsProblems}>
+              {(problem) => <li>{problem}</li>}
+            </For>
+          </ul>
         </Show>
         <Show when={candidate.otherCandidates.length > 0}>
           <p>

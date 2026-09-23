@@ -289,3 +289,21 @@ describe("making a new folder", () => {
     );
   });
 });
+
+describe("an extra_model_paths.yaml the engine could not fully read", () => {
+  it("lists each complaint on its own line, not as one run-on sentence", async () => {
+    await mountPicker((h) => openInstallPicker(h.app));
+    await openDrive();
+    await userEvent.click(node("ComfyUI-Portable"));
+    await waitFor(() => verdict()?.classList.contains("wait") === false);
+
+    const lines = document.querySelectorAll(".verdict .paths li");
+    expect(lines.length).toBeGreaterThan(0);
+    expect([...lines].some((l) => l.textContent?.includes("ESCAPED"))).toBe(true);
+    // The install is still usable, and the verdict says so.
+    const text = verdict()!.textContent ?? "";
+    expect(text).toContain("register the install");
+    expect(text).toContain("skipped");
+    expect(text).not.toContain("could not be read");
+  });
+});
