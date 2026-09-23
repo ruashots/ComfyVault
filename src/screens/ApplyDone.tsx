@@ -21,7 +21,6 @@ export function ApplyDone() {
   const app = useApp();
   const run = () => app.lastApply()!;
   const drive = () => app.vault();
-  const freeBefore = () => (drive()?.freeBytes ?? 0) - run().bytesFreed;
 
   const revert = () => {
     openConfirm(app, {
@@ -33,9 +32,9 @@ export function ApplyDone() {
             text: "Every file this run moved goes back to the path it came from, and the link left in its place is removed. Drive ",
           },
           { text: drive()?.volume ?? "C:" },
-          { text: " returns to " },
-          { text: fmt(freeBefore()), emph: true },
-          { text: " free. Nothing else in the vault is touched." },
+          { text: " takes back the " },
+          { text: fmt(run().bytesFreed), emph: true },
+          { text: " this run removed. Nothing else in the vault is touched." },
         ],
         [
           {
@@ -78,10 +77,22 @@ export function ApplyDone() {
                 taking room.
               </div>
               <div class="l2">
-                {fmt(freeBefore())} free before, {fmt(drive()?.freeBytes ?? 0)} free
-                now.{" "}
-                {usedPercent(drive()?.totalBytes ?? 0, drive()?.freeBytes ?? 0)}% of
-                the drive used.
+                <Show
+                  when={run().vaultFreeBytesBefore !== null && run().vaultFreeBytesAfter !== null}
+                  fallback={
+                    <>
+                      Drive {drive()?.volume} did not answer when asked how much room
+                      it had, so there is nothing to compare. The figure above is
+                      what this run removed.
+                    </>
+                  }
+                >
+                  Drive {drive()?.volume} had {fmt(run().vaultFreeBytesBefore!)} free
+                  before and has {fmt(run().vaultFreeBytesAfter!)} now, both read from
+                  the drive itself.{" "}
+                  {usedPercent(drive()?.totalBytes ?? 0, run().vaultFreeBytesAfter!)}%
+                  of it used.
+                </Show>
               </div>
             </div>
             <Icon name="check" size={26} />
@@ -118,7 +129,7 @@ export function ApplyDone() {
               <span class="v">
                 {app.planView()!.blocked.length}{" "}
                 {app.planView()!.blocked.length === 1 ? "file" : "files"} &middot;{" "}
-                {fmt(app.plan()?.totals.blockedBytes ?? 0)}{" "}
+                {fmt(app.planView()?.blockedBytes ?? 0)}{" "}
                 <span class="dim">&middot; the reasons are still in the report</span>
               </span>
             </div>

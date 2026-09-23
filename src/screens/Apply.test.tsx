@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
+import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
@@ -152,3 +153,61 @@ async function waitForDialog(): Promise<HTMLElement> {
   await waitFor(() => document.querySelector('[role="dialog"] .verdict.no') !== null);
   return document.querySelector('[role="dialog"]') as HTMLElement;
 }
+
+describe("the numbers on the finished screen", () => {
+  it("shows the drive's own before and after, never one derived from the other", async () => {
+    const h = await runApply();
+    await finish(h);
+    const run = h.app.lastApply()!;
+
+    expect(run.vaultFreeBytesBefore).not.toBeNull();
+    expect(run.vaultFreeBytesAfter).not.toBeNull();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(fmt(run.vaultFreeBytesBefore!));
+    expect(text).toContain(fmt(run.vaultFreeBytesAfter!));
+    expect(text).toContain("both read from the drive itself");
+    // The old line worked the "before" out backwards from the "now".
+    expect(text).not.toContain(fmt(run.vaultFreeBytesAfter! - run.bytesFreed));
+  });
+
+  it("says which number is the run's and which is the drive's", async () => {
+    const h = await runApply();
+    await finish(h);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("had");
+    expect(text).toContain("free before and has");
+  });
+
+  it("does not call a finished file one that cannot move", async () => {
+    const h = await runApply();
+    await finish(h);
+    // After a run every consolidated path reads as already in the vault, and
+    // the engine reports each one as a blocked row. That is the state this
+    // test is about, so it fails if the state is not there to test.
+    await waitFor(() =>
+      (h.app.plan()?.blocked ?? []).some((b) => b.reason === "alreadyInVault"),
+      6000,
+    );
+    const raw = h.app.plan()!;
+    const finished = raw.blocked.filter((b) => b.reason === "alreadyInVault");
+    expect(finished.length).toBeGreaterThan(5);
+
+    // None of them reaches the person as a file that could not move.
+    const view = h.app.planView()!;
+    expect(view.blocked.some((b) => b.reason === "alreadyInVault")).toBe(false);
+    expect(view.blocked.length).toBeLessThan(raw.blocked.length);
+
+    // The count and the size on screen come from the same set of rows. They
+    // used to come from two, which is how 9 of 9 done sat above 18 files stuck.
+    expect(view.blockedBytes).toBe(
+      view.blocked.reduce((sum, row) => sum + row.sizeBytes, 0),
+    );
+    expect(view.blockedBytes).toBeLessThan(raw.totals.blockedBytes);
+
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain(fmt(raw.totals.blockedBytes));
+    if (view.blocked.length === 0) {
+      expect(text).not.toContain("Still cannot move");
+    }
+  });
+});

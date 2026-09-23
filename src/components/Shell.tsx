@@ -107,7 +107,11 @@ export function Rail() {
       return <div class="rail-sub">nothing registered yet</div>;
     }
     if (app.applyProgress()) {
-      return <div class="rail-sub amb">{fmt(gain)} still to come</div>;
+      // What the run has actually freed, read from the run. "Still to come"
+      // was a prediction minus a measurement, and when the measurement ran
+      // ahead of the prediction it clamped to zero while files remained.
+      const freed = app.applyProgress()!.bytesFreed;
+      return freed > 0 ? <div class="rail-sub amb">{fmt(freed)} freed so far</div> : null;
     }
     const run = app.lastApply();
     if (run) {

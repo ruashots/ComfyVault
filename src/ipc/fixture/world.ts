@@ -508,6 +508,22 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
 
   for (const content of world.contents) {
     for (const copy of content.copies) {
+      // A path that is already a link into the vault is reported the way the
+      // engine reports it: a blocked row saying there is nothing left to do.
+      // Every path reads this way after a run, and the interface must not
+      // present that as a file that could not move.
+      if (copy.isLink && !copy.blocked) {
+        blocked.push({
+          absPath: copy.absPath,
+          installId: copy.installId,
+          installLabel: installLabel(copy.installId),
+          sizeBytes: content.bytes,
+          sha256: content.sha256,
+          reason: "alreadyInVault",
+          detail: `${copy.absPath} is already a link into the vault.`,
+        });
+        continue;
+      }
       if (!copy.blocked) continue;
       blocked.push({
         absPath: copy.absPath,

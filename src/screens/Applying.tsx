@@ -44,7 +44,13 @@ export function ApplyRunning() {
             <i style={{ width: `${overall() * 100}%` }} />
           </div>
           <div class="note up">
-            {fmt(progress().bytesMoved)} of {fmt(progress().bytesToMove)} &middot;{" "}
+            {/* The engine counts only the bytes it has to copy across drives.
+                A move on one drive is a rename, so on a same-drive run there
+                are none, and "0 of 0" is a measurement of nothing. */}
+            <Show when={progress().bytesToMove > 0}>
+              {fmt(progress().bytesMoved)} of {fmt(progress().bytesToMove)} copied
+              across &middot;{" "}
+            </Show>
             {progress().groupIndex} of {progress().groupTotal} files &middot;{" "}
             {secondsLeft(
               Number.isFinite(progress().etaMs as number)

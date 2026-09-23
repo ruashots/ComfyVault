@@ -124,7 +124,11 @@ export function isSkippedByDesign(reason: BlockReason): boolean {
   return (
     reason === "inCustomNodes" ||
     reason === "inHuggingFaceCache" ||
-    reason === "symlinkUnsupported"
+    reason === "symlinkUnsupported" ||
+    // Already a link into the vault, which is the finished state, not a stuck
+    // one. Every path reads this way after a successful run, so listing them
+    // put the whole tree under "cannot move" on the screen that says it worked.
+    reason === "alreadyInVault"
   );
 }
 

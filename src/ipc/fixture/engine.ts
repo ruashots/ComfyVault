@@ -62,6 +62,9 @@ import {
 
 const MB = 1024 * 1024;
 /** How long a fake scan and a fake run take. Tests shorten them. */
+/** What something else on the computer wrote during a run. */
+const OTHER_ACTIVITY_BYTES = 734_003_200;
+
 const SCAN_MS = 16_000;
 const APPLY_MS = 10_000;
 const TICK_MS = 100;
@@ -713,6 +716,7 @@ export class FixtureEngine implements Engine {
     this.applyCancelling = false;
     this.worldBeforeApply = cloneWorld(this.world);
     this.renamedSinceApply.clear();
+    // Read from the drive before anything moves, the way the engine reads it.
     const freeBefore = this.world.freeBytes;
 
     const bytesToMove = groups.reduce((s, g) => s + g.sizeBytes, 0);
@@ -763,6 +767,10 @@ export class FixtureEngine implements Engine {
       if (overall >= 1) {
         this.stopApplyTimer();
         this.busy = null;
+        // Something else on the computer wrote while the run was going. A real
+        // drive does this, and it is why the free space before and after are
+        // read rather than worked out from what the run removed.
+        this.world.freeBytes -= OTHER_ACTIVITY_BYTES;
         // The group a cancel interrupts is rolled back, not failed: the person
         // asked for it to stop. A group that genuinely failed before they
         // pressed stop is still reported, because nothing else mentions it.
@@ -778,7 +786,12 @@ export class FixtureEngine implements Engine {
           groupsRequested: groups.length,
           groupsApplied: done.length,
           groupsFailed: failed ? 1 : 0,
-          bytesFreed: this.world.freeBytes - freeBefore,
+          // What this run removed, summed from the groups it finished, the
+          // way the engine sums it. Not the change in free space: those are
+          // different numbers and saying so is the point of the two below.
+          bytesFreed: done.reduce((sum, g) => sum + g.bytesFreed, 0),
+          vaultFreeBytesBefore: freeBefore,
+          vaultFreeBytesAfter: this.world.freeBytes,
           filesMoved: done.length,
           linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
           failures: failed

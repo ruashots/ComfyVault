@@ -497,7 +497,18 @@ export interface ApplyRecord {
   groupsRequested: number;
   groupsApplied: number;
   groupsFailed: number;
+  /** Bytes of duplicates this run actually removed. Measured, not predicted. */
   bytesFreed: number;
+  /**
+   * What the drive had free before the work began and after it finished, read
+   * from the drive itself both times. Null when the drive could not be read.
+   *
+   * These are the only two figures that are the drive's. `bytesFreed` is what
+   * this run removed, which is a different thing: anything else writing to the
+   * drive moves free space too.
+   */
+  vaultFreeBytesBefore: number | null;
+  vaultFreeBytesAfter: number | null;
   filesMoved: number;
   linksCreated: number;
   failures: ApplyFailure[];
