@@ -1042,3 +1042,154 @@ fn no_example_in_the_contract_shows_a_path_the_engine_would_not_send() {
     assert!(examined >= 2, "only {examined} examples were read, the check proves nothing");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Every value of an enum the interface compares against, with the exact text
+/// it becomes on the wire.
+///
+/// The `match` is what keeps this honest. Adding a value to one of these enums
+/// stops this file compiling, so the new value cannot reach the interface
+/// without someone writing down what it is called.
+fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
+    use crate::plan::{BlockReason as B, SourceChoice as S};
+    use crate::store::{ApplyState as A, Classification as C, LinkOrigin as O, LinkState as L};
+
+    fn wire(value: &impl Serialize) -> String {
+        serde_json::to_value(value)
+            .expect("serialise the value")
+            .as_str()
+            .expect("an enum reaches the interface as a string")
+            .to_string()
+    }
+
+    let mut out: Vec<(&str, String, &str)> = Vec::new();
+
+    for c in [C::Movable, C::CustomNodes, C::HuggingFaceCache, C::AlreadyInVault, C::ExternalLink, C::Unreadable] {
+        let expected = match c {
+            C::Movable => "movable",
+            C::CustomNodes => "customNodes",
+            C::HuggingFaceCache => "huggingFaceCache",
+            C::AlreadyInVault => "alreadyInVault",
+            C::ExternalLink => "externalLink",
+            C::Unreadable => "unreadable",
+        };
+        out.push(("Classification", wire(&c), expected));
+    }
+
+    for b in [
+        B::FileLocked, B::FileChanged, B::FileMissing, B::PermissionDenied, B::InCustomNodes,
+        B::InHuggingFaceCache, B::AlreadyInVault, B::ExternalLink, B::SymlinkUnsupported,
+        B::VaultInsideInstall, B::TargetExistsNotLink, B::UnsafeVaultPath, B::NotEnoughSpace,
+        B::ReadError,
+    ] {
+        let expected = match b {
+            B::FileLocked => "fileLocked",
+            B::FileChanged => "fileChanged",
+            B::FileMissing => "fileMissing",
+            B::PermissionDenied => "permissionDenied",
+            B::InCustomNodes => "inCustomNodes",
+            B::InHuggingFaceCache => "inHuggingFaceCache",
+            B::AlreadyInVault => "alreadyInVault",
+            B::ExternalLink => "externalLink",
+            B::SymlinkUnsupported => "symlinkUnsupported",
+            B::VaultInsideInstall => "vaultInsideInstall",
+            B::TargetExistsNotLink => "targetExistsNotLink",
+            B::UnsafeVaultPath => "unsafeVaultPath",
+            B::NotEnoughSpace => "notEnoughSpace",
+            B::ReadError => "readError",
+        };
+        out.push(("BlockReason", wire(&b), expected));
+    }
+
+    for l in [L::Ok, L::Dangling, L::Replaced, L::Missing] {
+        let expected = match l {
+            L::Ok => "ok",
+            L::Dangling => "dangling",
+            L::Replaced => "replaced",
+            L::Missing => "missing",
+        };
+        out.push(("LinkState", wire(&l), expected));
+    }
+
+    for a in [A::Running, A::Completed, A::CompletedWithErrors, A::Cancelled, A::Interrupted, A::Reverted] {
+        let expected = match a {
+            A::Running => "running",
+            A::Completed => "completed",
+            A::CompletedWithErrors => "completedWithErrors",
+            A::Cancelled => "cancelled",
+            A::Interrupted => "interrupted",
+            A::Reverted => "reverted",
+        };
+        out.push(("ApplyState", wire(&a), expected));
+    }
+
+    for o in [O::Apply, O::Manual] {
+        let expected = match o {
+            O::Apply => "apply",
+            O::Manual => "manual",
+        };
+        out.push(("LinkOrigin", wire(&o), expected));
+    }
+
+    for s in [S::SameVolume, S::OnlyCopy, S::FirstByPath] {
+        let expected = match s {
+            S::SameVolume => "sameVolume",
+            S::OnlyCopy => "onlyCopy",
+            S::FirstByPath => "firstByPath",
+        };
+        out.push(("SourceChoice", wire(&s), expected));
+    }
+
+    for e in crate::error::ErrorCode::every() {
+        let text = serde_json::to_value(e).unwrap();
+        out.push(("ErrorCode", text.as_str().unwrap().to_string(), ""));
+    }
+    out
+}
+
+#[test]
+fn every_enum_reaches_the_interface_as_the_text_it_is_meant_to() {
+    // The interface compares against these strings. A rename attribute beats
+    // anything a reader of the Rust would predict, which is the shape of the
+    // bug that shipped, so the text is asserted rather than derived.
+    let values = every_enum_value();
+    assert!(values.len() >= 40, "only {} values were read, the check proves nothing", values.len());
+
+    let wrong: Vec<String> = values
+        .iter()
+        .filter(|(_, got, expected)| !expected.is_empty() && got != expected)
+        .map(|(kind, got, expected)| format!("{kind}: the wire says {got:?}, it must say {expected:?}"))
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn the_contract_lists_the_same_enum_values_the_engine_sends() {
+    // A value the engine can send and the document never names is a value the
+    // interface has nothing to do with when it arrives.
+    let doc = read_repo_file("docs/IPC-CONTRACT.md");
+    let values = every_enum_value();
+
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode"] {
+        let engine: Vec<&str> = values
+            .iter()
+            .filter(|(k, _, _)| *k == kind)
+            .map(|(_, got, _)| got.as_str())
+            .collect();
+        assert!(!engine.is_empty(), "{kind} produced no values");
+
+        for value in &engine {
+            checked += 1;
+            // The document writes a value either as 'quoted' in a union or as
+            // `code` in the error table.
+            let quoted = format!("'{value}'");
+            let ticked = format!("`{value}`");
+            if !doc.contains(&quoted) && !doc.contains(&ticked) {
+                wrong.push(format!("{kind}: the engine can send {value:?} and the contract never names it"));
+            }
+        }
+    }
+    assert!(checked >= 35, "only {checked} values were compared, the check proves nothing");
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

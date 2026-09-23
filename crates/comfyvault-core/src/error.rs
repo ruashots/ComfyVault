@@ -36,6 +36,58 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Every code, for the checks that compare what the engine can send
+    /// against what the contract names.
+    ///
+    /// The match is what keeps it complete: a new code stops this compiling.
+    #[cfg(test)]
+    pub fn every() -> Vec<Self> {
+        let all = vec![
+            Self::NotInitialized,
+            Self::VaultBusy,
+            Self::InvalidArgument,
+            Self::NotFound,
+            Self::PathOutsideBoundary,
+            Self::NotAComfyInstall,
+            Self::AlreadyRegistered,
+            Self::IoError,
+            Self::PermissionDenied,
+            Self::FileLocked,
+            Self::FileChanged,
+            Self::SymlinkUnsupported,
+            Self::StoreError,
+            Self::ParseError,
+            Self::NetworkUnavailable,
+            Self::Cancelled,
+            Self::Conflict,
+        ];
+        for c in &all {
+            match c {
+                Self::NotInitialized => {}
+                Self::VaultBusy => {}
+                Self::InvalidArgument => {}
+                Self::NotFound => {}
+                Self::PathOutsideBoundary => {}
+                Self::NotAComfyInstall => {}
+                Self::AlreadyRegistered => {}
+                Self::IoError => {}
+                Self::PermissionDenied => {}
+                Self::FileLocked => {}
+                Self::FileChanged => {}
+                Self::SymlinkUnsupported => {}
+                Self::StoreError => {}
+                Self::ParseError => {}
+                Self::NetworkUnavailable => {}
+                Self::Cancelled => {}
+                Self::Conflict => {}
+            }
+        }
+        all
+    }
+}
+
+
+impl ErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NotInitialized => "notInitialized",
