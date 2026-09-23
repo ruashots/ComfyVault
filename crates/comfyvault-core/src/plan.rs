@@ -195,7 +195,18 @@ pub struct PlanTotals {
     pub links_created: u64,
     pub blocked_rows: u64,
     pub blocked_bytes: u64,
-    pub vault_free_bytes_after: u64,
+    /// What the vault's drive would have free if this plan ran.
+    ///
+    /// A prediction. The record of a finished run carries
+    /// `vaultFreeBytesBefore` and `vaultFreeBytesAfter`, which are readings
+    /// taken off the drive. This one is not, and it was called
+    /// `vaultFreeBytesAfter` too until a screen showed one where it meant the
+    /// other.
+    ///
+    /// Null when the drive could not be read. A prediction made from a figure
+    /// nobody has is not a prediction, and zero would read as a drive with
+    /// nothing left on it.
+    pub vault_free_bytes_if_applied: Option<u64>,
 }
 
 /// The whole plan.
@@ -514,8 +525,12 @@ impl<'a> Planner<'a> {
             .filter(|g| g.cross_volume)
             .map(|g| g.size_bytes)
             .sum();
-        let free_now = self.platform.disk_space(&vault_root).map(|s| s.free_bytes).unwrap_or(0);
-        if bytes_needed > free_now {
+        // Nothing when the drive will not answer. Treating that as zero free
+        // said there was no room at all, so every cross-drive group was
+        // blocked with "not enough space", which is a claim about the drive
+        // that nobody had measured.
+        let free_now = self.platform.disk_space(&vault_root).map(|s| s.free_bytes).ok();
+        if let Some(free_now) = free_now.filter(|f| bytes_needed > *f) {
             // Block the largest first, so the person keeps the most groups they
             // can actually apply.
             let mut idx: Vec<usize> = (0..groups.len()).filter(|&i| groups[i].cross_volume).collect();
@@ -653,7 +668,7 @@ fn adjusted_name(name: &str, sha256: &str, width: usize) -> String {
     }
 }
 
-fn totals_for(groups: &[PlanGroup], blocked: &[BlockedRow], free_now: u64) -> PlanTotals {
+fn totals_for(groups: &[PlanGroup], blocked: &[BlockedRow], free_now: Option<u64>) -> PlanTotals {
     let bytes_freed: u64 = groups.iter().map(|g| g.bytes_freed).sum();
     let cross: u64 = groups.iter().filter(|g| g.cross_volume).map(|g| g.size_bytes).sum();
     PlanTotals {
@@ -670,7 +685,7 @@ fn totals_for(groups: &[PlanGroup], blocked: &[BlockedRow], free_now: u64) -> Pl
         blocked_bytes: blocked.iter().map(|b| b.size_bytes).sum(),
         // A same-drive move frees its duplicates and costs nothing; a
         // cross-drive move spends vault space and frees space on the other one.
-        vault_free_bytes_after: free_now.saturating_sub(cross),
+        vault_free_bytes_if_applied: free_now.map(|f| f.saturating_sub(cross)),
     }
 }
 

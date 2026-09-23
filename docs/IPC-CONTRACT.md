@@ -888,7 +888,7 @@ type PlanTotals = {
   linksCreated: number
   blockedRows: number
   blockedBytes: number
-  vaultFreeBytesAfter: number
+  vaultFreeBytesIfApplied: number | null   // a prediction, see below
 }
 ```
 
@@ -970,6 +970,19 @@ same scan, the plan gets **bigger**:
 Do not clear a flag on the old plan. Build it again.
 
 ```ts
+**`vaultFreeBytesIfApplied` is a prediction, not a reading.** It is what the
+vault's drive would have free if this plan ran. The record of a finished run
+carries `vaultFreeBytesBefore` and `vaultFreeBytesAfter`, and those two are
+read off the drive. Do not show a prediction where the screen promises a
+measurement, and do not subtract one from the other.
+
+It was called `vaultFreeBytesAfter` until a finished screen showed a computed
+figure where a person expected a measured one. The names are different now so
+that cannot happen by reading the wrong one.
+
+Null when the drive could not be read. When it is null, the engine also does
+not block anything for lack of space, because it has not measured any.
+
 type BlockedRow = {
   absPath: string
   installId: string | null

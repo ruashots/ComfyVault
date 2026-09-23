@@ -492,6 +492,34 @@ fn a_vault_drive_without_room_blocks_the_largest_groups_first() {
 }
 
 #[test]
+fn a_drive_that_will_not_answer_is_not_a_drive_with_no_room() {
+    // Treating an unreadable drive as zero free said there was no room at all,
+    // so every cross-drive group came back blocked with "not enough space".
+    // That is a claim about the drive, made on no measurement, and it stops a
+    // consolidation that would have worked.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/small.safetensors", &weights("small"));
+    w.write_model(&a, "models/loras/large.safetensors", &weights("large"));
+
+    w.platform.set_volume(w.path(), "D:");
+    w.platform.set_volume(&w.vault_root, "C:");
+    w.platform.fail_disk_space(true);
+
+    let plan = w.plan(&[a]);
+    assert!(
+        !plan.blocked.iter().any(|b| b.reason == BlockReason::NotEnoughSpace),
+        "the drive was never read, so nothing can be short of space: {:?}",
+        plan.blocked.iter().map(|b| b.reason).collect::<Vec<_>>()
+    );
+    assert_eq!(plan.groups.len(), 2, "both groups must still be offered");
+    assert_eq!(
+        plan.totals.vault_free_bytes_if_applied, None,
+        "a prediction made from a figure nobody has is not a prediction"
+    );
+}
+
+#[test]
 fn plenty_of_room_blocks_nothing() {
     let w = TestWorld::new();
     let a = w.add_install("A");

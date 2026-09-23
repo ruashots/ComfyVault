@@ -336,7 +336,7 @@ fn plan() -> ConsolidationPlan {
             links_created: 2,
             blocked_rows: 1,
             blocked_bytes: 6_938_040_320,
-            vault_free_bytes_after: 288_000_000_000,
+            vault_free_bytes_if_applied: Some(288_000_000_000),
         },
     }
 }
