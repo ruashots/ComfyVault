@@ -37,6 +37,8 @@ export function blockedRole(reason: BlockReason): string {
       return "no room";
     case "readError":
       return "unread";
+    case "unsafeVaultPath":
+      return "escapes";
   }
 }
 
@@ -69,6 +71,8 @@ export function blockedShort(reason: BlockReason): string {
       return "not enough room";
     case "readError":
       return "could not be read";
+    case "unsafeVaultPath":
+      return "its folder name escapes the vault";
   }
 }
 
@@ -102,6 +106,8 @@ export function blockedWhy(row: BlockedRow): string {
       return "There is not enough free room on the vault's drive to take this file across. Free some space, or put the vault on the same drive as the install.";
     case "readError":
       return "ComfyVault could not read this file, so it cannot tell what it holds.";
+    case "unsafeVaultPath":
+      return `The folder this file would take inside the vault is named by a category in the extra_model_paths.yaml that ${who} uses, and that name points back out of the vault. ComfyVault never writes outside its own folder. Fix the category name in that file and scan again.`;
   }
 }
 
@@ -126,6 +132,7 @@ export function isSkippedByDesign(reason: BlockReason): boolean {
 const ORDER: readonly BlockReason[] = [
   "symlinkUnsupported",
   "vaultInsideInstall",
+  "unsafeVaultPath",
   "notEnoughSpace",
   "fileLocked",
   "permissionDenied",

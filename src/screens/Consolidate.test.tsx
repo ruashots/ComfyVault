@@ -181,6 +181,37 @@ describe("the report says what is holding Apply back", () => {
     }
   });
 
+  it("names the yaml category when a folder name would escape the vault", async () => {
+    const { app } = await mount((engine) => engine.devSetSymlinksSupported(true));
+    await waitFor(() => app.appState()?.platform.symlinks.supported === true);
+    const escaped = app
+      .planView()!
+      .blocked.filter((b) => b.reason === "unsafeVaultPath");
+    expect(escaped.length).toBe(1);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("extra_model_paths.yaml");
+    expect(text).toContain("points back out of the vault");
+    expect(text).toContain("Fix the category name in that file and scan again");
+    // It says which install's file, because the person has two of them.
+    expect(text).toContain("that Normal uses");
+    expect(text).not.toContain("unsafeVaultPath");
+  });
+
+  it("never plans a group for a file whose folder name would escape", async () => {
+    const { app } = await mount(clearMachine);
+    await waitFor(() => app.gate().can);
+    const escaped = app.planView()!.blocked.find(
+      (b) => b.reason === "unsafeVaultPath",
+    )!;
+    for (const group of app.plan()!.groups) {
+      expect(group.source.absPath).not.toBe(escaped.absPath);
+      for (const link of group.links) {
+        expect(link.absPath).not.toBe(escaped.absPath);
+      }
+    }
+  });
+
   it("does not repeat the links-are-off message once per file", async () => {
     const { app } = await mount();
     const text = document.body.textContent ?? "";
