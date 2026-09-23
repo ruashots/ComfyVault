@@ -22,5 +22,7 @@
   "planId": "plan-1",
   "revertible": true,
   "startedAt": "2025-09-22T00:03:32Z",
-  "state": "completedWithErrors"
+  "state": "completedWithErrors",
+  "vaultFreeBytesAfter": 287999999680,
+  "vaultFreeBytesBefore": 136880119808
 }

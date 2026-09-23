@@ -267,6 +267,21 @@ pub struct ApplyRecord {
     pub bytes_freed: u64,
     pub files_moved: u64,
     pub links_created: u64,
+    /// Free space on the vault's drive, read from the drive itself, once
+    /// before the first file moved and once after the last one.
+    ///
+    /// Both are measurements, not sums. `bytesFreed` says what the run
+    /// accounted for, and these two say what the drive actually reports, which
+    /// is the number a person checks the product against. They can disagree
+    /// for honest reasons: something else on the computer wrote or deleted
+    /// files during the run, the files were sparse and never occupied what
+    /// their size claimed, or the drive rounds to its allocation unit.
+    ///
+    /// Null when the drive could not be read. Never a subtraction.
+    #[serde(default)]
+    pub vault_free_bytes_before: Option<u64>,
+    #[serde(default)]
+    pub vault_free_bytes_after: Option<u64>,
     pub failures: Vec<ApplyFailure>,
     pub revertible: bool,
 }

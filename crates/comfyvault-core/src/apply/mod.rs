@@ -227,6 +227,14 @@ impl<'a> Applier<'a> {
             verify_before_delete: self.store.settings()?.verify_before_delete,
         };
 
+        // Read from the drive before anything moves. A resumed pass keeps the
+        // first pass's reading, because "before" means before the work began,
+        // not before this attempt at it.
+        let free_before = match &carry {
+            Some(first) => first.vault_free_bytes_before,
+            None => self.vault_free_bytes(),
+        };
+
         let mut record = match &carry {
             // A resumed pass keeps the first pass's identity and its numbers.
             Some(first) => ApplyRecord {
@@ -247,6 +255,8 @@ impl<'a> Applier<'a> {
                 bytes_freed: 0,
                 files_moved: 0,
                 links_created: 0,
+                vault_free_bytes_before: free_before,
+                vault_free_bytes_after: None,
                 failures: Vec::new(),
                 revertible: true,
             },
@@ -308,6 +318,10 @@ impl<'a> Applier<'a> {
         record.files_moved = before.map(|c| c.files_moved).unwrap_or(0) + run.files_moved;
         record.links_created = before.map(|c| c.links_created).unwrap_or(0) + run.links_created;
         record.failures = run.failures.clone();
+        record.vault_free_bytes_before = free_before;
+        // Read again, after the last file has moved and the last duplicate has
+        // gone. Measured, never derived from the one above.
+        record.vault_free_bytes_after = self.vault_free_bytes();
         record.revertible = record.groups_applied > 0;
         self.store.put_apply(&record)?;
 
@@ -1121,6 +1135,12 @@ impl<'a> Applier<'a> {
     // -- progress ---------------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
+    /// Free space on the vault's drive right now, or nothing if it cannot be
+    /// read. A failure here must not stop a run that has already moved files.
+    fn vault_free_bytes(&self) -> Option<u64> {
+        self.platform.disk_space(self.store.vault_root()).ok().map(|s| s.free_bytes)
+    }
+
     fn emit(
         &self,
         sink: &dyn ProgressSink<ApplyProgress>,

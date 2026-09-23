@@ -564,6 +564,88 @@ fn a_vault_on_another_drive_copies_checks_then_removes_the_original() {
     assert!(leftovers.is_empty(), "a part file was left behind: {leftovers:?}");
 }
 
+#[test]
+fn a_finished_run_reports_the_drive_twice_and_never_the_arithmetic() {
+    // The screen where a person checks whether the product did what it said.
+    // Both figures are read off the drive, one before the first file moved and
+    // one after the last one. Neither is the other plus bytesFreed. The two
+    // can honestly disagree with that sum: something else on the computer may
+    // write during the run, and sparse files never occupied what they claimed.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+
+    // Two readings that no arithmetic on bytesFreed could connect.
+    const BEFORE: u64 = 22_000_000_000;
+    const AFTER: u64 = 92_000_000_000;
+    w.platform.set_free_bytes(BEFORE);
+
+    // The drive changes while the run is going, the way a real one does.
+    let platform = &w.platform;
+    let sink = move |_: &ApplyProgress| {
+        platform.set_free_bytes(AFTER);
+    };
+
+    let record = applier(&w)
+        .apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &sink)
+        .unwrap();
+
+    assert_eq!(record.vault_free_bytes_before, Some(BEFORE), "the first reading was not kept");
+    assert_eq!(record.vault_free_bytes_after, Some(AFTER), "the second reading was not taken");
+    assert!(record.bytes_freed > 0, "this run did free something");
+    assert_ne!(
+        record.vault_free_bytes_after,
+        record.vault_free_bytes_before.map(|b| b + record.bytes_freed),
+        "the second figure is the first plus bytesFreed, which means it was computed"
+    );
+}
+
+#[test]
+fn a_resumed_run_keeps_the_reading_from_before_the_work_began() {
+    // "Before" means before the work, not before this attempt at it. A resumed
+    // pass that read the drive again would report the space its own first pass
+    // had already freed as if it had always been there.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    for tag in ["one", "two"] {
+        w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+    }
+    let plan = w.plan(&[a, b]);
+    let req = request(&plan);
+
+    const BEFORE: u64 = 10_000_000_000;
+    w.platform.set_free_bytes(BEFORE);
+
+    // Stop after the first group, leaving the run interrupted.
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    let stop = move |p: &ApplyProgress| {
+        if p.group_index >= 1 {
+            trigger.cancel();
+        }
+    };
+    let first = applier(&w).apply("ap-1", &plan, &req, &cancel, &stop).unwrap();
+    assert_eq!(first.vault_free_bytes_before, Some(BEFORE));
+
+    // The drive now reads differently, because the first pass freed something.
+    w.platform.set_free_bytes(30_000_000_000);
+    let resumed = applier(&w)
+        .resume("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap();
+
+    assert_eq!(
+        resumed.vault_free_bytes_before,
+        Some(BEFORE),
+        "the resumed run replaced the original reading with a later one"
+    );
+    assert_eq!(resumed.vault_free_bytes_after, Some(30_000_000_000));
+}
+
 // ---------------------------------------------------------------------------
 // Cancelling
 // ---------------------------------------------------------------------------
@@ -808,6 +890,8 @@ fn a_crash_between_moving_the_file_and_linking_it_is_recoverable() {
             bytes_freed: 0,
             files_moved: 0,
             links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
         })
@@ -890,6 +974,8 @@ fn a_crash_after_setting_a_duplicate_aside_is_recoverable() {
             bytes_freed: 0,
             files_moved: 0,
             links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
         })
@@ -947,6 +1033,8 @@ fn a_crash_after_removing_a_duplicate_is_recovered_from_the_vault() {
             bytes_freed: 0,
             files_moved: 0,
             links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
         })
@@ -1121,6 +1209,8 @@ fn a_record_with_no_stored_selection_resumes_nothing() {
             bytes_freed: 0,
             files_moved: 0,
             links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
         })
@@ -1603,3 +1693,4 @@ fn an_unsafe_vault_path_reaches_the_person_as_what_it_is() {
         BlockReason::UnsafeVaultPath
     );
 }
+

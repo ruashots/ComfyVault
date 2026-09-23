@@ -1035,6 +1035,15 @@ counting it would make the time remaining pessimistic at the start and then
 jump. Use `groupIndex` and `groupTotal` for a progress bar that covers the
 whole run.
 
+**On a run where the vault is on the installs' own drive, both are zero for the
+whole run, and that is correct.** Nothing is copied. Do not draw a byte counter
+from them there; it reads "0 MB of 0 MB" from start to finish, which looks like
+a broken screen rather than a true statement about renames.
+
+`bytesFreed` is the byte figure that moves on every run. It rises as each
+duplicate goes, whichever drive the vault is on. If the screen wants bytes
+while the work runs, that is the one.
+
 ```ts
 type ApplyProgress = {
   applyId: string
@@ -1072,6 +1081,8 @@ type ApplyRecord = {
   bytesFreed: number
   filesMoved: number
   linksCreated: number
+  vaultFreeBytesBefore: number | null   // read off the drive, before the run
+  vaultFreeBytesAfter: number | null    // read off the drive, after the run
   failures: ApplyFailure[]
   revertible: boolean
 }
@@ -1102,6 +1113,24 @@ anywhere else, so a result screen that hides it because the run was stopped
 leaves the person believing a file was moved when it was not.
 
 ### 6.6 `get_apply_result` and `list_applies`
+
+**`vaultFreeBytesBefore` and `vaultFreeBytesAfter` are measurements.** The
+engine reads the vault's drive once before the first file moves and once after
+the last one. Show them as they are. Do not compute either from the other.
+
+`bytesFreed` is a different kind of number: it is what the run accounted for.
+The two can honestly disagree. Something else on the computer may write or
+delete files while the run is going, a file may be sparse and never have
+occupied what its size claimed, and a drive rounds to its allocation unit. A
+screen that derives "before" by subtracting `bytesFreed` from the reading taken
+afterwards is not reporting a measurement, and it will agree with itself on any
+tree, including one where nothing happened.
+
+Both are null when the drive could not be read. Null is not zero.
+
+A run that was undone keeps these two, along with `bytesFreed`, `filesMoved`
+and `linksCreated`. They record what the run did. `state` is `reverted`, and
+that is what says it was put back.
 
 `get_apply_result` takes `{ applyId: string }` and returns `ApplyRecord`.
 

@@ -376,6 +376,8 @@ fn apply_record() -> ApplyRecord {
         bytes_freed: 151_119_872,
         files_moved: 1,
         links_created: 2,
+        vault_free_bytes_before: Some(136_880_119_808),
+        vault_free_bytes_after: Some(287_999_999_680),
         failures: vec![ApplyFailure {
             group_id: "grp-2".into(),
             abs_path: r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
