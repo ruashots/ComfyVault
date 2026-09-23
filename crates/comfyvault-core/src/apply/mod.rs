@@ -661,6 +661,18 @@ impl<'a> Applier<'a> {
             JournalStep::MoveToVault { from, to, sha256, .. } => {
                 let source_there = std::fs::symlink_metadata(from).is_ok();
                 let vault_there = to.is_file();
+                // The vault path holding *something* is not the same as it
+                // holding the file this step put there. A later in-vault
+                // rename leaves a link at that path, and treating that as "the
+                // move happened" renamed the link into the person's model
+                // folder and left them holding a link instead of their file.
+                if vault_there && self.platform.is_symlink(to) {
+                    return Err(VaultError::conflict(
+                        "The file in the vault is not the one this step moved, so it was not put back. Undo the later change first.",
+                    )
+                    .with_path(to));
+                }
+
                 match (source_there, vault_there) {
                     // The move happened. Put it back.
                     (false, true) => {
