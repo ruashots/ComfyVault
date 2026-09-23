@@ -847,3 +847,47 @@ fn a_file_behind_a_windows_junction_that_leaves_the_install_is_never_movable() {
     assert!(plan.groups.is_empty());
     assert_eq!(std::fs::read(theirs.join("their-data.bin")).unwrap(), weights("theirs"));
 }
+
+/// The reverse control for the junction test: a whole models folder moved to a
+/// second drive with a junction, which is the shape people really create, and
+/// the setup this product exists for. It has to keep working.
+#[cfg(windows)]
+#[test]
+fn a_models_folder_junctioned_to_another_drive_still_consolidates() {
+    let w = TestWorld::new();
+    let i = w.add_install("A");
+    let elsewhere = w.path().join("D-drive-models");
+    std::fs::create_dir_all(elsewhere.join("loras")).unwrap();
+    std::fs::write(elsewhere.join("loras\\m.safetensors"), weights("m")).unwrap();
+
+    let models = i.root.join("models");
+    std::fs::remove_dir_all(&models).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &models.to_string_lossy(),
+            &elsewhere.to_string_lossy(),
+        ])
+        .output()
+        .expect("run mklink");
+    assert!(
+        made.status.success() && models.exists(),
+        "could not create a junction, so this test proved nothing: {}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+
+    let i = w.refresh(&i);
+    let out = w.scan(&[i.clone()]);
+    let e = entry(&out, "m.safetensors");
+    assert_eq!(
+        e.classification,
+        Classification::Movable,
+        "a junctioned models folder is a normal setup and must keep working"
+    );
+    assert_eq!(e.category, "loras");
+
+    let plan = w.planner().build("p", &out.record.scan_id, &out.entries, &[i]).unwrap();
+    assert_eq!(plan.groups.len(), 1, "it has to be consolidatable");
+}

@@ -191,7 +191,6 @@ Errors: `notInitialized` when no vault is open.
 ```ts
 type Settings = {
   metadataLookupsEnabled: boolean   // default true
-  civitaiApiKey: string | null      // optional. Never logged.
   hashCacheEnabled: boolean         // default true
   scanExtensions: string[]          // default list is in section 4.2
   minFileSizeBytes: number          // default 1048576
@@ -226,21 +225,19 @@ nobody can see.
 `update_settings` takes a partial object. Every field is optional. The engine
 applies only the fields that are present.
 
-`get_settings` never returns the API key value. It returns `"***"` when a key
-is stored and `null` when no key is stored. Sending `"***"` back keeps the
-stored key. Sending an empty string clears it.
+There is **no Civitai key**, and the interface must not offer a field for one.
 
-**The interface must say where the key is kept.** Put this next to the key
-field, in these words or closer:
+Looking a model up by hash needs no credential. That was checked against the
+live service: the same request unauthenticated, with a bogus bearer token, and
+with a token on the query string all return the same answer, byte for byte.
+Civitai gates *downloading*, and this version does not download.
 
-> This key is stored unencrypted inside your vault folder.
+A key field would therefore store a credential for a feature nobody can reach,
+at rest in the vault database, in a folder this product tells the person to
+carry on a portable drive they might lend, sell, or back up somewhere shared.
 
-The key is written to the vault database, and this product invites the person
-to carry that vault on a portable drive. They may hand that drive to someone,
-lend it, sell it, or back it up somewhere shared, and the key rides along. It
-never leaves the machine on its own, it never appears in a log, and it travels
-only in an `Authorization` header. But it is at rest in a folder the person is
-encouraged to move, and that is theirs to know.
+Whoever adds downloading adds the key then, and puts it in the operating
+system's credential store, where it is bound to the machine and the account.
 
 ---
 

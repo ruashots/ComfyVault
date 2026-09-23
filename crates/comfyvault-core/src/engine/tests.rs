@@ -424,26 +424,23 @@ fn asking_about_a_scan_that_never_happened_says_so() {
 // --- settings --------------------------------------------------------------
 
 #[test]
-fn the_api_key_never_comes_back_out_of_the_engine() {
-    // It is a credential. It goes in and it is used, and nothing above the
-    // engine can read it back out of a window or a log.
+fn nothing_the_engine_hands_out_carries_a_credential() {
+    // There is no Civitai key, because looking a model up by hash needs none
+    // and this version does not download. A field storing a credential for a
+    // feature nobody can reach, in a file the person is told to carry on a
+    // portable drive, is a liability with nothing on the other side of it.
     let f = Fixture::new();
     f.open_vault();
 
-    f.engine
-        .update_settings(&SettingsPatch {
-            civitai_api_key: Some("the-real-key".into()),
-            ..Default::default()
-        })
-        .unwrap();
-
-    let s = f.engine.settings().unwrap();
-    assert_eq!(s.civitai_api_key.as_deref(), Some("***"));
-    let json = serde_json::to_string(&s).unwrap();
-    assert!(!json.contains("the-real-key"));
-
-    let state_json = serde_json::to_string(&f.engine.app_state().unwrap()).unwrap();
-    assert!(!state_json.contains("the-real-key"), "the key leaked into the state call");
+    for (what, json) in [
+        ("settings", serde_json::to_string(&f.engine.settings().unwrap()).unwrap()),
+        ("app_state", serde_json::to_string(&f.engine.app_state().unwrap()).unwrap()),
+    ] {
+        let lower = json.to_lowercase();
+        for word in ["apikey", "api_key", "civitai", "token", "secret", "password"] {
+            assert!(!lower.contains(word), "{what} carries {word}: {json}");
+        }
+    }
 }
 
 #[test]

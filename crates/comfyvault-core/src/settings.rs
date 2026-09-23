@@ -1,4 +1,20 @@
 //! Settings the person can change, and the defaults the engine ships with.
+//!
+//! # There is no Civitai key here, on purpose
+//!
+//! Looking a model up by hash needs no key. That was checked against the live
+//! service: the same request unauthenticated, with a bogus bearer token, and
+//! with a token on the query string all return the same answer, byte for byte.
+//! Civitai's gate is on *downloading*, and this version does not download.
+//!
+//! So a key field would store a credential for a feature nobody can reach. It
+//! would sit at rest in the vault database, and this product tells the person
+//! to carry that vault on a portable drive they might lend, sell, or back up
+//! somewhere shared. That is a liability with nothing on the other side of it.
+//!
+//! Whoever adds downloading adds the key then, and puts it in the operating
+//! system's credential store, where it is bound to the machine and the
+//! account. Not in here.
 
 use std::path::PathBuf;
 
@@ -30,9 +46,6 @@ pub const DEFAULT_MIN_FILE_SIZE: u64 = 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub metadata_lookups_enabled: bool,
-    /// Never returned by `get_settings`, never written to a log.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub civitai_api_key: Option<String>,
     pub hash_cache_enabled: bool,
     pub scan_extensions: Vec<String>,
     pub min_file_size_bytes: u64,
@@ -74,7 +87,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             metadata_lookups_enabled: true,
-            civitai_api_key: None,
             hash_cache_enabled: true,
             scan_extensions: DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
             min_file_size_bytes: DEFAULT_MIN_FILE_SIZE,
@@ -95,17 +107,6 @@ impl Settings {
             .any(|e| lower.ends_with(&e.to_lowercase()))
     }
 
-    /// The shape sent to the interface, with the key replaced by a marker.
-    ///
-    /// The key is a credential. It never leaves the engine, so it can never be
-    /// read out of a window, a log file, or a crash report.
-    pub fn redacted(&self) -> Self {
-        Self {
-            civitai_api_key: self.civitai_api_key.as_ref().map(|_| "***".to_string()),
-            ..self.clone()
-        }
-    }
-
     /// Applies a partial update. Absent fields are left alone.
     ///
     /// A key of `"***"` means the interface sent back what it was shown, so the
@@ -113,13 +114,6 @@ impl Settings {
     pub fn apply_patch(&mut self, patch: &SettingsPatch) {
         if let Some(v) = patch.metadata_lookups_enabled {
             self.metadata_lookups_enabled = v;
-        }
-        if let Some(v) = &patch.civitai_api_key {
-            match v.as_str() {
-                "***" => {}
-                "" => self.civitai_api_key = None,
-                k => self.civitai_api_key = Some(k.to_string()),
-            }
         }
         if let Some(v) = patch.hash_cache_enabled {
             self.hash_cache_enabled = v;
@@ -177,7 +171,6 @@ fn normalize_extensions(raw: &[String]) -> Vec<String> {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsPatch {
     pub metadata_lookups_enabled: Option<bool>,
-    pub civitai_api_key: Option<String>,
     pub hash_cache_enabled: Option<bool>,
     pub scan_extensions: Option<Vec<String>>,
     pub min_file_size_bytes: Option<u64>,
@@ -241,47 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn the_api_key_never_appears_in_the_redacted_form() {
-        let s = Settings {
-            civitai_api_key: Some("secret-key-value".into()),
-            ..Default::default()
-        };
-        let r = s.redacted();
-        assert_eq!(r.civitai_api_key.as_deref(), Some("***"));
-
-        let json = serde_json::to_string(&r).unwrap();
-        assert!(!json.contains("secret-key-value"), "the key leaked into JSON");
-    }
-
-    #[test]
-    fn sending_the_redaction_marker_back_keeps_the_stored_key() {
-        // The interface shows "***" and sends the whole settings object back.
-        // Treating that as the new key would destroy the real one.
-        let mut s = Settings {
-            civitai_api_key: Some("real-key".into()),
-            ..Default::default()
-        };
-        s.apply_patch(&SettingsPatch {
-            civitai_api_key: Some("***".into()),
-            ..Default::default()
-        });
-        assert_eq!(s.civitai_api_key.as_deref(), Some("real-key"));
-    }
-
-    #[test]
-    fn an_empty_key_clears_the_stored_key() {
-        let mut s = Settings {
-            civitai_api_key: Some("real-key".into()),
-            ..Default::default()
-        };
-        s.apply_patch(&SettingsPatch {
-            civitai_api_key: Some(String::new()),
-            ..Default::default()
-        });
-        assert_eq!(s.civitai_api_key, None);
-    }
-
-    #[test]
     fn a_patch_leaves_absent_fields_alone() {
         let mut s = Settings::default();
         s.metadata_lookups_enabled = false;
@@ -298,13 +250,26 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_hold_no_credential_at_all() {
+        // Not redacted: absent. A key field would store a credential for a
+        // feature this version cannot reach, in a file the person is told to
+        // carry on a portable drive.
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        for word in ["apiKey", "api_key", "civitai", "token", "secret", "password"] {
+            assert!(
+                !json.to_lowercase().contains(&word.to_lowercase()),
+                "the settings carry {word}, which is a credential in a file people carry: {json}"
+            );
+        }
+    }
+
+    #[test]
     fn settings_round_trip_through_json_with_camel_case_names() {
         let s = Settings::default();
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("metadataLookupsEnabled").is_some());
         assert!(v.get("minFileSizeBytes").is_some());
         assert!(v.get("scanOutputModelDirs").is_some());
-        assert!(v.get("civitaiApiKey").is_none(), "an unset key must not appear at all");
 
         let back: Settings = serde_json::from_value(v).unwrap();
         assert_eq!(back, s);

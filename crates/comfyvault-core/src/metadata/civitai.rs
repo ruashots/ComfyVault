@@ -36,15 +36,22 @@ pub const BATCH_LIMIT: usize = 100;
 pub struct CivitaiClient<'a> {
     transport: &'a dyn HttpTransport,
     base_url: String,
-    api_key: Option<String>,
 }
 
 impl<'a> CivitaiClient<'a> {
-    pub fn new(transport: &'a dyn HttpTransport, api_key: Option<String>) -> Self {
+    /// Builds a client. There is no credential, and none is needed.
+    ///
+    /// The hash lookup answers the same thing to an anonymous caller as to an
+    /// authenticated one: checked against the live service with no header, a
+    /// bogus bearer token, and a token on the query string, all byte for byte
+    /// identical. Civitai gates *downloading*, not looking up.
+    ///
+    /// Whoever adds downloading adds the credential then, and puts it in the
+    /// operating system's credential store rather than in the vault.
+    pub fn new(transport: &'a dyn HttpTransport) -> Self {
         Self {
             transport,
             base_url: DEFAULT_BASE_URL.to_string(),
-            api_key,
         }
     }
 
@@ -55,18 +62,12 @@ impl<'a> CivitaiClient<'a> {
         self
     }
 
-    fn headers(&self) -> Vec<(String, String)> {
-        match &self.api_key {
-            Some(k) => vec![("Authorization".to_string(), format!("Bearer {k}"))],
-            None => Vec::new(),
-        }
-    }
 }
 
 impl MetadataSource for CivitaiClient<'_> {
     fn fetch_one(&self, sha256: &str) -> Result<ModelMetadata> {
         let url = format!("{}/api/v1/model-versions/by-hash/{}", self.base_url, sha256);
-        let resp = self.transport.get(&url, &self.headers())?;
+        let resp = self.transport.get(&url, &[])?;
 
         match resp.status {
             // The service answers the same 404 for an unknown file and for
@@ -101,7 +102,7 @@ impl MetadataSource for CivitaiClient<'_> {
         for chunk in hashes.chunks(BATCH_LIMIT) {
             let url = format!("{}/api/v1/model-versions/by-hash", self.base_url);
             let body = serde_json::to_string(chunk)?;
-            let resp = self.transport.post_json(&url, &self.headers(), &body)?;
+            let resp = self.transport.post_json(&url, &[], &body)?;
 
             if resp.status == 429 {
                 return Err(VaultError::new(

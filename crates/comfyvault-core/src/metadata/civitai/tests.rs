@@ -224,7 +224,7 @@ fn a_single_lookup_asks_the_documented_url_and_reads_the_answer() {
     }));
 
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
     let m = c.fetch_one(SHA_A).unwrap();
 
     assert!(m.found);
@@ -237,7 +237,7 @@ fn a_404_means_no_match_and_is_not_an_error() {
         (404, "{\"error\":\"Model not found\"}".to_string())
     }));
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
 
     let m = c.fetch_one(SHA_A).unwrap();
     assert!(!m.found, "a file nobody uploaded is normal, not a failure");
@@ -245,18 +245,20 @@ fn a_404_means_no_match_and_is_not_an_error() {
 }
 
 #[test]
-fn an_api_key_is_sent_as_a_bearer_header_and_is_absent_without_one() {
+fn a_lookup_carries_no_credential_at_all() {
+    // Verified against the live service: the same request with no header, a
+    // bogus bearer token, and a token on the query string all return the same
+    // answer byte for byte. Civitai gates downloading, not looking up. So the
+    // client sends nothing, and there is no credential to leak.
     let server = TestServer::start(Arc::new(|req: &Request| {
         let auth = req.header("authorization").unwrap_or("none").to_string();
+        assert!(!req.path.contains("token"), "a credential reached the query string");
         (200, format!(r#"{{"id":1,"modelId":2,"name":"{auth}","files":[],"images":[]}}"#))
     }));
     let t = UreqTransport::new();
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
 
-    let with_key = CivitaiClient::new(&t, Some("secret".into())).with_base_url(&server.base_url);
-    assert_eq!(with_key.fetch_one(SHA_A).unwrap().version_name.as_deref(), Some("Bearer secret"));
-
-    let without = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
-    assert_eq!(without.fetch_one(SHA_A).unwrap().version_name.as_deref(), Some("none"));
+    assert_eq!(c.fetch_one(SHA_A).unwrap().version_name.as_deref(), Some("none"));
 }
 
 #[test]
@@ -275,7 +277,7 @@ fn a_batch_sends_one_request_for_many_hashes() {
     }));
 
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
     let got = c.fetch_many(&[SHA_A.to_string(), SHA_B.to_string()]).unwrap();
 
     assert_eq!(server.request_count(), 1, "both hashes must go in one request");
@@ -294,7 +296,7 @@ fn more_than_a_hundred_hashes_are_split_into_chunks_the_service_accepts() {
     }));
 
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
     let hashes: Vec<String> = (0..250).map(|i| format!("{i:064X}")).collect();
     let got = c.fetch_many(&hashes).unwrap();
 
@@ -314,7 +316,7 @@ fn a_batch_the_service_refuses_falls_back_to_one_at_a_time() {
     }));
 
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
     let got = c.fetch_many(&[SHA_A.to_string(), SHA_B.to_string()]).unwrap();
 
     assert_eq!(got.len(), 2);
@@ -326,7 +328,7 @@ fn a_batch_the_service_refuses_falls_back_to_one_at_a_time() {
 fn being_asked_to_slow_down_is_reported_as_a_temporary_network_problem() {
     let server = TestServer::start(Arc::new(|_: &Request| (429, "{}".to_string())));
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
 
     let err = c.fetch_one(SHA_A).unwrap_err();
     assert_eq!(err.code, crate::ErrorCode::NetworkUnavailable);
@@ -337,7 +339,7 @@ fn being_asked_to_slow_down_is_reported_as_a_temporary_network_problem() {
 fn a_server_failure_is_a_network_problem_and_never_a_crash() {
     let server = TestServer::start(Arc::new(|_: &Request| (500, "oops".to_string())));
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
     assert_eq!(c.fetch_one(SHA_A).unwrap_err().code, crate::ErrorCode::NetworkUnavailable);
 }
 
@@ -347,7 +349,7 @@ fn an_answer_that_is_not_json_is_reported_rather_than_crashing() {
         (200, "<html>we are down for maintenance</html>".to_string())
     }));
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
 
     let err = c.fetch_one(SHA_A).unwrap_err();
     assert_eq!(err.code, crate::ErrorCode::NetworkUnavailable);
@@ -358,7 +360,7 @@ fn an_answer_that_is_not_json_is_reported_rather_than_crashing() {
 fn an_empty_batch_asks_nothing() {
     let server = TestServer::start(Arc::new(|_: &Request| (200, "[]".to_string())));
     let t = UreqTransport::new();
-    let c = CivitaiClient::new(&t, None).with_base_url(&server.base_url);
+    let c = CivitaiClient::new(&t).with_base_url(&server.base_url);
 
     assert!(c.fetch_many(&[]).unwrap().is_empty());
     assert_eq!(server.request_count(), 0);

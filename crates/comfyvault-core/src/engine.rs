@@ -314,7 +314,7 @@ impl Engine {
             vault_initialized: store.is_some(),
             install_count: installs,
             platform: self.platform_report(),
-            settings: settings.redacted(),
+            settings,
             last_scan_id: last_scan,
             last_plan_id: last_plan,
             interrupted_applies: interrupted,
@@ -324,9 +324,8 @@ impl Engine {
 
     // -- settings ---------------------------------------------------------
 
-    /// The settings, with the API key replaced by a marker.
     pub fn settings(&self) -> Result<Settings> {
-        Ok(self.store()?.settings()?.redacted())
+        self.store()?.settings()
     }
 
     pub fn update_settings(&self, patch: &SettingsPatch) -> Result<Settings> {
@@ -334,7 +333,7 @@ impl Engine {
         let mut s = store.settings()?;
         s.apply_patch(patch);
         store.put_settings(&s)?;
-        Ok(s.redacted())
+        Ok(s)
     }
 
     // -- installs ---------------------------------------------------------
@@ -772,7 +771,7 @@ impl Engine {
         let store = self.store()?;
         let settings = store.settings()?;
         let transport = UreqTransport::new();
-        let client = CivitaiClient::new(&transport, settings.civitai_api_key.clone());
+        let client = CivitaiClient::new(&transport);
         MetadataService::new(&store, &client, settings.metadata_lookups_enabled).get(sha256, refresh)
     }
 
@@ -780,7 +779,7 @@ impl Engine {
         let store = self.store()?;
         let settings = store.settings()?;
         let transport = UreqTransport::new();
-        let client = CivitaiClient::new(&transport, settings.civitai_api_key.clone());
+        let client = CivitaiClient::new(&transport);
         MetadataService::new(&store, &client, settings.metadata_lookups_enabled)
             .get_many(hashes, refresh)
     }
