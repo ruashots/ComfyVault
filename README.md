@@ -291,6 +291,7 @@ in. The interface is Solid and TypeScript. Tauri puts the two together.
 The split is deliberate. The same engine can back a command line tool later
 without moving any logic.
 
-Tests: 484 in the engine, 170 in the interface. The engine suite also runs on
-Windows, which is the run that counts, because three real defects passed every
-Linux test and failed on Windows. [docs/BUILD.md](docs/BUILD.md) has that recipe.
+The engine and the interface each carry their own test suite. The engine's suite
+also runs on Windows, and that is the run that counts: three real defects passed
+every test on Linux and failed on Windows. [docs/BUILD.md](docs/BUILD.md) has
+both recipes.
