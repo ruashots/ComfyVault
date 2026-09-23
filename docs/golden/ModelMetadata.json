@@ -1,0 +1,23 @@
+{
+  "ambiguous": false,
+  "baseModel": "SDXL 1.0",
+  "civitaiModelId": 58390,
+  "civitaiVersionId": 135867,
+  "downloadUrl": "https://civitai.com/api/download/models/135867",
+  "fetchedAt": "2025-09-22T00:03:32Z",
+  "found": true,
+  "modelName": "Detail Tweaker",
+  "modelType": "LORA",
+  "nsfw": false,
+  "nsfwLevel": 0,
+  "pageUrl": "https://civitai.com/models/58390",
+  "previewImageUrls": [
+    "https://image.civitai.com/preview/58390.jpeg"
+  ],
+  "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+  "source": "civitai",
+  "triggerWords": [
+    "detailed"
+  ],
+  "versionName": "v1.2"
+}

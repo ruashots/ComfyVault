@@ -17,7 +17,7 @@ use std::sync::Arc;
 use comfyvault_core::apply::{ApplyProgress, ApplyRequest, InterruptedApply};
 use comfyvault_core::engine::{AppState, Engine, ScanEntryFilter, ScanEntryPage, VaultInfo};
 use comfyvault_core::install::{Install, InstallCandidate};
-use comfyvault_core::links::{CreateLinkRequest, ModelDirNode};
+use comfyvault_core::links::{CreateLinkRequest, LinkWithState, ModelDirNode};
 use comfyvault_core::metadata::ModelMetadata;
 use comfyvault_core::plan::ConsolidationPlan;
 use comfyvault_core::platform::{LockState, PlatformReport, RunningComfy};
@@ -29,11 +29,18 @@ use comfyvault_core::vault::{
     ContentPage, NameGroup, VaultFile, VaultFilter, VaultHealth, VaultPage, VaultSort,
 };
 use comfyvault_core::{ErrorCode, VaultError};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::{AppHandle, State};
 
 use crate::events;
 use crate::AppEngine;
+
+/// The small reply shapes live in the engine crate, so that their contract
+/// samples come from the same serialiser the product uses.
+pub use comfyvault_core::reply::{
+    Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted, DirEntryInfo,
+    DirectoryListing, Removed, RemovedLinks, StartedApply, StartedScan, UnregisterResult,
+};
 
 type Reply<T> = Result<T, VaultError>;
 
@@ -170,13 +177,6 @@ pub async fn update_install(
     blocking(move || e.rename_install(&args.id, &args.label)).await
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnregisterResult {
-    pub removed: bool,
-    pub links_left_in_place: u64,
-}
-
 #[tauri::command]
 pub async fn unregister_install(
     state: State<'_, AppEngine>,
@@ -210,12 +210,6 @@ pub async fn list_install_model_dirs(
 pub struct StartScanArgs {
     #[serde(default)]
     pub install_ids: Option<Vec<String>>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartedScan {
-    pub scan_id: String,
 }
 
 #[tauri::command]
@@ -273,11 +267,6 @@ pub struct ScanIdArgs {
     pub scan_id: String,
 }
 
-#[derive(Serialize)]
-pub struct Cancelled {
-    pub cancelled: bool,
-}
-
 #[tauri::command]
 pub async fn cancel_scan(state: State<'_, AppEngine>, args: ScanIdArgs) -> Reply<Cancelled> {
     let e = engine(&state);
@@ -322,12 +311,6 @@ pub async fn get_plan(state: State<'_, AppEngine>, args: PlanIdArgs) -> Reply<Co
 // ---------------------------------------------------------------------------
 // Apply
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartedApply {
-    pub apply_id: String,
-}
 
 #[tauri::command]
 pub async fn start_apply(
@@ -453,11 +436,6 @@ pub struct LinkIdArgs {
     pub link_id: String,
 }
 
-#[derive(Serialize)]
-pub struct Removed {
-    pub removed: bool,
-}
-
 #[tauri::command]
 pub async fn remove_link(state: State<'_, AppEngine>, args: LinkIdArgs) -> Reply<Removed> {
     let e = engine(&state);
@@ -473,13 +451,6 @@ pub async fn remove_link(state: State<'_, AppEngine>, args: LinkIdArgs) -> Reply
 pub struct CreateFolderArgs {
     pub install_id: String,
     pub relative_dir: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreatedFolder {
-    pub abs_path: String,
-    pub created: bool,
 }
 
 #[tauri::command]
@@ -513,7 +484,7 @@ pub struct ListLinksArgs {
 pub async fn list_links(
     state: State<'_, AppEngine>,
     args: Option<ListLinksArgs>,
-) -> Reply<Vec<LinkRecord>> {
+) -> Reply<Vec<LinkWithState>> {
     let e = engine(&state);
     let args = args.unwrap_or_default();
     blocking(move || e.links(args.install_id.as_deref(), args.sha256.as_deref(), args.state)).await
@@ -630,13 +601,6 @@ pub struct DeleteVaultFileArgs {
     pub confirm: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Deleted {
-    pub deleted: bool,
-    pub bytes_freed: u64,
-}
-
 #[tauri::command]
 pub async fn delete_vault_file(
     state: State<'_, AppEngine>,
@@ -654,12 +618,6 @@ pub async fn delete_vault_file(
 pub async fn check_vault_health(state: State<'_, AppEngine>) -> Reply<VaultHealth> {
     let e = engine(&state);
     blocking(move || e.vault_health()).await
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemovedLinks {
-    pub removed: u64,
 }
 
 #[tauri::command]
@@ -733,11 +691,6 @@ pub async fn fetch_metadata_batch(
     blocking(move || e.metadata_batch(&args.sha256, args.refresh)).await
 }
 
-#[derive(Serialize)]
-pub struct Cleared {
-    pub cleared: u64,
-}
-
 #[tauri::command]
 pub async fn clear_metadata_cache(state: State<'_, AppEngine>) -> Reply<Cleared> {
     let e = engine(&state);
@@ -781,30 +734,11 @@ pub async fn check_locked_files(
 // walking can go through the engine instead of granting the window broad file
 // system access of its own.
 
-/// One entry in a folder listing.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DirEntryInfo {
-    pub name: String,
-    pub path: String,
-    pub is_directory: bool,
-    /// The entry is a link. Following it may leave the folder being browsed.
-    pub is_symlink: bool,
-}
-
 #[derive(Deserialize)]
 pub struct ListDirectoryArgs {
     /// Absent or empty means the drives, or the root folder.
     #[serde(default)]
     pub path: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DirectoryListing {
-    pub path: String,
-    pub parent: Option<String>,
-    pub entries: Vec<DirEntryInfo>,
 }
 
 /// Lists the folders inside one folder, for the picker.
@@ -888,13 +822,6 @@ pub async fn list_directory(
 #[derive(Deserialize)]
 pub struct CreateDirectoryArgs {
     pub path: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreatedDirectory {
-    pub path: String,
-    pub created: bool,
 }
 
 /// Creates a folder the person named in the picker.

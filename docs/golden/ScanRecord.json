@@ -1,0 +1,62 @@
+{
+  "cancelled": false,
+  "errors": [
+    {
+      "code": "permissionDenied",
+      "detail": "Windows refused to open this file.",
+      "installId": "inst-2",
+      "path": "C:\\ComfyUI-Beta\\models\\checkpoints\\broken.safetensors"
+    }
+  ],
+  "finishedAt": "2025-09-22T00:03:32Z",
+  "installIds": [
+    "inst-1",
+    "inst-2"
+  ],
+  "perInstall": [
+    {
+      "alreadyLinkedBytes": 12000000000,
+      "alreadyLinkedFiles": 6,
+      "bytesFromCache": 224000000000,
+      "bytesRead": 388000000000,
+      "customNodeBytes": 1400000000,
+      "customNodeFiles": 9,
+      "duplicateFiles": 147,
+      "durationMs": 212000,
+      "errorCount": 1,
+      "filesSeen": 412,
+      "hfCacheBytes": 22000000000,
+      "hfCacheFiles": 11,
+      "installId": "inst-1",
+      "installLabel": "ComfyUI Production",
+      "movableBytes": 612000000000,
+      "movableFiles": 388,
+      "reclaimableBytes": 224000000000,
+      "skippedFiles": 4,
+      "uniqueBytes": 388000000000,
+      "uniqueContents": 241
+    }
+  ],
+  "scanId": "scan-1",
+  "startedAt": "2025-09-22T00:00:00Z",
+  "totals": {
+    "alreadyLinkedBytes": 12000000000,
+    "alreadyLinkedFiles": 6,
+    "bytesFromCache": 224000000000,
+    "bytesRead": 388000000000,
+    "customNodeBytes": 1400000000,
+    "customNodeFiles": 9,
+    "duplicateFiles": 147,
+    "durationMs": 212000,
+    "errorCount": 1,
+    "filesSeen": 412,
+    "hfCacheBytes": 22000000000,
+    "hfCacheFiles": 11,
+    "movableBytes": 612000000000,
+    "movableFiles": 388,
+    "reclaimableBytes": 224000000000,
+    "skippedFiles": 4,
+    "uniqueBytes": 388000000000,
+    "uniqueContents": 241
+  }
+}

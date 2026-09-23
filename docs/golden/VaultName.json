@@ -1,0 +1,9 @@
+{
+  "isCanonical": true,
+  "name": "detail-tweaker.safetensors",
+  "seenInInstalls": [
+    "inst-1"
+  ],
+  "usedByLinks": 2,
+  "vaultRelPath": "loras\\detail-tweaker.safetensors"
+}

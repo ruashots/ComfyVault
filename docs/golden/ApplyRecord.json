@@ -1,0 +1,26 @@
+{
+  "applyId": "apply-1",
+  "bytesFreed": 151119872,
+  "failures": [
+    {
+      "absPath": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors",
+      "detail": "ComfyUI is running and has this file open.",
+      "groupId": "grp-2",
+      "reason": "fileLocked"
+    }
+  ],
+  "filesMoved": 1,
+  "finishedAt": "2025-09-22T00:05:06Z",
+  "groupIds": [
+    "grp-1",
+    "grp-2"
+  ],
+  "groupsApplied": 1,
+  "groupsFailed": 1,
+  "groupsRequested": 2,
+  "linksCreated": 2,
+  "planId": "plan-1",
+  "revertible": true,
+  "startedAt": "2025-09-22T00:03:32Z",
+  "state": "completedWithErrors"
+}

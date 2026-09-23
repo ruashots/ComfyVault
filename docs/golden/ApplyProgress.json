@@ -1,0 +1,17 @@
+{
+  "applyId": "apply-1",
+  "bytesFreed": 151119872,
+  "bytesMoved": 0,
+  "bytesToMove": 0,
+  "currentGroupId": "grp-2",
+  "currentPath": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors",
+  "elapsedMs": 41000,
+  "etaMs": 12000,
+  "failures": 0,
+  "filesMoved": 1,
+  "groupIndex": 1,
+  "groupTotal": 2,
+  "linksCreated": 2,
+  "phase": "applying",
+  "step": "linking"
+}

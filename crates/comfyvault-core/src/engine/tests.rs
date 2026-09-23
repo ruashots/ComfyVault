@@ -703,7 +703,7 @@ fn a_path_spelled_the_way_the_interface_sends_it_finds_the_same_link() {
 
     let stored = f.engine.links(None, None, None).unwrap();
     assert_eq!(stored.len(), 1);
-    let as_walked = stored[0].abs_path.clone();
+    let as_walked = stored[0].link.abs_path.clone();
 
     // The same file, spelled the way a path from the interface arrives.
     let as_sent = PathBuf::from(

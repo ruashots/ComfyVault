@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+      "category": "loras",
+      "classification": "movable",
+      "installId": "inst-1",
+      "linkTarget": null,
+      "mtimeNanos": "1758240000000000000",
+      "occurrenceCount": 2,
+      "relPath": "loras\\detail-tweaker.safetensors",
+      "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+      "sizeBytes": 151119872
+    }
+  ],
+  "offset": 0,
+  "total": 412
+}

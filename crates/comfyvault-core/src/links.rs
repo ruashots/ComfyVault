@@ -59,6 +59,19 @@ pub struct CreateLinkRequest {
     pub create_dir: bool,
 }
 
+/// A recorded link, with what it looks like on disk right now.
+///
+/// `state` is not stored. It is a fact about the disk, so it is measured when
+/// the list is read. The record itself stays the record. The fields of
+/// [`LinkRecord`] sit directly alongside `state`, not nested under a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkWithState {
+    #[serde(flatten)]
+    pub link: LinkRecord,
+    pub state: LinkState,
+}
+
 impl<'a> Links<'a> {
     pub fn new(store: &'a Store, platform: &'a dyn Platform) -> Self {
         Self { store, platform }
@@ -187,7 +200,7 @@ impl<'a> Links<'a> {
         install_id: Option<&str>,
         sha256: Option<&str>,
         state: Option<LinkState>,
-    ) -> Result<Vec<LinkRecord>> {
+    ) -> Result<Vec<LinkWithState>> {
         let mut out = self.store.links()?;
         if let Some(id) = install_id {
             out.retain(|l| l.install_id == id);
@@ -199,7 +212,10 @@ impl<'a> Links<'a> {
             out.retain(|l| self.state_of(l) == want);
         }
         out.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
-        Ok(out)
+        Ok(out
+            .into_iter()
+            .map(|l| LinkWithState { state: self.state_of(&l), link: l })
+            .collect())
     }
 
     /// What a recorded link looks like on disk right now.

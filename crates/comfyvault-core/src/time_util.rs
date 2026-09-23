@@ -132,3 +132,37 @@ mod tests {
         assert_ne!(before, after);
     }
 }
+
+/// A nanosecond file time, written on the wire as a string.
+///
+/// JavaScript parses a JSON number into a double, which silently drops the
+/// last digits of a nanosecond time. Measured: the engine sends
+/// 1758240123456789012 and JavaScript reads 1758240123456789000. A string
+/// keeps every digit.
+///
+/// It also lets one of these sit inside a flattened payload. Serde buffers a
+/// flattened value through a type that has no 128 bit number, so a flattened
+/// record holding one cannot be read back at all.
+///
+/// Reading accepts a plain number as well, so a vault written by an earlier
+/// build still opens.
+pub mod nanos_as_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &i128, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i128, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WrittenAs {
+            Text(String),
+            Number(i64),
+        }
+        match WrittenAs::deserialize(d)? {
+            WrittenAs::Text(s) => s.parse().map_err(serde::de::Error::custom),
+            WrittenAs::Number(n) => Ok(n as i128),
+        }
+    }
+}

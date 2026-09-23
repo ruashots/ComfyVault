@@ -525,18 +525,37 @@ impl Engine {
         filter: &ScanEntryFilter,
     ) -> Result<ScanEntryPage> {
         let store = self.store()?;
-        let mut entries = store.scan_entries(scan_id)?;
+        let entries = store.scan_entries(scan_id)?;
         if entries.is_empty() && store.scan(scan_id)?.is_none() {
             return Err(VaultError::not_found("That scan is not in this vault's history."));
         }
-        entries.retain(|e| filter.matches(e));
+        // Counted over the whole scan, before the filter. "How many paths
+        // hold these bytes" is a fact about what was found, not about what
+        // the person is looking at right now.
+        let mut per_hash: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+        for e in &entries {
+            if let Some(h) = e.sha256.as_deref() {
+                *per_hash.entry(h).or_insert(0) += 1;
+            }
+        }
+        let counts: Vec<u64> = entries
+            .iter()
+            .map(|e| e.sha256.as_deref().and_then(|h| per_hash.get(h)).copied().unwrap_or(1))
+            .collect();
 
-        let total = entries.len() as u64;
+        let kept: Vec<ScanEntryWithCount> = entries
+            .into_iter()
+            .zip(counts)
+            .filter(|(e, _)| filter.matches(e))
+            .map(|(entry, occurrence_count)| ScanEntryWithCount { entry, occurrence_count })
+            .collect();
+
+        let total = kept.len() as u64;
         let limit = (limit as usize).min(crate::vault::MAX_PAGE);
         Ok(ScanEntryPage {
             total,
             offset,
-            entries: entries.into_iter().skip(offset as usize).take(limit).collect(),
+            entries: kept.into_iter().skip(offset as usize).take(limit).collect(),
         })
     }
 
@@ -690,7 +709,7 @@ impl Engine {
         install_id: Option<&str>,
         sha256: Option<&str>,
         state: Option<LinkState>,
-    ) -> Result<Vec<LinkRecord>> {
+    ) -> Result<Vec<crate::links::LinkWithState>> {
         let store = self.store()?;
         Links::new(&store, self.platform.as_ref()).list(install_id, sha256, state)
     }
@@ -863,7 +882,21 @@ impl ScanEntryFilter {
 pub struct ScanEntryPage {
     pub total: u64,
     pub offset: u64,
-    pub entries: Vec<ScanEntryRecord>,
+    pub entries: Vec<ScanEntryWithCount>,
+}
+
+/// One file a scan found, with how many paths in that scan hold its bytes.
+///
+/// The count is not stored on the record. It is a fact about the whole scan,
+/// so keeping a copy on every row would be a second version of the same truth
+/// that a later scan could leave behind. The fields of [`ScanEntryRecord`] sit
+/// directly alongside `occurrenceCount`, not nested under a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanEntryWithCount {
+    #[serde(flatten)]
+    pub entry: ScanEntryRecord,
+    pub occurrence_count: u64,
 }
 
 #[cfg(test)]

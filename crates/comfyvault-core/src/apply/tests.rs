@@ -589,6 +589,67 @@ fn cancelling_stops_between_groups_and_keeps_what_is_done() {
     assert_eq!(result.groups_applied, 0, "cancelled before the first group started");
 }
 
+#[test]
+fn a_failure_that_really_happened_survives_the_person_pressing_stop() {
+    // A group the cancel interrupted is not a failure, because the person
+    // stopped it. A group that broke on its own, earlier in the same run, is
+    // one, and it must still be named. Otherwise a file that was left alone
+    // is reported nowhere, which is the one thing the result screen exists
+    // to prevent.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    for tag in ["one", "two", "three"] {
+        w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+    }
+    let plan = w.plan(&[a, b]);
+
+    // Break the first group for a real reason, not a cancel.
+    let doomed = group_for(&plan, "one");
+    let victim = doomed.links.iter().find(|l| !l.is_source).expect("a link to make");
+    w.platform.fail_symlink_at(
+        victim.abs_path.clone(),
+        VaultError::new(ErrorCode::PermissionDenied, "Windows refused to create this link."),
+    );
+
+    // The order is the order asked for, so "one" runs first.
+    let req = ApplyRequest {
+        plan_id: plan.plan_id.clone(),
+        group_ids: vec![
+            doomed.group_id.clone(),
+            group_for(&plan, "two").group_id.clone(),
+            group_for(&plan, "three").group_id.clone(),
+        ],
+        verify: VerifyModeArg::SizeAndMtime,
+        stop_on_error: false,
+    };
+
+    // Stop once the run reaches the third group. The first has already failed
+    // and the second has already finished.
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    let sink = move |p: &ApplyProgress| {
+        if p.group_index >= 2 {
+            trigger.cancel();
+        }
+    };
+
+    let result = applier(&w).apply("ap-1", &plan, &req, &cancel, &sink).unwrap();
+
+    assert_eq!(result.state, ApplyState::Cancelled, "the person stopped it");
+    assert_eq!(result.groups_applied, 1, "the second group finished before the stop");
+    assert_eq!(
+        result.failures.len(),
+        1,
+        "the group that broke on its own is missing from the result: {:?}",
+        result.failures
+    );
+    assert_eq!(result.failures[0].group_id, doomed.group_id);
+    assert_eq!(result.failures[0].reason, BlockReason::PermissionDenied);
+    assert_eq!(result.groups_failed, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Revert
 // ---------------------------------------------------------------------------

@@ -1,0 +1,17 @@
+{
+  "absPath": "C:\\ComfyUI-Alpha\\models\\loras",
+  "category": "loras",
+  "children": [
+    {
+      "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\sdxl",
+      "category": "loras",
+      "children": [],
+      "fileCount": 12,
+      "origin": "modelsDir",
+      "relPath": "loras\\sdxl"
+    }
+  ],
+  "fileCount": 61,
+  "origin": "modelsDir",
+  "relPath": "loras"
+}

@@ -115,7 +115,12 @@ pub struct InstallCandidate {
     pub models_dir_exists: bool,
     pub extra_paths_file: Option<PathBuf>,
     pub extra_paths: Vec<ExtraPath>,
-    pub extra_paths_error: Option<String>,
+    /// Every complaint the extra paths file produced, one per entry.
+    ///
+    /// A list, not one joined sentence. A yaml file with three bad categories
+    /// has three things to tell the person, and each names a different line
+    /// to correct. Empty means the file parsed cleanly, or there was no file.
+    pub extra_paths_problems: Vec<String>,
     pub output_model_dirs: Vec<OutputModelDir>,
     pub reason: Option<String>,
 }
@@ -136,7 +141,7 @@ impl InstallCandidate {
             models_dir_exists: false,
             extra_paths_file: None,
             extra_paths: Vec::new(),
-            extra_paths_error: None,
+            extra_paths_problems: Vec::new(),
             output_model_dirs: Vec::new(),
             reason: Some(reason.into()),
         }
@@ -346,16 +351,13 @@ pub fn inspect(given: &Path) -> Result<InstallCandidate> {
 
     let models_dir = root.join("models");
     let extra_file = root.join("extra_model_paths.yaml");
-    let (extra_paths, extra_paths_error, extra_paths_file) = if extra_file.is_file() {
+    let (extra_paths, extra_paths_problems, extra_paths_file) = if extra_file.is_file() {
         match extra_paths::load_file(&extra_file) {
-            Ok(f) => {
-                let err = (!f.problems.is_empty()).then(|| f.problems.join(" "));
-                (f.entries, err, Some(extra_file))
-            }
-            Err(e) => (Vec::new(), Some(e.message.clone()), Some(extra_file)),
+            Ok(f) => (f.entries, f.problems, Some(extra_file)),
+            Err(e) => (Vec::new(), vec![e.message.clone()], Some(extra_file)),
         }
     } else {
-        (Vec::new(), None, None)
+        (Vec::new(), Vec::new(), None)
     };
 
     Ok(InstallCandidate {
@@ -371,7 +373,7 @@ pub fn inspect(given: &Path) -> Result<InstallCandidate> {
         models_dir: Some(models_dir),
         extra_paths_file: extra_paths_file.clone(),
         extra_paths,
-        extra_paths_error,
+        extra_paths_problems,
         output_model_dirs: output_model_dirs(&root),
         reason: None,
         root: Some(root),
@@ -696,7 +698,7 @@ mod tests {
         assert_eq!(c.extra_paths.len(), 1);
         assert_eq!(c.extra_paths[0].category, "loras");
         assert!(c.extra_paths[0].exists);
-        assert!(c.extra_paths_error.is_none());
+        assert!(c.extra_paths_problems.is_empty());
         assert!(c.extra_paths_file.is_some());
     }
 
@@ -711,7 +713,7 @@ mod tests {
 
         let c = inspect(&root).unwrap();
         assert!(c.valid);
-        assert!(c.extra_paths_error.is_some());
+        assert!(!c.extra_paths_problems.is_empty());
         assert!(c.extra_paths.is_empty());
     }
 

@@ -1,0 +1,24 @@
+{
+  "checkedFiles": 241,
+  "checkedLinks": 388,
+  "danglingLinks": [
+    {
+      "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+      "applyId": "apply-1",
+      "createdAt": "2025-09-22T00:03:32Z",
+      "createdBy": "apply",
+      "id": "link-1",
+      "installId": "inst-1",
+      "linkName": "detail-tweaker.safetensors",
+      "relPath": "loras\\detail-tweaker.safetensors",
+      "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+      "vaultRelPath": "loras\\detail-tweaker.safetensors"
+    }
+  ],
+  "foreignFiles": [
+    "C:\\ComfyVault\\loras\\dropped-in-by-hand.safetensors"
+  ],
+  "missingVaultFiles": [],
+  "ok": false,
+  "replacedLinks": []
+}

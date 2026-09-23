@@ -1,0 +1,56 @@
+{
+  "files": [
+    {
+      "addedAt": "2025-09-21T00:00:00Z",
+      "aliases": [
+        "detail_tweaker_xl.safetensors"
+      ],
+      "canonicalName": "detail-tweaker.safetensors",
+      "category": "loras",
+      "linkCount": 2,
+      "links": [
+        {
+          "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+          "applyId": "apply-1",
+          "createdAt": "2025-09-22T00:03:32Z",
+          "createdBy": "apply",
+          "id": "link-1",
+          "installId": "inst-1",
+          "linkName": "detail-tweaker.safetensors",
+          "relPath": "loras\\detail-tweaker.safetensors",
+          "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+          "vaultRelPath": "loras\\detail-tweaker.safetensors"
+        }
+      ],
+      "metadata": {
+        "ambiguous": false,
+        "baseModel": "SDXL 1.0",
+        "civitaiModelId": 58390,
+        "civitaiVersionId": 135867,
+        "downloadUrl": "https://civitai.com/api/download/models/135867",
+        "fetchedAt": "2025-09-22T00:03:32Z",
+        "found": true,
+        "modelName": "Detail Tweaker",
+        "modelType": "LORA",
+        "nsfw": false,
+        "nsfwLevel": 0,
+        "pageUrl": "https://civitai.com/models/58390",
+        "previewImageUrls": [
+          "https://image.civitai.com/preview/58390.jpeg"
+        ],
+        "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+        "source": "civitai",
+        "triggerWords": [
+          "detailed"
+        ],
+        "versionName": "v1.2"
+      },
+      "present": true,
+      "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+      "sizeBytes": 151119872,
+      "vaultRelPath": "loras\\detail-tweaker.safetensors"
+    }
+  ],
+  "offset": 0,
+  "total": 241
+}

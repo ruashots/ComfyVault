@@ -39,7 +39,30 @@ const info = await invoke<InstallCandidate>('validate_install_path', {
 | Identifier | String. Format is UUID v4 unless this document says otherwise. |
 | Hash | 64 hexadecimal characters, uppercase. The algorithm is SHA-256. |
 
-### 1.3 Errors
+### 1.3 Samples of every payload
+
+`docs/golden/` holds one JSON file per payload, named after the payload. Each
+file is real output. The engine writes it with the same serialiser the product
+uses, and a test fails if a file stops matching what the engine sends.
+
+Build test doubles from those files. Do not restate a shape by hand. A hand
+written double agrees with whoever wrote it, which is how the engine came to
+send `huggingfaceCacheDirs` while the interface read `huggingFaceCacheDirs`:
+both sides were green and three panels of Settings were empty on every machine.
+
+This document says what a field means, what is allowed, and what the engine
+promises. The sample says what arrives. If the two ever disagree, the sample is
+right, and the disagreement is a bug to report rather than to work around. A
+test compares this document's field lists against the samples, so that gap
+should not last.
+
+To accept a deliberate change to the engine's output:
+
+```
+UPDATE_GOLDEN=1 cargo test -p comfyvault-core golden
+```
+
+### 1.4 Errors
 
 Every command rejects with the same shape:
 
@@ -78,7 +101,7 @@ field. The engine never puts a secret in either field.
 | `cancelled` | The caller cancelled the operation. |
 | `conflict` | The operation contradicts the current state. Read `detail`. |
 
-### 1.4 Concurrency rule
+### 1.5 Concurrency rule
 
 The engine runs one long operation at a time. A scan, an apply, and a revert
 are long operations. If a second long operation starts, the engine rejects it
@@ -271,8 +294,8 @@ type InstallCandidate = {
   modelsDirExists: boolean
   extraPathsFile: string | null
   extraPaths: ExtraPath[]
-  extraPathsError: string | null
-  outputModelDirs: string[]
+  extraPathsProblems: string[]   // one per complaint, empty when the file is clean
+  outputModelDirs: OutputModelDir[]
   reason: string | null          // why valid is false
 }
 ```
@@ -467,7 +490,7 @@ Set `hashCacheEnabled` to `false` to force a full read.
 | Event | Payload |
 |---|---|
 | `scan:progress` | `ScanProgress` |
-| `scan:done` | `ScanResult` |
+| `scan:done` | `ScanRecord` |
 | `scan:error` | `VaultError` |
 
 ```ts
@@ -492,10 +515,10 @@ The engine emits `scan:progress` at most four times per second. During
 `enumerating`, `filesToHash` and `bytesToHash` grow. During `hashing`, both
 stay fixed.
 
-### 4.5 `ScanResult`
+### 4.5 `ScanRecord`
 
 ```ts
-type ScanResult = {
+type ScanRecord = {
   scanId: string
   startedAt: string
   finishedAt: string
@@ -571,20 +594,25 @@ Returns:
 {
   total: number
   offset: number
-  entries: ScanEntry[]
+  entries: ScanEntryWithCount[]
 }
 
-type ScanEntry = {
+type ScanEntryRecord = {
   absPath: string
   relPath: string
   installId: string
   category: string
   sizeBytes: number
   sha256: string | null
-  modifiedAt: string
+  mtimeNanos: string             // nanoseconds since 1970, as text. See below.
   classification: Classification
-  occurrenceCount: number        // how many paths hold these bytes
   linkTarget: string | null      // set when the entry is already a link
+}
+
+// What a page of scan entries holds. `occurrenceCount` is counted over the
+// whole scan, not over the rows the current filter keeps.
+type ScanEntryWithCount = ScanEntryRecord & {
+  occurrenceCount: number        // how many paths in this scan hold these bytes
 }
 
 type Classification =
@@ -596,6 +624,12 @@ type Classification =
   | 'unreadable'
 ```
 
+`mtimeNanos` is text, not a number. It is the file's modification time in
+nanoseconds. A number that large loses its last digits when JavaScript reads
+it: the engine sends 1758240123456789012 and `JSON.parse` returns
+1758240123456789000. Divide by 1000000 for milliseconds if a date is what is
+wanted. The same applies to `mtimeNanos` on `PlanSource` and `PlanLink`.
+
 ### 4.7 `cancel_scan`
 
 Arguments: `{ scanId: string }`. Returns `{ cancelled: true }`.
@@ -605,7 +639,7 @@ scan changes nothing on disk. Hashes already computed stay in the cache.
 
 ### 4.8 `get_last_scan`
 
-Arguments: none. Returns `ScanResult | null`.
+Arguments: none. Returns `ScanRecord | null`.
 
 ---
 
@@ -658,6 +692,7 @@ type PlanGroup = {
   vaultRelPath: string           // for example 'loras/lora1.safetensors'
   vaultNameAdjusted: boolean
   clashesWith: string | null     // the SHA-256 that already owns the plain name
+  vaultAliases: string[]         // other names these copies use, kept as aliases
   source: PlanSource             // which copy becomes the vault file
   links: PlanLink[]              // every place that gets a link. Always `occurrences` long.
   occurrences: number
@@ -674,6 +709,8 @@ type PlanSource = {
   relPath: string
   sameVolumeAsVault: boolean
   chosenBecause: 'sameVolume' | 'onlyCopy' | 'firstByPath'
+  sizeBytes: number              // as measured during the scan
+  mtimeNanos: string             // nanoseconds since 1970, as text
 }
 
 type PlanLink = {
@@ -685,6 +722,8 @@ type PlanLink = {
   nameDiffersFromVault: boolean
   isSource: boolean              // this copy's bytes become the vault file
   sharesBytesWithAnother: boolean  // a second name for a file already counted
+  sizeBytes: number              // as measured during the scan
+  mtimeNanos: string             // nanoseconds since 1970, as text
 }
 
 type PlanTotals = {
@@ -878,7 +917,7 @@ only then puts it in place and removes the source.
 | Event | Payload |
 |---|---|
 | `apply:progress` | `ApplyProgress` |
-| `apply:done` | `ApplyResult` |
+| `apply:done` | `ApplyRecord` |
 | `apply:error` | `VaultError` |
 
 `bytesToMove` and `bytesMoved` count only the groups whose move is a real copy
@@ -907,16 +946,18 @@ type ApplyProgress = {
 }
 ```
 
-### 6.4 `ApplyResult`
+### 6.4 `ApplyRecord`
 
 ```ts
-type ApplyResult = {
+type ApplyRecord = {
   applyId: string
   planId: string
-  state: 'completed' | 'completedWithErrors' | 'cancelled' | 'interrupted' | 'reverted'
+  state: 'running' | 'completed' | 'completedWithErrors' | 'cancelled'
+       | 'interrupted' | 'reverted'
   startedAt: string
   finishedAt: string | null
   groupsRequested: number
+  groupIds: string[]             // the groups this run was asked to do
   groupsApplied: number
   groupsFailed: number
   bytesFreed: number
@@ -943,13 +984,19 @@ first, so a group is still all or nothing. Everything already applied stays
 applied, and stays revertible.
 
 A group stopped by a cancel is **not** reported as a failure. The person
-stopped it, so `failures` stays empty and `state` is `cancelled`.
+stopped it, so it is left out of `failures`, and `state` is `cancelled`.
+
+This applies only to the group the cancel interrupted. A group that broke on
+its own earlier in the same run stays in `failures`, and `state` is still
+`cancelled`. Show both. A file the engine could not move is never reported
+anywhere else, so a result screen that hides it because the run was stopped
+leaves the person believing a file was moved when it was not.
 
 ### 6.6 `get_apply_result` and `list_applies`
 
-`get_apply_result` takes `{ applyId: string }` and returns `ApplyResult`.
+`get_apply_result` takes `{ applyId: string }` and returns `ApplyRecord`.
 
-`list_applies` takes no arguments and returns `ApplyResult[]`, newest first.
+`list_applies` takes no arguments and returns `ApplyRecord[]`, newest first.
 
 ### 6.7 `get_interrupted_applies`
 
@@ -1014,10 +1061,10 @@ Arguments:
 }
 ```
 
-Returns a `Link`.
+Returns a `LinkRecord`.
 
 ```ts
-type Link = {
+type LinkRecord = {
   id: string
   installId: string
   absPath: string
@@ -1027,8 +1074,15 @@ type Link = {
   vaultRelPath: string
   createdAt: string
   createdBy: 'apply' | 'manual'
-  state: 'ok' | 'dangling' | 'replaced' | 'missing'
+  applyId: string | null         // the run that made it, null when made by hand
 }
+
+type LinkState = 'ok' | 'dangling' | 'replaced' | 'missing'
+
+// What `list_links` returns. The stored record, with what the path looks like
+// on disk at the moment of the call. `state` is measured, never stored, so it
+// is on this shape and not on `LinkRecord`.
+type LinkWithState = LinkRecord & { state: LinkState }
 ```
 
 Errors: `pathOutsideBoundary`, `symlinkUnsupported`, `conflict`, `ioError`,
@@ -1070,10 +1124,10 @@ The same boundary rule as `create_link` applies.
 Arguments:
 
 ```ts
-{ installId?: string, sha256?: string, state?: Link['state'] }
+{ installId?: string, sha256?: string, state?: LinkState }
 ```
 
-Returns `Link[]`.
+Returns `LinkWithState[]`.
 
 ---
 
@@ -1117,7 +1171,7 @@ type VaultFile = {
   addedAt: string
   aliases: string[]            // other names this content carries inside the vault
   linkCount: number            // live links from installs
-  links: Link[]
+  links: LinkRecord[]
   metadata: ModelMetadata | null
   present: boolean             // the file exists on disk
 }
@@ -1281,8 +1335,8 @@ Returns:
 type VaultHealth = {
   checkedLinks: number
   checkedFiles: number
-  danglingLinks: Link[]          // the link exists, the target does not
-  replacedLinks: Link[]          // a real file sits where a link belonged
+  danglingLinks: LinkRecord[]          // the link exists, the target does not
+  replacedLinks: LinkRecord[]          // a real file sits where a link belonged
   missingVaultFiles: VaultFile[] // recorded in the database, absent on disk
   foreignFiles: string[]         // files in the vault folder the database does not know
   ok: boolean
@@ -1529,13 +1583,13 @@ consolidated models, and that nothing else changes.
 | Event | Payload | Emitted by |
 |---|---|---|
 | `scan:progress` | `ScanProgress` | `start_scan` |
-| `scan:done` | `ScanResult` | `start_scan` |
+| `scan:done` | `ScanRecord` | `start_scan` |
 | `scan:error` | `VaultError` | `start_scan` |
 | `apply:progress` | `ApplyProgress` | `start_apply`, `resume_apply` |
-| `apply:done` | `ApplyResult` | `start_apply`, `resume_apply` |
+| `apply:done` | `ApplyRecord` | `start_apply`, `resume_apply` |
 | `apply:error` | `VaultError` | `start_apply`, `resume_apply` |
 | `revert:progress` | `ApplyProgress` | `revert_apply` |
-| `revert:done` | `ApplyResult` | `revert_apply` |
+| `revert:done` | `ApplyRecord` | `revert_apply` |
 | `revert:error` | `VaultError` | `revert_apply` |
 
 Subscribe before you call the command that starts the work:

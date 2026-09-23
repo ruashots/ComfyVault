@@ -39,6 +39,10 @@ pub mod paths;
 pub mod plan;
 pub mod platform;
 pub mod progress;
+pub mod reply;
+
+#[cfg(test)]
+mod golden;
 pub mod scan;
 pub mod settings;
 pub mod store;

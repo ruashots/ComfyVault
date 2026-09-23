@@ -185,10 +185,22 @@ Windows executable directly, so this works from Linux:
 cargo xwin test -p comfyvault-core --no-run --target x86_64-pc-windows-msvc
 cp target/x86_64-pc-windows-msvc/debug/deps/comfyvault_core-<hash>.exe \
    /mnt/c/ComfyVault-Demo/core-tests.exe
-cd /mnt/c/ComfyVault-Demo && ./core-tests.exe
+cd /mnt/c/ComfyVault-Demo
+COMFYVAULT_REPO='\\wsl.localhost\Ubuntu\home\user\ComfyVault' \
+  WSLENV=COMFYVAULT_REPO ./core-tests.exe
 ```
 
 `cargo xwin test --no-run` prints the file name with the hash in it.
+
+Three of the tests read files from the repository: the contract samples in
+`docs/golden/`, the contract itself, and the command layer's source. A test
+program knows where the repository is only because the path was fixed when it
+was compiled, and that path belongs to the machine that compiled it. Set
+`COMFYVAULT_REPO` to the repository folder as Windows sees it.
+
+`WSLENV` is not optional. Without it, WSL does not pass the variable to a
+Windows program, the three tests cannot find the repository, and they fail.
+They do not quietly pass.
 
 To run one test and see its output:
 

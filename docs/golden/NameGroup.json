@@ -1,0 +1,17 @@
+{
+  "canonicalName": "detail-tweaker.safetensors",
+  "category": "loras",
+  "names": [
+    {
+      "isCanonical": true,
+      "name": "detail-tweaker.safetensors",
+      "seenInInstalls": [
+        "inst-1"
+      ],
+      "usedByLinks": 2,
+      "vaultRelPath": "loras\\detail-tweaker.safetensors"
+    }
+  ],
+  "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+  "sizeBytes": 151119872
+}

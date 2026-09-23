@@ -1,0 +1,11 @@
+{
+  "longPathsEnabled": true,
+  "os": "windows",
+  "symlinks": {
+    "developerMode": true,
+    "elevated": false,
+    "guidance": null,
+    "probeError": null,
+    "supported": true
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "code": "fileLocked",
+  "detail": "python.exe, process 18244",
+  "message": "ComfyUI is running and has this file open. Close it and try again.",
+  "path": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors"
+}

@@ -1,0 +1,48 @@
+{
+  "busy": {
+    "id": "scan-2",
+    "kind": "scan"
+  },
+  "installCount": 2,
+  "interruptedApplies": [
+    "apply-0"
+  ],
+  "lastPlanId": "plan-1",
+  "lastScanId": "scan-1",
+  "platform": {
+    "longPathsEnabled": true,
+    "os": "windows",
+    "symlinks": {
+      "developerMode": true,
+      "elevated": false,
+      "guidance": null,
+      "probeError": null,
+      "supported": true
+    }
+  },
+  "settings": {
+    "followExtraModelPaths": true,
+    "hashCacheEnabled": true,
+    "huggingFaceCacheDirs": [
+      "D:\\hf-cache\\hub"
+    ],
+    "metadataLookupsEnabled": true,
+    "minFileSizeBytes": 1048576,
+    "scanExtensions": [
+      ".safetensors",
+      ".ckpt",
+      ".pt",
+      ".pth",
+      ".bin",
+      ".gguf",
+      ".onnx",
+      ".pt2",
+      ".sft",
+      ".pkl"
+    ],
+    "scanOutputModelDirs": true,
+    "verifyBeforeDelete": true
+  },
+  "vaultInitialized": true,
+  "vaultRoot": "C:\\ComfyVault"
+}

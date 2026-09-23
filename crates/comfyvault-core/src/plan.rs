@@ -105,6 +105,7 @@ pub struct PlanSource {
     pub same_volume_as_vault: bool,
     pub chosen_because: SourceChoice,
     pub size_bytes: u64,
+    #[serde(with = "crate::time_util::nanos_as_string")]
     pub mtime_nanos: i128,
 }
 
@@ -132,6 +133,7 @@ pub struct PlanLink {
     /// set of bytes, and the bytes stay while any name remains.
     pub shares_bytes_with_another: bool,
     pub size_bytes: u64,
+    #[serde(with = "crate::time_util::nanos_as_string")]
     pub mtime_nanos: i128,
 }
 

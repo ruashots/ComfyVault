@@ -1,0 +1,14 @@
+{
+  "commandLine": [
+    "python.exe",
+    "main.py"
+  ],
+  "cwd": "C:\\ComfyUI-Alpha",
+  "exePath": "C:\\ComfyUI-Alpha\\python_embeded\\python.exe",
+  "matchReason": "exeUnderRoot",
+  "matchedInstallIds": [
+    "inst-1"
+  ],
+  "name": "python.exe",
+  "pid": 18244
+}

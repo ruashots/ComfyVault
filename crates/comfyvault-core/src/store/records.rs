@@ -102,6 +102,7 @@ pub struct LinkRecord {
 pub struct HashCacheRecord {
     pub path: PathBuf,
     pub size_bytes: u64,
+    #[serde(with = "crate::time_util::nanos_as_string")]
     pub mtime_nanos: i128,
     pub sha256: String,
 }
@@ -155,6 +156,7 @@ pub struct ScanEntryRecord {
     pub size_bytes: u64,
     /// Absent when the file could not be read.
     pub sha256: Option<String>,
+    #[serde(with = "crate::time_util::nanos_as_string")]
     pub mtime_nanos: i128,
     pub classification: Classification,
     /// Where it points, when the entry is a link.

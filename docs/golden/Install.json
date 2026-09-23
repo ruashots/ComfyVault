@@ -1,0 +1,50 @@
+{
+  "addedAt": "2025-09-21T00:00:00Z",
+  "extraPaths": [
+    {
+      "category": "loras",
+      "exists": true,
+      "isDefault": false,
+      "path": "D:\\ai-models\\loras",
+      "rawCategory": "loras",
+      "section": "comfyui"
+    }
+  ],
+  "id": "inst-1",
+  "label": "ComfyUI Production",
+  "lastScanAt": "2025-09-22T00:03:32Z",
+  "lastScanTotals": {
+    "alreadyLinkedBytes": 12000000000,
+    "alreadyLinkedFiles": 6,
+    "bytesFromCache": 224000000000,
+    "bytesRead": 388000000000,
+    "customNodeBytes": 1400000000,
+    "customNodeFiles": 9,
+    "duplicateFiles": 147,
+    "durationMs": 212000,
+    "errorCount": 1,
+    "filesSeen": 412,
+    "hfCacheBytes": 22000000000,
+    "hfCacheFiles": 11,
+    "installId": "inst-1",
+    "installLabel": "ComfyUI Production",
+    "movableBytes": 612000000000,
+    "movableFiles": 388,
+    "reclaimableBytes": 224000000000,
+    "skippedFiles": 4,
+    "uniqueBytes": 388000000000,
+    "uniqueContents": 241
+  },
+  "modelsDir": "C:\\ComfyUI-Alpha\\models",
+  "outputModelDirs": [
+    {
+      "category": "checkpoints",
+      "exists": false,
+      "path": "C:\\ComfyUI-Alpha\\output\\models"
+    }
+  ],
+  "registeredPath": "C:\\ComfyUI-Alpha",
+  "root": "C:\\ComfyUI-Alpha",
+  "version": "0.3.41",
+  "versionSource": "comfyui_version.py"
+}

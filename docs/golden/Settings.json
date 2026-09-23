@@ -1,0 +1,23 @@
+{
+  "followExtraModelPaths": true,
+  "hashCacheEnabled": true,
+  "huggingFaceCacheDirs": [
+    "D:\\hf-cache\\hub"
+  ],
+  "metadataLookupsEnabled": true,
+  "minFileSizeBytes": 1048576,
+  "scanExtensions": [
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".gguf",
+    ".onnx",
+    ".pt2",
+    ".sft",
+    ".pkl"
+  ],
+  "scanOutputModelDirs": true,
+  "verifyBeforeDelete": true
+}

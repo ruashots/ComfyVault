@@ -1,0 +1,39 @@
+{
+  "contentCheckPassed": true,
+  "extraPaths": [
+    {
+      "category": "loras",
+      "exists": true,
+      "isDefault": false,
+      "path": "D:\\ai-models\\loras",
+      "rawCategory": "loras",
+      "section": "comfyui"
+    }
+  ],
+  "extraPathsFile": "C:\\ComfyUI-Alpha\\extra_model_paths.yaml",
+  "extraPathsProblems": [
+    "In section \"comfyui\", \"..\\..\\ESCAPED\" cannot be a model folder name, so it was skipped. A model folder name cannot contain a path separator."
+  ],
+  "markersFound": [
+    "main.py",
+    "comfy",
+    "models"
+  ],
+  "markersMissing": [],
+  "modelsDir": "C:\\ComfyUI-Alpha\\models",
+  "modelsDirExists": true,
+  "nestedDepth": 0,
+  "otherCandidates": [],
+  "outputModelDirs": [
+    {
+      "category": "checkpoints",
+      "exists": false,
+      "path": "C:\\ComfyUI-Alpha\\output\\models"
+    }
+  ],
+  "reason": null,
+  "root": "C:\\ComfyUI-Alpha",
+  "valid": true,
+  "version": "0.3.41",
+  "versionSource": "comfyui_version.py"
+}

@@ -1,0 +1,14 @@
+{
+  "blockedBytes": 6938040320,
+  "blockedRows": 1,
+  "bytesFreed": 151119872,
+  "bytesMoved": 0,
+  "crossVolumeGroups": 0,
+  "filesMoved": 1,
+  "groups": 1,
+  "groupsFreeingSpace": 1,
+  "linksCreated": 2,
+  "nameClashes": 0,
+  "singleCopyGroups": 0,
+  "vaultFreeBytesAfter": 288000000000
+}

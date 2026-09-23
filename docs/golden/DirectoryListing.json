@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "isDirectory": true,
+      "isSymlink": false,
+      "name": "loras",
+      "path": "D:\\ai-models\\loras"
+    }
+  ],
+  "parent": "D:\\",
+  "path": "D:\\ai-models"
+}
