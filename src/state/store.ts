@@ -114,6 +114,12 @@ export interface PickerModal {
   sha256: string | null;
   /** Which install is being re-pointed, when the person pressed Edit. */
   replacing: string | null;
+  /**
+   * Why the last press of the button did not happen. It stays in front of the
+   * person until they act, because a toast can be missed and an answer to
+   * something they just pressed is not allowed to go by unnoticed.
+   */
+  error: string | null;
 }
 
 export type ConfirmLine = ReadonlyArray<{ text: string; emph?: boolean }>;

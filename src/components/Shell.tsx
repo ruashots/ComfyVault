@@ -114,6 +114,11 @@ export function Rail() {
     if (gain > 0) {
       return <div class="rail-sub amb">{fmt(gain)} can be freed</div>;
     }
+    // Before a scan there is no answer, and "every model is held once" would
+    // be a claim about files nobody has read.
+    if (!app.scan()) {
+      return <div class="rail-sub">not scanned yet</div>;
+    }
     return <div class="rail-sub">every model is held once already</div>;
   };
 

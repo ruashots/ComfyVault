@@ -1,4 +1,5 @@
 import { screen } from "@solidjs/testing-library";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
@@ -219,5 +220,79 @@ describe("a vault that really cannot be read", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("could not read the vault");
     expect(text).toContain("The vault database could not be opened.");
+  });
+});
+
+describe("adding the very first install", () => {
+  it("creates the vault the setup screen promised, and registers", async () => {
+    const { app, engine } = await firstRun();
+    expect(app.appState()!.vaultInitialized).toBe(false);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Choose an install folder/ }),
+    );
+    await waitFor(() => screen.queryAllByRole("dialog").length > 0);
+    await userEvent.click(screen.getByRole("button", { name: "Open C:\\" }));
+    await waitFor(
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
+    );
+    await userEvent.click(
+      screen.getAllByRole("button").find((b) => b.textContent?.startsWith("ComfyUI-Alpha"))!,
+    );
+    await waitFor(() => document.querySelector(".verdict:not(.wait)") !== null);
+    await userEvent.click(screen.getByRole("button", { name: "Add this install" }));
+
+    await waitFor(() => app.installs().length > 0, 4000);
+    // The vault exists now, and the install is registered in it.
+    expect(app.appState()!.vaultInitialized).toBe(true);
+    expect(app.vault()!.root).toBe("C:\\ComfyVault");
+    expect((await engine.listInstalls()).length).toBe(1);
+    // And the person is past the setup screen.
+    expect(document.body.textContent).not.toContain("Nothing registered yet");
+    expect(app.failure()).toBeNull();
+  });
+
+  it("never lets a refusal to that button go by unnoticed", async () => {
+    const { app } = await firstRun();
+    app.engine.registerInstall = async () => {
+      throw { code: "notAComfyInstall", message: "That folder is not a ComfyUI install." };
+    };
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Choose an install folder/ }),
+    );
+    await waitFor(() => screen.queryAllByRole("dialog").length > 0);
+    await userEvent.click(screen.getByRole("button", { name: "Open C:\\" }));
+    await waitFor(
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
+    );
+    await userEvent.click(
+      screen.getAllByRole("button").find((b) => b.textContent?.startsWith("ComfyUI-Alpha"))!,
+    );
+    await waitFor(() => document.querySelector(".verdict:not(.wait)") !== null);
+    await userEvent.click(screen.getByRole("button", { name: "Add this install" }));
+
+    // It stays in front of them, in the modal, beside the button they pressed.
+    await waitFor(() => document.querySelector('[role="dialog"] .verdict.no') !== null);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("That did not happen");
+    expect(dialog.textContent).toContain("That folder is not a ComfyUI install.");
+    expect(screen.queryAllByRole("dialog").length).toBe(1);
+  });
+});
+
+describe("the drive meter before anything has been read", () => {
+  it("does not claim every model is already held once", async () => {
+    const engine = new FixtureEngine({ empty: true });
+    await engine.selectVault("C:\\ComfyVault");
+    await engine.registerInstall("C:\\ComfyUI-Alpha");
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.ready());
+
+    expect(harness.app.scan()).toBeNull();
+    const rail = document.querySelector(".rail")!.textContent ?? "";
+    // Nothing has been read, so there is nothing to say about duplicates.
+    expect(rail).not.toContain("every model is held once");
+    expect(rail).toContain("not scanned yet");
   });
 });

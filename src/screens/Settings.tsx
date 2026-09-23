@@ -5,7 +5,7 @@ import { Header } from "~/components/Shell";
 import { dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
-import { openInstallPicker, openVaultPicker } from "~/modals/picker";
+import { DEFAULT_VAULT, openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { Boundary } from "~/components/Boundary";
 import { useApp } from "~/state/store";
 import { cacheDirsOf, type Install } from "~/ipc/contract";
@@ -13,8 +13,7 @@ import { cacheDirsOf, type Install } from "~/ipc/contract";
 /** What a settings row says when the engine sent no answer for it. */
 const UNKNOWN = "not known";
 
-/** Where the vault goes when nobody chooses somewhere else. */
-const DEFAULT_VAULT = "C:\\ComfyVault";
+
 
 /**
  * A yes or a no from the engine, or nothing at all. A field the engine did not

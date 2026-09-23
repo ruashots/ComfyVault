@@ -5,7 +5,7 @@ import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
 import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
-import { openInstallPicker } from "~/modals/picker";
+import { DEFAULT_VAULT, openInstallPicker } from "~/modals/picker";
 import { useApp } from "~/state/store";
 import { ScanScreen } from "~/screens/Scan";
 
@@ -42,7 +42,7 @@ function FirstRun() {
           </div>
           <div class="foot">
             The vault will be created at{" "}
-            <span class="emph">{app.vault()?.root ?? "C:\\ComfyVault"}</span>.
+            <span class="emph">{app.vault()?.root ?? DEFAULT_VAULT}</span>.
             <br />
             Change that in Settings before the first scan.
           </div>
@@ -108,7 +108,7 @@ function HomeReport() {
                   />
                   <Tile
                     value={
-                      app.usage().size > 0 ? String(app.unusedCount()) : "\u2014"
+                      app.usage().size > 0 ? String(app.unusedCount()) : "not yet"
                     }
                     label="Not used"
                     note={
@@ -226,7 +226,6 @@ function NotScannedYet() {
   const app = useApp();
   return (
     <div class="hero">
-      <div class="big">&mdash;</div>
       <div class="txt">
         <div class="l1">
           {app.installs().length}{" "}

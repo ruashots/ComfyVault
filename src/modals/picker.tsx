@@ -32,8 +32,15 @@ async function openPicker(
     newFolder: null,
     sha256: extra.sha256 ?? null,
     replacing: extra.replacing ?? null,
+    error: null,
   });
 }
+
+/**
+ * Where the vault goes when nobody chooses somewhere else. The setup screen
+ * and Settings both say this, and the engine has no default of its own.
+ */
+export const DEFAULT_VAULT = "C:\\ComfyVault";
 
 export const openInstallPicker = (app: AppStore) => openPicker(app, "install");
 export const openVaultPicker = (app: AppStore) => openPicker(app, "vault");
@@ -289,10 +296,17 @@ export function PickerModalView() {
     const current = modal();
     if (!current || !current.picked || confirming()) return;
     setConfirming(true);
+    app.patchModal((m) => {
+      if (m.kind === "picker") m.error = null;
+    });
     const path = current.picked;
     try {
       if (current.purpose === "install") {
         const root = current.candidate?.root ?? path;
+        // The first install is also the moment the vault comes into being.
+        // The setup screen has already said where it goes and that Settings is
+        // where to change it, so this does not stop to ask again.
+        await ensureVault();
         await app.engine.registerInstall(root);
         app.setModal(null);
         await app.actions.refresh();
@@ -318,10 +332,28 @@ export function PickerModalView() {
         app.actions.showToast(`Link created at ${path}`);
       }
     } catch (failure) {
-      app.actions.showToast(messageOf(failure), "bad");
+      const message = messageOf(failure);
+      // It stays in the modal, where the button they pressed is. A toast can
+      // be missed, and this is the answer to something they just did.
+      app.patchModal((m) => {
+        if (m.kind === "picker") m.error = message;
+      });
+      app.actions.showToast(message, "bad");
     } finally {
       setConfirming(false);
     }
+  };
+
+  /**
+   * Open the vault before anything that needs one.
+   *
+   * Almost every command refuses until a vault exists, so on a first run the
+   * person's very first action would refuse. The vault goes where the setup
+   * screen said it would.
+   */
+  const ensureVault = async (): Promise<void> => {
+    if (app.appState()?.vaultInitialized === true) return;
+    await app.engine.selectVault(DEFAULT_VAULT, true);
   };
 
   const verdict = createMemo(() => {
@@ -536,6 +568,17 @@ export function PickerModalView() {
                       {v().title}
                     </h4>
                     {v().body}
+                  </div>
+                )}
+              </Show>
+              <Show when={current().error}>
+                {(message) => (
+                  <div class="verdict no" role="alert">
+                    <h4>
+                      <Icon name="x" size={12} />
+                      That did not happen
+                    </h4>
+                    <p>{message()}</p>
                   </div>
                 )}
               </Show>

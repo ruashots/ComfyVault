@@ -158,3 +158,33 @@ describe("time", () => {
     expect(secondsLeft(null, 0.2)).toBe("working");
   });
 });
+
+describe("the person's rule about dashes", () => {
+  it("is kept by every file the interface is built from", async () => {
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = join(import.meta.dirname, "..");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.(ts|tsx|css|html)$/.test(entry)) files.push(path);
+      }
+    };
+    walk(root);
+    expect(files.length).toBeGreaterThan(20);
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (file.endsWith("format.test.ts")) continue; // this file names them
+      const text = readFileSync(file, "utf8");
+      // The character itself, and the three ways to write it without typing it.
+      if (/[–—]|&mdash;|&ndash;|\\u201[34]/.test(text)) {
+        offenders.push(file.slice(root.length + 1));
+      }
+    }
+    expect(offenders, "an em dash or en dash reached the interface").toEqual([]);
+  });
+});
