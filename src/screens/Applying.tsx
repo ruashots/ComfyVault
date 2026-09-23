@@ -110,7 +110,9 @@ export function ApplyRunning() {
           <div class="note up">
             Every step is written down before it happens, so if the power goes this
             run can be finished or undone rather than left half done. A file is
-            never deleted before its link is in place.
+            never deleted before its link is in place. Stopping puts the file it is
+            part way through back where it was. Everything already finished stays
+            done.
           </div>
 
           <div style={{ "margin-top": "14px" }}>
@@ -119,13 +121,13 @@ export function ApplyRunning() {
               onClick={() =>
                 void app.engine.cancelApply(progress().applyId).then(() =>
                   app.actions.showToast(
-                    "Stopping after this file · everything already done stays done",
+                    "Stopping now · everything already finished stays done",
                   ),
                 )
               }
             >
               <Icon name="stop" size={13} />
-              Stop after this file
+              Stop now
             </button>
           </div>
         </div>
