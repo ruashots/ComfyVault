@@ -68,19 +68,42 @@ export interface PlatformReport {
 
 export interface Settings {
   metadataLookupsEnabled: boolean;
-  /** "***" when a key is stored, null when none is. Never the value. */
   hashCacheEnabled: boolean;
   scanExtensions: string[];
   minFileSizeBytes: number;
   followExtraModelPaths: boolean;
   scanOutputModelDirs: boolean;
-  huggingFaceCacheDirs: string[] | null;
+  /**
+   * Where the Hugging Face libraries keep their downloaded models. `null`
+   * means work it out from the environment, an empty list means do not look,
+   * and a list covers a cache moved to another drive.
+   *
+   * It arrives under one of two names. The engine's field is
+   * `huggingface_cache_dirs`, and serde reads "huggingface" as one word, so
+   * the wire name today is `huggingfaceCacheDirs`. comfyvault-core is renaming
+   * it to the two-word spelling the product uses everywhere else. Until that
+   * lands, both are possible, so nothing reads either one directly: read
+   * `cacheDirsOf`. Drop `huggingfaceCacheDirs` once the rename is in.
+   */
+  huggingFaceCacheDirs?: string[] | null;
+  huggingfaceCacheDirs?: string[] | null;
   /**
    * Read a duplicate's bytes again, immediately before deleting it, and
    * compare them against the copy being kept. On by default. Deleting is the
    * one thing this app does that cannot be undone.
    */
   verifyBeforeDelete: boolean;
+}
+
+/**
+ * Where the Hugging Face cache is read from, under whichever of the two names
+ * the engine used. `undefined` means the engine said nothing, which is not the
+ * same as `null`: `null` is "work it out from the environment".
+ */
+export function cacheDirsOf(settings: Settings): string[] | null | undefined {
+  return settings.huggingFaceCacheDirs !== undefined
+    ? settings.huggingFaceCacheDirs
+    : settings.huggingfaceCacheDirs;
 }
 
 export interface AppState {

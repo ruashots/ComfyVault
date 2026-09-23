@@ -6,8 +6,23 @@ import { dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
+import { Boundary } from "~/components/Boundary";
 import { useApp } from "~/state/store";
-import type { Install } from "~/ipc/contract";
+import { cacheDirsOf, type Install } from "~/ipc/contract";
+
+/** What a settings row says when the engine sent no answer for it. */
+const UNKNOWN = "not known";
+
+/**
+ * A yes or a no from the engine, or nothing at all. A field the engine did not
+ * send is not a "no": saying "ignored" when nobody said so is a claim about
+ * what a scan touches, and this screen does not make claims it was not told.
+ */
+function said(value: boolean | undefined, yes: string, no: string): string {
+  if (value === true) return yes;
+  if (value === false) return no;
+  return UNKNOWN;
+}
 
 export function SettingsScreen() {
   const app = useApp();
@@ -317,15 +332,16 @@ export function SettingsScreen() {
           <div class="sec secgap">
             <span class="t">Civitai lookup</span>
           </div>
+          <Boundary where="Civitai lookup">
           <Show when={settings()}>
             {(current) => (
               <>
                 <div class="chk">
                   <button
                     class="tog"
-                    classList={{ on: current().metadataLookupsEnabled }}
+                    classList={{ on: current().metadataLookupsEnabled === true }}
                     role="switch"
-                    aria-checked={current().metadataLookupsEnabled}
+                    aria-checked={current().metadataLookupsEnabled === true}
                     aria-label="Ask Civitai what each file is"
                     onClick={() =>
                       void app.actions.run(() =>
@@ -353,41 +369,56 @@ export function SettingsScreen() {
           <div class="sec secgap">
             <span class="t">What a scan reads</span>
           </div>
+          <Boundary where="What a scan reads">
           <Show when={settings()}>
             {(current) => (
               <>
                 <div class="kv">
                   <span class="k w150">File types</span>
-                  <span class="v">{current().scanExtensions.join("  ")}</span>
+                  <span class="v">
+                    {current().scanExtensions?.length
+                      ? current().scanExtensions.join("  ")
+                      : UNKNOWN}
+                  </span>
                 </div>
                 <div class="kv">
                   <span class="k w150">Smallest file</span>
-                  <span class="v">{fmt(current().minFileSizeBytes)}</span>
+                  <span class="v">
+                    {Number.isFinite(current().minFileSizeBytes)
+                      ? fmt(current().minFileSizeBytes)
+                      : UNKNOWN}
+                  </span>
                 </div>
                 <div class="kv">
                   <span class="k w150">Extra model paths</span>
                   <span class="v">
-                    {current().followExtraModelPaths
-                      ? "followed, as ComfyUI follows them"
-                      : "ignored"}
+                    {said(
+                      current().followExtraModelPaths,
+                      "followed, as ComfyUI follows them",
+                      "ignored",
+                    )}
                   </span>
                 </div>
                 <div class="kv">
                   <span class="k w150">Hugging Face cache</span>
                   <span class="v">
-                    {current().huggingFaceCacheDirs === null
-                      ? "found the way the Hugging Face libraries find it themselves"
-                      : current().huggingFaceCacheDirs!.length === 0
-                        ? "not read"
-                        : current().huggingFaceCacheDirs!.join("  ")}
+                    {cacheDirsOf(current()) === undefined
+                      ? UNKNOWN
+                      : cacheDirsOf(current()) === null
+                        ? "found the way the Hugging Face libraries find it themselves"
+                        : cacheDirsOf(current())!.length === 0
+                          ? "not read"
+                          : cacheDirsOf(current())!.join("  ")}
                   </span>
                 </div>
                 <div class="kv">
                   <span class="k w150">Reading again</span>
                   <span class="v">
-                    {current().hashCacheEnabled
-                      ? "a file is only read again when its size or date changed"
-                      : "every file is read in full on every scan"}
+                    {said(
+                      current().hashCacheEnabled,
+                      "a file is only read again when its size or date changed",
+                      "every file is read in full on every scan",
+                    )}
                   </span>
                 </div>
                 <Show when={app.scan()}>
@@ -411,6 +442,8 @@ export function SettingsScreen() {
             )}
           </Show>
 
+          </Boundary>
+
           <Show when={app.scan()?.errors.length}>
             <div class="sec secgap plain">
               <span class="t">Files the last scan could not read</span>
@@ -428,18 +461,21 @@ export function SettingsScreen() {
             </For>
           </Show>
 
+          </Boundary>
+
           <div class="sec secgap">
             <span class="t">Before a copy is deleted</span>
           </div>
+          <Boundary where="Before a copy is deleted">
           <Show when={settings()}>
             {(current) => (
               <>
                 <div class="chk">
                   <button
                     class="tog"
-                    classList={{ on: current().verifyBeforeDelete }}
+                    classList={{ on: current().verifyBeforeDelete === true }}
                     role="switch"
-                    aria-checked={current().verifyBeforeDelete}
+                    aria-checked={current().verifyBeforeDelete === true}
                     aria-label="Read both files again before deleting a duplicate"
                     onClick={() =>
                       void app.actions.run(() =>
@@ -466,6 +502,8 @@ export function SettingsScreen() {
               </>
             )}
           </Show>
+
+          </Boundary>
 
           <Show when={app.appState()?.vaultRoot}>
             <div class="sec secgap plain">

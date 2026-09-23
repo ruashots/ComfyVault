@@ -152,6 +152,9 @@ describe("time", () => {
     expect(minutesLeft(null)).toBe("working");
     expect(secondsLeft(41, 0.5)).toBe("about 41 seconds left");
     expect(secondsLeft(1, 0.99)).toBe("nearly done");
-    expect(secondsLeft(null, 0.2)).toBe("nearly done");
+    expect(secondsLeft(0, 0.2)).toBe("nearly done");
+    // No estimate is not "nearly done". The interface does not claim a run is
+    // almost over when nobody told it how long is left.
+    expect(secondsLeft(null, 0.2)).toBe("working");
   });
 });

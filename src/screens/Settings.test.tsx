@@ -2,6 +2,7 @@ import { screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { cacheDirsOf } from "~/ipc/contract";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { SettingsScreen } from "~/screens/Settings";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
@@ -66,7 +67,8 @@ describe("the key that is not there", () => {
 describe("where the Hugging Face cache is read from", () => {
   it("says it is found the way the libraries find it, not as a raw null", async () => {
     const { app } = await mount();
-    expect(app.appState()!.settings.huggingFaceCacheDirs).toBeNull();
+    // Read under whichever name the engine used, never one of them directly.
+    expect(cacheDirsOf(app.appState()!.settings)).toBeNull();
     const text = document.body.textContent ?? "";
     expect(text).toContain("Hugging Face cache");
     expect(text).toContain("the way the Hugging Face libraries find it themselves");

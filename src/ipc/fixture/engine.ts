@@ -297,7 +297,8 @@ export class FixtureEngine implements Engine {
       minFileSizeBytes: 1048576,
       followExtraModelPaths: true,
       scanOutputModelDirs: true,
-      huggingFaceCacheDirs: null,
+      // The name the engine puts on the wire today. See `cacheDirsOf`.
+      huggingfaceCacheDirs: null,
       verifyBeforeDelete: this.world.verifyBeforeDelete,
     };
   }

@@ -75,16 +75,21 @@ export function breakPoints(s: string): string[] {
 
 /** How long a scan has left, in the unit that still means something. */
 export function minutesLeft(seconds: number | null): string {
-  if (seconds === null) return "working";
-  if (seconds < 10) return "finishing";
-  if (seconds < 60) return `about ${Math.round(seconds / 5) * 5} seconds left`;
-  return `about ${Math.round(seconds / 60)} min left`;
+  // A missing estimate and an unusable one are the same fact: it is not known.
+  // Saying "about NaN min left" is worse than saying nothing.
+  if (!Number.isFinite(seconds as number)) return "working";
+  const left = seconds as number;
+  if (left < 10) return "finishing";
+  if (left < 60) return `about ${Math.round(left / 5) * 5} seconds left`;
+  return `about ${Math.round(left / 60)} min left`;
 }
 
 /** "about 41 seconds left" / "nearly done" for a run that takes seconds. */
 export function secondsLeft(seconds: number | null, overall: number): string {
-  if (overall >= 0.97 || seconds === null || seconds <= 0) return "nearly done";
-  return `about ${Math.round(seconds)} seconds left`;
+  if (!Number.isFinite(seconds as number)) return "working";
+  const left = seconds as number;
+  if (overall >= 0.97 || left <= 0) return "nearly done";
+  return `about ${Math.round(left)} seconds left`;
 }
 
 const MONTHS = [

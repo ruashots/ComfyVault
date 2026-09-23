@@ -47,7 +47,9 @@ export function ApplyRunning() {
             {fmt(progress().bytesMoved)} of {fmt(progress().bytesToMove)} &middot;{" "}
             {progress().groupIndex} of {progress().groupTotal} files &middot;{" "}
             {secondsLeft(
-              progress().etaMs === null ? null : Math.round(progress().etaMs! / 1000),
+              Number.isFinite(progress().etaMs as number)
+            ? Math.round(progress().etaMs! / 1000)
+            : null,
               overall(),
             )}
           </div>
