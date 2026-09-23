@@ -972,3 +972,59 @@ fn a_file_time_written_as_a_number_by_an_older_build_still_reads() {
     let old: ScanEntryRecord = serde_json::from_str(&as_number).expect("read an older record");
     assert_eq!(old, scan_entry(), "an older record did not come back the same");
 }
+
+#[test]
+fn no_example_in_the_contract_shows_a_path_the_engine_would_not_send() {
+    // The document showed vaultRelPath as 'loras/lora1.safetensors'. The engine
+    // sends 'loras\\lora1.safetensors'. An example is what a reader copies, so a
+    // wrong one is read as the promise and built against. The interface had a
+    // string replacement in its report working around exactly this.
+    //
+    // Only fields the engine actually sends with a backslash are checked. A
+    // path sent to the engine may use either separator, and this must not
+    // start policing arguments.
+    fn collect(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    if v.as_str().is_some_and(|s| s.contains('\\')) && !out.contains(k) {
+                        out.push(k.clone());
+                    }
+                    collect(v, out);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| collect(v, out)),
+            _ => {}
+        }
+    }
+
+    let mut path_fields = Vec::new();
+    for (_, value) in samples() {
+        collect(&value, &mut path_fields);
+    }
+    assert!(
+        path_fields.iter().any(|f| f == "vaultRelPath"),
+        "no path fields were found, the check proves nothing: {path_fields:?}"
+    );
+
+    let doc = read_repo_file("docs/IPC-CONTRACT.md");
+    let mut wrong = Vec::new();
+    for (number, line) in doc.lines().enumerate() {
+        let Some((declaration, comment)) = line.split_once("//") else { continue };
+        let Some(field) = declaration.trim().split(':').next() else { continue };
+        let field = field.trim();
+        if !path_fields.iter().any(|f| f == field) {
+            continue;
+        }
+        // Only the quoted example, so prose about separators is left alone.
+        for example in comment.split('\'').skip(1).step_by(2) {
+            if example.contains('/') && !example.contains('\\') {
+                wrong.push(format!(
+                    "line {}: {field} is shown as {example:?}, and the engine sends a backslash",
+                    number + 1
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

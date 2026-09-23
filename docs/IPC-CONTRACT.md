@@ -408,7 +408,7 @@ Returns:
 
 ```ts
 type ModelDirNode = {
-  relPath: string        // relative to the root that owns it, for example 'loras/style'
+  relPath: string        // relative to the root that owns it, for example 'loras\\style'
   absPath: string
   category: string
   origin: 'modelsDir' | 'extraPath' | 'outputDir'
@@ -689,7 +689,7 @@ type PlanGroup = {
   sha256: string
   sizeBytes: number
   category: string
-  vaultRelPath: string           // for example 'loras/lora1.safetensors'
+  vaultRelPath: string           // for example 'loras\\lora1.safetensors'
   vaultNameAdjusted: boolean
   clashesWith: string | null     // the SHA-256 that already owns the plain name
   vaultAliases: string[]         // other names these copies use, kept as aliases
@@ -1055,7 +1055,7 @@ Arguments:
 {
   installId: string
   sha256: string
-  relativeDir: string        // relative to the install root, for example 'models/loras/style'
+  relativeDir: string        // relative to the install root, for example 'models\\loras\\style'
   linkName?: string          // defaults to the vault file name
   createDir: boolean         // default false
 }
