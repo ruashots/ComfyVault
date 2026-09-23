@@ -373,6 +373,16 @@ export function SettingsScreen() {
                   </span>
                 </div>
                 <div class="kv">
+                  <span class="k w150">Hugging Face cache</span>
+                  <span class="v">
+                    {current().huggingFaceCacheDirs === null
+                      ? "found the way the Hugging Face libraries find it themselves"
+                      : current().huggingFaceCacheDirs!.length === 0
+                        ? "not read"
+                        : current().huggingFaceCacheDirs!.join("  ")}
+                  </span>
+                </div>
+                <div class="kv">
                   <span class="k w150">Reading again</span>
                   <span class="v">
                     {current().hashCacheEnabled
@@ -416,6 +426,45 @@ export function SettingsScreen() {
                 </div>
               )}
             </For>
+          </Show>
+
+          <div class="sec secgap">
+            <span class="t">Before a copy is deleted</span>
+          </div>
+          <Show when={settings()}>
+            {(current) => (
+              <>
+                <div class="chk">
+                  <button
+                    class="tog"
+                    classList={{ on: current().verifyBeforeDelete }}
+                    role="switch"
+                    aria-checked={current().verifyBeforeDelete}
+                    aria-label="Read both files again before deleting a duplicate"
+                    onClick={() =>
+                      void app.actions.run(() =>
+                        app.engine.updateSettings({
+                          verifyBeforeDelete: !current().verifyBeforeDelete,
+                        }),
+                      )
+                    }
+                  >
+                    <i />
+                  </button>
+                  <span class="sp" style={{ "font-size": "10.5px" }}>
+                    Read both files again, right before the duplicate is deleted
+                  </span>
+                </div>
+                <div class="note up">
+                  Deleting is the one thing ComfyVault does that cannot be undone.
+                  With this on, the two files are read and compared at the moment of
+                  the delete, so what proves they are identical is the bytes
+                  themselves rather than a hash from an earlier scan. Turning it off
+                  makes a run faster and makes the delete a matter of trust rather
+                  than proof.
+                </div>
+              </>
+            )}
           </Show>
 
           <Show when={app.appState()?.vaultRoot}>
