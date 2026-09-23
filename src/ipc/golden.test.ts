@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { FixtureEngine } from "~/ipc/fixture/engine";
+
 /**
  * Every payload the engine sends, as the engine's own serialiser writes it.
  *
@@ -147,5 +149,97 @@ describe("a hash is written the way the engine writes it", () => {
         expect(hash, `${name} carries a lowercase hash`).toBe(hash!.toUpperCase());
       }
     }
+  });
+});
+
+/**
+ * Which field names hold a Windows path, learned from the samples rather than
+ * listed by hand. A field the engine shows with a backslash is a path.
+ */
+function pathFields(): Set<string> {
+  const names = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    for (const [key, inner] of Object.entries(value)) {
+      if (typeof inner === "string" && inner.includes("\\")) names.add(key);
+      else walk(inner);
+    }
+  };
+  for (const name of samples) {
+    walk(JSON.parse(readFileSync(join(GOLDEN, `${name}.json`), "utf8")));
+  }
+  return names;
+}
+
+/** Every path-shaped string in a payload, with the field it came from. */
+function pathsIn(value: unknown, fields: Set<string>): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    for (const [key, inner] of Object.entries(node)) {
+      if (typeof inner === "string") {
+        if (fields.has(key) && inner.length > 0) out.push([key, inner]);
+      } else walk(inner);
+    }
+  };
+  walk(value);
+  return out;
+}
+
+describe("the double writes paths the way the engine writes them", () => {
+  it("learns which fields are paths from the samples", () => {
+    const fields = pathFields();
+    expect(fields.has("absPath")).toBe(true);
+    expect(fields.has("vaultRelPath")).toBe(true);
+    expect(fields.has("relPath")).toBe(true);
+    // A URL is not a path, and must not be dragged into this.
+    expect(fields.has("pageUrl")).toBe(false);
+  });
+
+  it("never puts a forward slash in one", async () => {
+    const fields = pathFields();
+    const engine = new FixtureEngine({ speed: 400 });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const scan = await engine.startScan();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const plan = await engine.buildPlan(scan.scanId);
+    await engine.startApply({
+      planId: plan.planId,
+      groupIds: plan.groups.slice(0, 3).map((g) => g.groupId),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const payloads: unknown[] = [
+      await engine.getAppState(),
+      await engine.listInstalls(),
+      await engine.getVaultInfo(),
+      plan,
+      await engine.getScanEntries({ scanId: scan.scanId, offset: 0, limit: 50 }),
+      await engine.listVaultFiles({ offset: 0, limit: 50 }),
+      await engine.listLinks(),
+      await engine.listContents({ offset: 0, limit: 50 }),
+      await engine.checkVaultHealth(),
+      await engine.validateInstallPath("C:\\ComfyUI-Portable"),
+    ];
+
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const payload of payloads) {
+      for (const [field, value] of pathsIn(payload, fields)) {
+        checked += 1;
+        if (value.includes("/")) wrong.push(`${field}: ${value}`);
+      }
+    }
+    expect(checked, "nothing was checked, so this proves nothing").toBeGreaterThan(50);
+    expect(wrong).toEqual([]);
   });
 });

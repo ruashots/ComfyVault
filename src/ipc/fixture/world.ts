@@ -668,7 +668,7 @@ export function vaultFilesOf(world: World): VaultFile[] {
       sha256: entry.sha256,
       canonicalName: entry.canonicalName,
       category: content?.category ?? "",
-      vaultRelPath: `${content?.category ?? ""}/${entry.canonicalName}`,
+      vaultRelPath: `${content?.category ?? ""}\\${entry.canonicalName}`,
       sizeBytes: content?.bytes ?? 0,
       addedAt: entry.addedAt,
       aliases: entry.aliases,
@@ -723,7 +723,7 @@ export function nameGroupsOf(world: World): NameGroup[] {
       names: names.map((name) => ({
         name,
         isCanonical: name === entry.canonicalName,
-        vaultRelPath: `${content.category}/${name}`,
+        vaultRelPath: `${content.category}\\${name}`,
         usedByLinks: world.links.filter(
           (l) => l.sha256 === entry.sha256 && l.linkName === name,
         ).length,

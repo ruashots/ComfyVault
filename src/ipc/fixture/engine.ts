@@ -823,7 +823,7 @@ export class FixtureEngine implements Engine {
     if (this.renamedSinceApply.size > 0) {
       const paths = vaultFilesOf(this.world)
         .filter((f) => this.renamedSinceApply.has(f.sha256))
-        .map((f) => `${VAULT_ROOT}\\${f.vaultRelPath.replace(/\//g, "\\")}`);
+        .map((f) => `${VAULT_ROOT}\\${f.vaultRelPath}`);
       throw error(
         "conflict",
         "Files this run created have been renamed since, so putting them back would lose the new names.",

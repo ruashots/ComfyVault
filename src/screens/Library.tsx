@@ -438,8 +438,8 @@ function DrawerBody(props: { row: ContentRow }) {
    */
   const vaultPath = () => {
     const group = app.plan()?.groups.find((g) => g.sha256 === row().sha256);
-    const rel = group?.vaultRelPath ?? `${row().category}/${row().name}`;
-    return `${app.vault()?.root ?? ""}\\${rel.replace(/\//g, "\\")}`;
+    const rel = group?.vaultRelPath ?? `${row().category}\\${row().name}`;
+    return `${app.vault()?.root ?? ""}\\${rel}`;
   };
 
   // The list gives one row per content. The paths behind it are fetched for the
