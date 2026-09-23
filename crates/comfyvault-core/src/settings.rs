@@ -61,7 +61,11 @@ pub struct Settings {
     /// inside a scan, because a scan's result must not depend on machine state
     /// nobody can see. Reading the environment mid-scan also meant the tests
     /// walked whatever cache the machine really had.
-    #[serde(default)]
+    ///
+    /// The name is spelled out because `rename_all = "camelCase"` reads
+    /// "huggingface" as one word and would put `huggingfaceCacheDirs` on the
+    /// wire. The product writes it `huggingFaceCacheDirs`.
+    #[serde(default, rename = "huggingFaceCacheDirs")]
     pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
     /// Read a duplicate's bytes again, immediately before deleting it, and
     /// compare them against the copy being kept.
@@ -176,6 +180,7 @@ pub struct SettingsPatch {
     pub min_file_size_bytes: Option<u64>,
     pub follow_extra_model_paths: Option<bool>,
     pub scan_output_model_dirs: Option<bool>,
+    #[serde(rename = "huggingFaceCacheDirs")]
     pub huggingface_cache_dirs: Option<Vec<PathBuf>>,
     pub verify_before_delete: Option<bool>,
 }
@@ -234,6 +239,42 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_sent_by_the_interface_reaches_every_field() {
+        // The interface sends JSON, not a Rust value. A name serde does not
+        // recognise is dropped without an error, so the setting silently
+        // stays as it was. Every field is checked by the name on the wire.
+        let patch: SettingsPatch = serde_json::from_str(
+            r#"{
+                "metadataLookupsEnabled": false,
+                "hashCacheEnabled": false,
+                "scanExtensions": [".safetensors"],
+                "minFileSizeBytes": 7,
+                "followExtraModelPaths": false,
+                "scanOutputModelDirs": false,
+                "huggingFaceCacheDirs": ["D:\\hf"],
+                "verifyBeforeDelete": false
+            }"#,
+        )
+        .unwrap();
+
+        let mut s = Settings::default();
+        s.apply_patch(&patch);
+
+        assert_eq!(s.metadata_lookups_enabled, false);
+        assert_eq!(s.hash_cache_enabled, false);
+        assert_eq!(s.scan_extensions, vec![".safetensors".to_string()]);
+        assert_eq!(s.min_file_size_bytes, 7);
+        assert_eq!(s.follow_extra_model_paths, false);
+        assert_eq!(s.scan_output_model_dirs, false);
+        assert_eq!(
+            s.huggingface_cache_dirs,
+            Some(vec![PathBuf::from("D:\\hf")]),
+            "the Hugging Face folders did not survive the journey through JSON"
+        );
+        assert_eq!(s.verify_before_delete, false);
+    }
+
+    #[test]
     fn a_patch_leaves_absent_fields_alone() {
         let mut s = Settings::default();
         s.metadata_lookups_enabled = false;
@@ -267,9 +308,25 @@ mod tests {
     fn settings_round_trip_through_json_with_camel_case_names() {
         let s = Settings::default();
         let v = serde_json::to_value(&s).unwrap();
-        assert!(v.get("metadataLookupsEnabled").is_some());
-        assert!(v.get("minFileSizeBytes").is_some());
-        assert!(v.get("scanOutputModelDirs").is_some());
+
+        // Every name, checked as a set. Naming three of them let
+        // `huggingfaceCacheDirs` reach a shipped build, because the field the
+        // test stepped over was the one serde had spelled its own way.
+        let mut got: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            [
+                "followExtraModelPaths",
+                "hashCacheEnabled",
+                "huggingFaceCacheDirs",
+                "metadataLookupsEnabled",
+                "minFileSizeBytes",
+                "scanExtensions",
+                "scanOutputModelDirs",
+                "verifyBeforeDelete",
+            ]
+        );
 
         let back: Settings = serde_json::from_value(v).unwrap();
         assert_eq!(back, s);
