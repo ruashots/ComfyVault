@@ -445,7 +445,15 @@ export interface PlanTotals {
   linksCreated: number;
   blockedRows: number;
   blockedBytes: number;
-  vaultFreeBytesAfter: number;
+  /**
+   * What the vault's drive would have free if this plan ran. A prediction.
+   *
+   * The record of a finished run carries `vaultFreeBytesBefore` and
+   * `vaultFreeBytesAfter`, which are readings taken off the drive. This is
+   * not one of those, and it was named the same until a screen showed one
+   * where it meant the other. Null when the drive could not be read.
+   */
+  vaultFreeBytesIfApplied: number | null;
 }
 
 export interface ConsolidationPlan {

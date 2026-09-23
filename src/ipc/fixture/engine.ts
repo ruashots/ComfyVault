@@ -202,7 +202,6 @@ export class FixtureEngine implements Engine {
   private world: World = buildWorld();
   private disk: FakeFolder[] = DISK.map((f) => ({ ...f, children: [...f.children] }));
   private vaultOpen = true;
-  private driveReadable = true;
 
   /**
    * Every command but `get_app_state` refuses before a vault is chosen, and
@@ -339,8 +338,8 @@ export class FixtureEngine implements Engine {
       volume: `${VAULT_VOLUME}\\`,
       // Null together when the drive cannot be read, never zero: zero of zero
       // reads as a completely full drive, which is a different statement.
-      freeBytes: this.driveReadable ? this.world.freeBytes : null,
-      totalBytes: this.driveReadable ? VAULT_TOTAL_BYTES : null,
+      freeBytes: this.world.driveReadable ? this.world.freeBytes : null,
+      totalBytes: this.world.driveReadable ? VAULT_TOTAL_BYTES : null,
       fileCount: this.world.vault.size,
       totalStoredBytes: stored,
       schemaVersion: 1,
@@ -1343,7 +1342,7 @@ export class FixtureEngine implements Engine {
    * is what a network drive or a pulled card reader does.
    */
   devSetDriveReadable(readable: boolean): void {
-    this.driveReadable = readable;
+    this.world.driveReadable = readable;
   }
 
   /** Nobody ever pressed Save, so there is nothing on disk to search. */

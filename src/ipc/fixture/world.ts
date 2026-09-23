@@ -204,6 +204,8 @@ export interface World {
   /** Saved workflow files there are to search. Zero means nothing was searched. */
   workflowsOnDisk: number;
   verifyBeforeDelete: boolean;
+  /** The drive answered when asked how much room it has. */
+  driveReadable: boolean;
 }
 
 /** A stable stand-in for a real SHA-256, so identifiers never move. */
@@ -369,6 +371,7 @@ export function buildWorld(): World {
     metadataLookupsEnabled: true,
     workflowsOnDisk: 42,
     verifyBeforeDelete: true,
+    driveReadable: true,
   };
 }
 
@@ -672,7 +675,10 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       linksCreated: groups.reduce((s, g) => s + g.occurrences, 0),
       blockedRows: listed.length,
       blockedBytes: listed.reduce((s, b) => s + b.sizeBytes, 0),
-      vaultFreeBytesAfter: world.freeBytes + bytesFreed,
+      // A prediction, not a reading, and null when the drive did not answer.
+      vaultFreeBytesIfApplied: world.driveReadable
+        ? world.freeBytes + bytesFreed
+        : null,
     },
   };
 }
