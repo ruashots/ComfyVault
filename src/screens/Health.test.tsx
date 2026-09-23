@@ -6,6 +6,7 @@ import { ConfirmModalView } from "~/modals/confirm";
 import { CleanupScreen } from "~/screens/Cleanup";
 import { HomeScreen } from "~/screens/Home";
 import { LibraryScreen } from "~/screens/Library";
+import { App } from "~/App";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
@@ -188,5 +189,42 @@ describe("a ComfyUI that will not show a picture for a linked model", () => {
     expect(text).toContain("so this is unknown there");
     // The fact must be on screen, not silently absent.
     expect(text).not.toContain("0.28.0 or newer, which will not show");
+  });
+});
+
+describe("a vault whose drive stops answering", () => {
+  it("says so rather than showing a full drive", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetDriveReadable(false);
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.ready());
+
+    // The rest of the answer still arrives, so one unreadable figure does not
+    // take the screen down.
+    expect(harness.app.failure()).toBeNull();
+    expect(harness.app.vault()).not.toBeNull();
+    expect(harness.app.vault()!.freeBytes).toBeNull();
+    expect(harness.app.vault()!.totalBytes).toBeNull();
+    expect(harness.app.installs().length).toBeGreaterThan(0);
+
+    // No meter, because zero of zero would draw a completely full drive.
+    expect(document.querySelector(".rail .meter")).toBeNull();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("0 B free");
+    expect(text).not.toContain("100% full");
+    expect(text).not.toContain("NaN");
+  });
+
+  it("keeps the same silence in Settings", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetDriveReadable(false);
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.ready());
+    harness.app.actions.go("settings");
+    await waitFor(() => document.body.textContent?.includes("Free space") === true);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("did not answer when asked how much room it has");
+    expect(text).not.toContain("0 B free");
   });
 });

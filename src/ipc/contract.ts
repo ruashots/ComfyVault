@@ -141,10 +141,22 @@ export interface AppState {
 export interface VaultInfo {
   root: string;
   createdAt: string;
-  /** "C:" on Windows, the mount point on Linux. */
+  /**
+   * The drive this vault sits on, as the operating system names it.
+   *
+   * On Windows that is the drive root and it carries a trailing separator,
+   * "C:\\". Elsewhere it can be an opaque device identifier that is not a path
+   * at all. Never compare it against the start of a path, and never print it
+   * raw: read it through `vaultVolume` on the store.
+   */
   volume: string;
-  freeBytes: number;
-  totalBytes: number;
+  /**
+   * What the drive has free and how big it is. Null together when the drive
+   * could not be read, never zero: zero of zero reads as a completely full
+   * drive, which is a different and wrong statement.
+   */
+  freeBytes: number | null;
+  totalBytes: number | null;
   fileCount: number;
   totalStoredBytes: number;
   schemaVersion: number;

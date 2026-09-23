@@ -82,7 +82,9 @@ export function Rail() {
    */
   const meter = createMemo(() => {
     const drive = app.vault();
-    if (!drive) return null;
+    // A drive that could not be read has no meter to draw. Its two figures
+    // arrive null together, and drawing zero of zero would show a full drive.
+    if (!drive || drive.totalBytes === null || drive.freeBytes === null) return null;
     const total = drive.totalBytes;
     const inFlight = app.applyProgress()?.bytesFreed ?? 0;
     const free = drive.freeBytes;

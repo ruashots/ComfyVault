@@ -90,8 +90,10 @@ export function ApplyDone() {
                   Drive {app.vaultVolume()} had {fmt(run().vaultFreeBytesBefore!)} free
                   before and has {fmt(run().vaultFreeBytesAfter!)} now, both read from
                   the drive itself.{" "}
-                  {usedPercent(drive()?.totalBytes ?? 0, run().vaultFreeBytesAfter!)}%
-                  of it used.
+                  <Show when={drive()?.totalBytes != null}>
+                    {usedPercent(drive()!.totalBytes!, run().vaultFreeBytesAfter!)}%
+                    of it used.
+                  </Show>
                 </Show>
               </div>
             </div>

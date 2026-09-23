@@ -237,8 +237,13 @@ function HomeReport() {
   const run = () => app.lastApply();
   const counted = () => app.planView()?.countedNeverMoved ?? [];
 
+  /**
+   * What the drive would have free once the plan runs. Null when the drive did
+   * not say what it has now, because there is nothing to add the saving to.
+   */
   const afterFree = createMemo(() => {
-    const free = drive()?.freeBytes ?? 0;
+    const free = drive()?.freeBytes;
+    if (free == null) return null;
     return free + (run() ? 0 : (app.plan()?.totals.bytesFreed ?? 0));
   });
 
@@ -309,8 +314,18 @@ function HomeReport() {
                           Freed. {finished().linksCreated} copies are now links.
                         </div>
                         <div class="l2">
-                          Drive {app.vaultVolume()} has {fmt(drive()?.freeBytes ?? 0)}{" "}
-                          free.
+                          <Show
+                            when={drive()?.freeBytes != null}
+                            fallback={
+                              <>
+                                Drive {app.vaultVolume()} did not answer when asked
+                                how much room it has.
+                              </>
+                            }
+                          >
+                            Drive {app.vaultVolume()} has{" "}
+                            {fmt(drive()!.freeBytes!)} free.
+                          </Show>
                         </div>
                       </div>
                       <button class="btn" onClick={() => app.actions.go("consolidate")}>
@@ -426,7 +441,7 @@ function NotScannedYet() {
   );
 }
 
-function PlanHero(props: { afterFree: number }) {
+function PlanHero(props: { afterFree: number | null }) {
   const app = useApp();
   const totals = () => app.plan()?.totals ?? null;
   const drive = () => app.vault();
@@ -455,11 +470,16 @@ function PlanHero(props: { afterFree: number }) {
                 {app.scan()?.totals.duplicateFiles ?? 0} copies of{" "}
                 {t().groupsFreeingSpace} models are held twice or more.
               </div>
-              <div class="l2">
-                Consolidating leaves {fmt(props.afterFree)} free on drive{" "}
-                {app.vaultVolume()},{" "}
-                {usedPercent(drive()?.totalBytes ?? 0, props.afterFree)}% used.
-              </div>
+              <Show when={props.afterFree !== null}>
+                <div class="l2">
+                  Consolidating leaves {fmt(props.afterFree!)} free on drive{" "}
+                  {app.vaultVolume()}
+                  <Show when={drive()?.totalBytes != null}>
+                    , {usedPercent(drive()!.totalBytes!, props.afterFree!)}% used
+                  </Show>
+                  .
+                </div>
+              </Show>
             </Show>
           </div>
           <button class="btn pri" onClick={() => app.actions.go("consolidate")}>

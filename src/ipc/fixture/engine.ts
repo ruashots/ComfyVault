@@ -202,6 +202,7 @@ export class FixtureEngine implements Engine {
   private world: World = buildWorld();
   private disk: FakeFolder[] = DISK.map((f) => ({ ...f, children: [...f.children] }));
   private vaultOpen = true;
+  private driveReadable = true;
 
   /**
    * Every command but `get_app_state` refuses before a vault is chosen, and
@@ -336,8 +337,10 @@ export class FixtureEngine implements Engine {
       // The engine has a test pinning that, and reporting a tidier "C:" here
       // hid a comparison that treated every install as being on another drive.
       volume: `${VAULT_VOLUME}\\`,
-      freeBytes: this.world.freeBytes,
-      totalBytes: VAULT_TOTAL_BYTES,
+      // Null together when the drive cannot be read, never zero: zero of zero
+      // reads as a completely full drive, which is a different statement.
+      freeBytes: this.driveReadable ? this.world.freeBytes : null,
+      totalBytes: this.driveReadable ? VAULT_TOTAL_BYTES : null,
       fileCount: this.world.vault.size,
       totalStoredBytes: stored,
       schemaVersion: 1,
@@ -1333,6 +1336,14 @@ export class FixtureEngine implements Engine {
       step();
     }
     throw new Error(`devFinish: still running after ${limit} steps`);
+  }
+
+  /**
+   * The vault's drive stops answering when asked how much room it has, which
+   * is what a network drive or a pulled card reader does.
+   */
+  devSetDriveReadable(readable: boolean): void {
+    this.driveReadable = readable;
   }
 
   /** Nobody ever pressed Save, so there is nothing on disk to search. */

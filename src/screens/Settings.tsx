@@ -352,7 +352,7 @@ export function SettingsScreen() {
                 </div>
                 <div class="chk">
                   <Show
-                    when={vault()}
+                    when={vault()?.freeBytes != null}
                     fallback={<Icon name="clock" size={13} />}
                   >
                     <Icon name="check" size={13} />
@@ -369,11 +369,19 @@ export function SettingsScreen() {
                       }
                     >
                       {(info) => (
-                        <>
-                          {fmt(info().freeBytes)} free &middot; a file that is
+                        <Show
+                          when={info().freeBytes !== null}
+                          fallback={
+                            <>
+                              drive {app.vaultVolume()} did not answer when asked
+                              how much room it has
+                            </>
+                          }
+                        >
+                          {fmt(info().freeBytes!)} free &middot; a file that is
                           already on this drive is renamed into the vault, so it
                           needs none of it
-                        </>
+                        </Show>
                       )}
                     </Show>
                   </span>
