@@ -218,19 +218,23 @@ export class FixtureEngine implements Engine {
 
   /** Everything is this many times faster. Tests pass a large number. */
   private readonly speed: number;
+  private readonly manual: boolean;
+  /**
+   * One tick of whatever is running, or null when nothing is. In manual mode
+   * the test calls it, so how far a run got is a decision the test makes
+   * rather than a race with the machine it happens to be on.
+   */
+  private tick: (() => void) | null = null;
 
-  constructor(options: { empty?: boolean; speed?: number } = {}) {
+  constructor(
+    options: { empty?: boolean; speed?: number; manual?: boolean } = {},
+  ) {
     this.speed = options.speed ?? 1;
+    this.manual = options.manual === true;
     if (options.empty === true) this.emptyWorld();
     else this.recordScan("scan-1");
   }
 
-  private get scanMs(): number {
-    return SCAN_MS / this.speed;
-  }
-  private get applyMs(): number {
-    return APPLY_MS / this.speed;
-  }
   private get tickMs(): number {
     return Math.max(1, Math.round(TICK_MS / this.speed));
   }
@@ -538,11 +542,14 @@ export class FixtureEngine implements Engine {
     const entries = scanEntriesOf(this.world);
     const filesToHash = entries.length;
     const bytesToHash = entries.reduce((s, e) => s + e.sizeBytes, 0);
-    const started = Date.now();
+    // Simulated time, one TICK_MS per step. A run takes the same number of
+    // steps whatever the machine and whatever the speed, so nothing about it
+    // depends on how long a step took in the real world.
+    let elapsed = 0;
 
-    this.scanTimer = setInterval(() => {
-      const elapsed = Date.now() - started;
-      const overall = Math.min(1, elapsed / this.scanMs);
+    const step = () => {
+      elapsed += TICK_MS;
+      const overall = Math.min(1, elapsed / SCAN_MS);
       const phase: ScanProgress["phase"] =
         overall < 0.2 ? "enumerating" : overall < 0.95 ? "hashing" : "finalizing";
       const hashed = Math.max(0, Math.min(1, (overall - 0.2) / 0.75));
@@ -567,7 +574,7 @@ export class FixtureEngine implements Engine {
         bytesFromCache: 0,
         currentPath: phase === "hashing" ? (entry?.absPath ?? null) : null,
         elapsedMs: elapsed,
-        etaMs: Math.max(0, this.scanMs - elapsed),
+        etaMs: Math.max(0, SCAN_MS - elapsed),
       });
 
       if (overall >= 1) {
@@ -575,7 +582,9 @@ export class FixtureEngine implements Engine {
         this.busy = null;
         this.scanDoneEvent.emit(this.recordScan(scanId));
       }
-    }, this.tickMs);
+    };
+    this.tick = step;
+    if (!this.manual) this.scanTimer = setInterval(step, this.tickMs);
 
     return { scanId };
   }
@@ -590,6 +599,7 @@ export class FixtureEngine implements Engine {
   private stopScanTimer(): void {
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = null;
+    this.tick = null;
   }
 
   async getLastScan(): Promise<ScanRecord | null> {
@@ -655,15 +665,16 @@ export class FixtureEngine implements Engine {
     // One file is written to between the report and the run, as really happens.
     const changesAt = groups.length > 7 ? 6 : -1;
     let reached = 0;
+    let elapsed = 0;
 
-    this.applyTimer = setInterval(() => {
-      const elapsed = Date.now() - started;
+    const step = () => {
+      elapsed += TICK_MS;
       // A cancel stops where the run is. The group it was part way through is
       // undone, which here means it is simply never committed, and no group
       // after it is started.
       const overall = this.applyCancelling
         ? 1
-        : Math.min(1, elapsed / this.applyMs);
+        : Math.min(1, elapsed / APPLY_MS);
       const upto = this.applyCancelling
         ? reached
         : Math.min(groups.length, Math.floor(overall * groups.length));
@@ -691,7 +702,7 @@ export class FixtureEngine implements Engine {
         linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
         failures: changesAt >= 0 && reached > changesAt ? 1 : 0,
         elapsedMs: elapsed,
-        etaMs: Math.max(0, this.applyMs - elapsed),
+        etaMs: Math.max(0, APPLY_MS - elapsed),
       });
 
       if (overall >= 1) {
@@ -732,7 +743,9 @@ export class FixtureEngine implements Engine {
         this.recordScan(this.lastScan?.scanId ?? "scan-1");
         this.applyDoneEvent.emit(result);
       }
-    }, this.tickMs);
+    };
+    this.tick = step;
+    if (!this.manual) this.applyTimer = setInterval(step, this.tickMs);
 
     return { applyId };
   }
@@ -786,6 +799,7 @@ export class FixtureEngine implements Engine {
   private stopApplyTimer(): void {
     if (this.applyTimer) clearInterval(this.applyTimer);
     this.applyTimer = null;
+    this.tick = null;
   }
 
   async getApplyResult(applyId: string): Promise<ApplyRecord> {
@@ -1189,6 +1203,47 @@ export class FixtureEngine implements Engine {
     }
     for (const sha of broken) this.world.vault.delete(sha);
     return this.world.links.filter((l) => broken.has(l.sha256)).length;
+  }
+
+  /**
+   * Advance a running scan or apply by whole steps.
+   *
+   * Only a manual engine has a clock to advance. A test that drives the run
+   * itself is asserting about the rule, not about how fast the machine it runs
+   * on happens to be.
+   */
+  devAdvance(steps = 1): void {
+    if (!this.manual) {
+      throw new Error("devAdvance needs a manual engine: new FixtureEngine({ manual: true })");
+    }
+    if (this.tick === null) throw new Error("devAdvance: nothing is running");
+    for (let i = 0; i < steps; i += 1) {
+      const step = this.tick;
+      if (step === null) return;
+      step();
+    }
+  }
+
+  /**
+   * Advance until whatever is running has finished.
+   *
+   * It refuses when nothing is running. A version that quietly did nothing
+   * would let every test built on it pass while asserting about a world no run
+   * ever touched, and it would pass silently, which is the worst way to be
+   * wrong.
+   */
+  devFinish(limit = 5000): void {
+    if (!this.manual) {
+      throw new Error("devFinish needs a manual engine: new FixtureEngine({ manual: true })");
+    }
+    if (this.tick === null) throw new Error("devFinish: nothing is running");
+    let steps = 0;
+    for (; steps < limit; steps += 1) {
+      const step = this.tick;
+      if (step === null) return;
+      step();
+    }
+    throw new Error(`devFinish: still running after ${limit} steps`);
   }
 
   /** Nobody ever pressed Save, so there is nothing on disk to search. */

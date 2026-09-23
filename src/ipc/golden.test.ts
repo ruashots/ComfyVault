@@ -206,17 +206,17 @@ describe("the double writes paths the way the engine writes them", () => {
 
   it("never puts a forward slash in one", async () => {
     const fields = pathFields();
-    const engine = new FixtureEngine({ speed: 400 });
+    const engine = new FixtureEngine({ manual: true });
     engine.devSetSymlinksSupported(true);
     engine.devSetComfyRunning(false);
     const scan = await engine.startScan();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    engine.devFinish();
     const plan = await engine.buildPlan(scan.scanId);
     await engine.startApply({
       planId: plan.planId,
       groupIds: plan.groups.slice(0, 3).map((g) => g.groupId),
     });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    engine.devFinish();
 
     const payloads: unknown[] = [
       await engine.getAppState(),

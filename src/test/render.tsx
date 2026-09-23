@@ -38,7 +38,10 @@ export async function renderWithApp(
 /** Wait for a condition, checking after every microtask flush. */
 export async function waitFor(
   predicate: () => boolean,
-  timeoutMs = 2000,
+  // Generous, because this only bounds a condition that should already be
+  // true. Nothing waits out this clock on a healthy run, and a loaded machine
+  // must not be the reason a suite goes red.
+  timeoutMs = 10_000,
 ): Promise<void> {
   const started = Date.now();
   while (!predicate()) {

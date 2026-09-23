@@ -18,7 +18,7 @@ afterEach(() => {
 
 /** Run once, then take a file out of the vault from underneath its links. */
 async function withBrokenLinks(screenUnderTest: () => ReturnType<typeof HomeScreen>) {
-  const engine = new FixtureEngine({ speed: 200 });
+  const engine = new FixtureEngine({ manual: true });
   engine.devSetSymlinksSupported(true);
   engine.devSetComfyRunning(false);
   const scan = (await engine.getLastScan())!;
@@ -27,7 +27,8 @@ async function withBrokenLinks(screenUnderTest: () => ReturnType<typeof HomeScre
     planId: plan.planId,
     groupIds: plan.groups.slice(0, 3).map((g) => g.groupId),
   });
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  // Run it to the end rather than waiting a guessed number of milliseconds.
+  engine.devFinish();
   const broken = engine.devBreakLinks(1);
   expect(broken).toBeGreaterThan(0);
 
@@ -164,7 +165,7 @@ describe("when there was no saved workflow file to search", () => {
 
 describe("a ComfyUI that will not show a picture for a linked model", () => {
   it("says so on the screen where the person decides", async () => {
-    const engine = new FixtureEngine({ speed: 200 });
+    const engine = new FixtureEngine();
     engine.devSetSymlinksSupported(true);
     harness = await renderWithApp(() => <HomeScreen />, { engine });
     await waitFor(() => harness!.app.plan() !== null);
@@ -174,7 +175,7 @@ describe("a ComfyUI that will not show a picture for a linked model", () => {
   });
 
   it("never reads as not affected when the version is unknown", async () => {
-    const engine = new FixtureEngine({ speed: 200 });
+    const engine = new FixtureEngine();
     engine.devSetSymlinksSupported(true);
     engine.devForgetVersions();
     harness = await renderWithApp(() => <HomeScreen />, { engine });

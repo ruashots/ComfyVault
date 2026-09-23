@@ -13,9 +13,13 @@ afterEach(() => {
   harness = null;
 });
 
-/** Start a run over every group, with the machine clear and the clock fast. */
-async function runApply(speed = 200): Promise<Harness> {
-  const engine = new FixtureEngine({ speed });
+/**
+ * Start a run over every group with the machine clear, and hand the test the
+ * clock. Nothing moves until the test says so, so how far a run gets is a
+ * decision here rather than a race with the machine this runs on.
+ */
+async function runApply(): Promise<Harness> {
+  const engine = new FixtureEngine({ manual: true });
   engine.devSetSymlinksSupported(true);
   engine.devSetComfyRunning(false);
   harness = await renderWithApp(() => <App />, { engine });
@@ -26,7 +30,24 @@ async function runApply(speed = 200): Promise<Harness> {
     .getAllByRole("button")
     .find((b) => /^Apply/.test(b.textContent ?? ""))!;
   await userEvent.click(apply);
+  await waitFor(() => harness!.app.applyProgress() === null);
   return harness;
+}
+
+/** Step the run until it has finished exactly this many groups. */
+async function upTo(h: Harness, groups: number): Promise<void> {
+  for (let step = 0; step < 500; step += 1) {
+    if ((h.app.applyProgress()?.groupIndex ?? 0) >= groups) return;
+    h.engine.devAdvance();
+    await Promise.resolve();
+  }
+  throw new Error(`the run never reached group ${groups}`);
+}
+
+/** Let the run finish, however many steps that takes. */
+async function finish(h: Harness): Promise<void> {
+  h.engine.devFinish();
+  await waitFor(() => h.app.lastApply() !== null);
 }
 
 /** The fixture's one file that changes under the run, at group 6. */
@@ -34,13 +55,15 @@ const CHANGES_AT = 6;
 
 describe("stopping a run", () => {
   it("adds no failure of its own, because the person asked it to stop", async () => {
-    // Slow enough to stop before the one file that changes under the run.
-    const { app, engine } = await runApply(20);
-    await waitFor(() => app.applyProgress() !== null);
+    const h = await runApply();
+    const { app, engine } = h;
+    // Stopped three groups in, before the one file that changes under the run.
+    await upTo(h, 3);
     await engine.cancelApply();
-    await waitFor(() => app.lastApply() !== null);
+    await finish(h);
 
     const run = app.lastApply()!;
+    expect(run.groupsApplied).toBe(3);
     expect(run.groupsApplied).toBeLessThan(CHANGES_AT);
     expect(run.state).toBe("cancelled");
     // The group the stop interrupted was put back, not reported as gone wrong.
@@ -53,10 +76,10 @@ describe("stopping a run", () => {
   });
 
   it("says the person stopped it, and lists nothing as left alone", async () => {
-    const { app, engine } = await runApply(20);
-    await waitFor(() => app.applyProgress() !== null);
-    await engine.cancelApply();
-    await waitFor(() => app.lastApply() !== null);
+    const h = await runApply();
+    await upTo(h, 3);
+    await h.engine.cancelApply();
+    await finish(h);
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("stopped when you asked");
@@ -65,12 +88,15 @@ describe("stopping a run", () => {
   });
 
   it("still reports a file that failed before the person pressed stop", async () => {
-    const { app, engine } = await runApply();
-    await waitFor(() => (app.applyProgress()?.groupIndex ?? 0) > CHANGES_AT);
+    const h = await runApply();
+    const { app, engine } = h;
+    // Stopped after the file that changed, so that failure is already real.
+    await upTo(h, CHANGES_AT + 2);
     await engine.cancelApply();
-    await waitFor(() => app.lastApply() !== null);
+    await finish(h);
 
     const run = app.lastApply()!;
+    expect(run.groupsApplied).toBe(CHANGES_AT + 1);
     expect(run.state).toBe("cancelled");
     // Nothing else in the interface mentions this file, so the stop must not
     // swallow it.
@@ -82,8 +108,8 @@ describe("stopping a run", () => {
   });
 
   it("promises only what stopping now does", async () => {
-    const { app } = await runApply();
-    await waitFor(() => app.applyProgress() !== null);
+    const h = await runApply();
+    await upTo(h, 1);
     const text = document.body.textContent ?? "";
     // The old promise. The engine no longer finishes the file it is on.
     expect(text).not.toContain("Stop after this file");
@@ -94,9 +120,10 @@ describe("stopping a run", () => {
 
 describe("a run that cannot be undone any more", () => {
   it("keeps the modal open and lists the paths that are in the way", { timeout: 15000 }, async () => {
-    const { app, engine } = await runApply();
-    await waitFor(() => app.lastApply() !== null, 8000);
-    await waitFor(() => app.lastApply()!.revertible);
+    const h = await runApply();
+    const { app, engine } = h;
+    await finish(h);
+    expect(app.lastApply()!.revertible).toBe(true);
 
     // The person renamed a file this run put in the vault.
     const moved = app.lastApply()!;

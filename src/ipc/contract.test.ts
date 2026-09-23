@@ -58,17 +58,17 @@ describe("whether anything was searched at all", () => {
 
 /** A world that has been consolidated, so there are links to measure. */
 async function afterAnApply(): Promise<FixtureEngine> {
-  const engine = new FixtureEngine({ speed: 400 });
+  const engine = new FixtureEngine({ manual: true });
   engine.devSetSymlinksSupported(true);
   engine.devSetComfyRunning(false);
   const scan = await engine.startScan();
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  engine.devFinish();
   const plan = await engine.buildPlan(scan.scanId);
   await engine.startApply({
     planId: plan.planId,
     groupIds: plan.groups.slice(0, 3).map((g) => g.groupId),
   });
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  engine.devFinish();
   return engine;
 }
 
@@ -115,9 +115,9 @@ describe("a link's state is read off the drive, not remembered", () => {
 
 describe("a modification time survives the trip", () => {
   it("is text, because the number does not fit in a JavaScript number", async () => {
-    const engine = new FixtureEngine({ speed: 400 });
+    const engine = new FixtureEngine({ manual: true });
     const scan = await engine.startScan();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    engine.devFinish();
     const page = await engine.getScanEntries({
       scanId: scan.scanId,
       offset: 0,
@@ -131,5 +131,41 @@ describe("a modification time survives the trip", () => {
     if (asNumber !== entry.mtimeNanos) {
       expect(entry.mtimeNanos).not.toBe(asNumber);
     }
+  });
+});
+
+describe("the clock a test drives", () => {
+  it("refuses an engine that is still running itself", async () => {
+    const engine = new FixtureEngine();
+    expect(() => engine.devAdvance()).toThrow(/manual engine/);
+    expect(() => engine.devFinish()).toThrow(/manual engine/);
+  });
+
+  it("refuses to step when nothing is running", () => {
+    // A version that quietly did nothing would let every test built on it
+    // pass while asserting about a world no run ever touched.
+    const engine = new FixtureEngine({ manual: true });
+    expect(() => engine.devAdvance()).toThrow(/nothing is running/);
+    expect(() => engine.devFinish()).toThrow(/nothing is running/);
+  });
+
+  it("takes the same number of steps every time, whatever the machine", async () => {
+    const stepsTaken: number[] = [];
+    for (let run = 0; run < 3; run += 1) {
+      const engine = new FixtureEngine({ manual: true });
+      await engine.startScan();
+      let steps = 0;
+      let done = false;
+      engine.onScanDone(() => {
+        done = true;
+      });
+      while (!done && steps < 5000) {
+        engine.devAdvance();
+        steps += 1;
+      }
+      stepsTaken.push(steps);
+    }
+    expect(new Set(stepsTaken).size, `steps varied: ${stepsTaken}`).toBe(1);
+    expect(stepsTaken[0]).toBeGreaterThan(1);
   });
 });

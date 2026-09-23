@@ -39,7 +39,7 @@ describe("the library list with no filter", () => {
   });
 
   it("counts a half-consolidated model once, not twice", async () => {
-    const engine = new FixtureEngine({ speed: 200 });
+    const engine = new FixtureEngine({ manual: true });
     engine.devSetSymlinksSupported(true);
     engine.devSetComfyRunning(false);
     const scan = (await engine.getLastScan())!;
@@ -49,7 +49,7 @@ describe("the library list with no filter", () => {
       planId: plan.planId,
       groupIds: plan.groups.slice(0, 5).map((g) => g.groupId),
     });
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    engine.devFinish();
     const after = await engine.listContents({ offset: 0, limit: 1000 });
     expect(after.total).toBe(before);
     const linked = after.rows.filter((r) => r.linkCount > 0);
