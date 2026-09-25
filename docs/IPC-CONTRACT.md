@@ -176,8 +176,8 @@ with `notFound` and creates nothing. Pass `true` on a first run.
 every other command that reads or writes the vault. There is nowhere to record
 an install until a vault exists.
 
-**The engine has no default vault folder.** It never opens one on its own, and
-`C:\ComfyVault` is the interface's suggestion, not the engine's. On a machine
+**There is no default vault folder.** The engine never opens one on its own,
+and the interface suggests none. On a machine
 where a vault was opened before, the engine reopens that one at startup, from
 the path it recorded. On a machine where one never was, nothing is open and
 nothing is created until `select_vault` is called.

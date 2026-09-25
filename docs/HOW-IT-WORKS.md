@@ -364,6 +364,12 @@ The vault is a plain folder. You choose where it goes. It cannot be inside a
 ComfyUI install, and ComfyVault refuses that choice, because a file moved into
 it would still be inside the install it came from.
 
+There is no default vault folder. The folder you choose must be empty, or not
+exist yet, or already be a ComfyVault vault, which opens as it is. A folder that
+holds other files is refused, and nothing in it changes. Its files would
+otherwise be taken for vault files. **New folder** in the folder picker makes an
+empty folder inside the one you picked.
+
 ### Which drive
 
 **Put the vault on the same drive as your installs.** There, a file is moved by
@@ -380,6 +386,8 @@ and the choice stays yours. A drive that does not answer at all is refused.
 drives, and the undo of it, have only been tested against a simulated drive
 boundary, never a real second drive. If you choose one, keep your own backup of
 those models until you have checked a run and an undo yourself.
+
+A vault made at `C:\ComfyVault`, for example:
 
 ```
 C:\ComfyVault\
@@ -498,7 +506,7 @@ unaffected, because the app cannot check what the install does not say.
 After each scan, ComfyVault asks Civitai about the model files it has not asked
 about before, in the background, a hundred at a time. It sends each file's
 SHA-256 hash. It sends no file name and no path. Civitai answers with the
-model's name, version, base model, trigger words, page link and pictures, and
+model's name, version, base model, trigger words and the link to its page, and
 the Library shows them when you open a model.
 
 The lookup is on by default. The **Civitai lookup** switch in Settings turns it
@@ -508,8 +516,3 @@ off, and then ComfyVault uses no network at all.
   answer is remembered, so the file is not asked about again.
 - If Civitai cannot be reached, Settings says so, and ComfyVault asks again
   after the next scan. A scan, a plan and a run never wait for a lookup.
-- A picture is loaded only when you open a model in the Library. ComfyVault
-  shows the first picture that Civitai rates PG or PG-13, and skips videos and
-  pictures with any other rating. If there is no such picture, the Library says
-  so. If the picture does not load, the Library says so, and the picture is on
-  the model's Civitai page.

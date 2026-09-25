@@ -6,6 +6,19 @@ explain them, and the ones that need a decision rather than a button.
 
 ---
 
+## "That folder already holds files, so it cannot become the vault"
+
+The vault folder must be empty, or not exist yet. A folder that holds anything,
+even one other folder, is refused, and nothing in it changes.
+
+1. In the folder picker, go to the place where you want the vault.
+2. Press **New folder**. It makes an empty folder inside the one you picked.
+3. Choose that new folder.
+
+A folder that is already a ComfyVault vault is not refused. It opens as it is.
+
+---
+
 ## "No vault folder is open yet"
 
 You tried to add an install before you chose a vault folder. The first-run
@@ -242,9 +255,6 @@ in the cache, so starting again is not starting over.
 - **Civitai does not know the file.** Many files are not on Civitai, for
   example official releases. That is normal, and the model stays without a
   label.
-- **There is no picture.** The Library shows only a picture that Civitai rates
-  PG or PG-13. If a model has none, the Library says so. If a picture fails to
-  load, the Library says so, and the picture is on the model's Civitai page.
 
 ---
 

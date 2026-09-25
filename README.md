@@ -92,8 +92,11 @@ the check that tells you the build is good, are in
 ## How a consolidation goes
 
 1. **Choose the vault folder.** This is step one on the first run, and nothing
-   else opens until it is done. The vault is one plain folder. It cannot be
-   inside a ComfyUI install, and ComfyVault refuses that choice.
+   else opens until it is done. The vault is one plain folder, and there is no
+   default: you choose where it goes. The folder must be empty or not exist
+   yet. A folder that already holds files is refused, and nothing in it
+   changes. Use **New folder** in the folder picker to make an empty one. The
+   vault cannot be inside a ComfyUI install, and ComfyVault refuses that choice.
 
    - **Put it on the same drive as your installs.** On that drive, files are
      moved by a rename, which is instant, so the vault needs no free space of
@@ -230,7 +233,7 @@ models, how much is on disk, and how much can come back.
 **Library** has one row per unique model, whether it is already in the vault or
 still in four installs. Search it, sort it by how many places hold a file, and
 see every name a model has. Open a model to see what Civitai knows about it:
-its name, base model, trigger words, a link to its page, and a picture.
+its name, base model, trigger words, and a link to its Civitai page.
 
 **Consolidate** shows the dry run and the Apply button, then the finished run
 with its undo.
@@ -250,7 +253,8 @@ are running.
 
 ## Your data
 
-The vault is a plain folder you choose:
+The vault is a plain folder you choose. For example, a vault you made at
+`C:\ComfyVault` looks like this:
 
 ```
 C:\ComfyVault\
@@ -268,14 +272,12 @@ kept outside is which vault folder to open, in
 **ComfyVault sends each model's fingerprint to Civitai, and you can turn that
 off.** After a scan, ComfyVault sends the SHA-256 hash of each model file
 it has not asked about before to Civitai, to find the model's name, base model,
-trigger words, page and pictures. No file name and no path is sent. The lookup
+trigger words and page. No file name and no path is sent. The lookup
 is on by default. **Turn it off with the Civitai lookup switch in Settings**,
 and ComfyVault uses no network at all. Everything else works the same without
 it.
 
-A picture is loaded from Civitai only when you open a model in the Library, and
-only the first picture that Civitai rates PG or PG-13. There is no account, no
-API key and no telemetry.
+There is no account, no API key and no telemetry.
 
 ---
 
