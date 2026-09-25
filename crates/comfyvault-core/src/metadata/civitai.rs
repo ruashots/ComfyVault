@@ -203,13 +203,13 @@ fn convert(v: &ApiVersion, sha256: &str, ambiguous: bool) -> ModelMetadata {
             .and_then(|f| f.download_url.clone())
             .or_else(|| v.download_url.clone())
             .and_then(|u| safe_download_url(&u)),
-        preview_image_urls: v.images.iter().filter_map(|i| i.url.clone()).collect(),
+        preview_image_urls: v.images.iter().filter_map(|i| i.url.as_deref().and_then(safe_image_url)).collect(),
         preview_images: v
             .images
             .iter()
             .filter_map(|i| {
                 Some(super::PreviewImage {
-                    url: i.url.clone()?,
+                    url: i.url.as_deref().and_then(safe_image_url)?,
                     nsfw_level: i.nsfw_level.unwrap_or(0),
                     kind: i.kind.clone().unwrap_or_default(),
                 })
@@ -230,6 +230,18 @@ fn safe_download_url(url: &str) -> Option<String> {
     let host = rest.split(['/', '?', '#']).next()?.split('@').next_back()?;
     let host = host.split(':').next()?.to_lowercase();
     (host == "civitai.com" || host.ends_with(".civitai.com")).then(|| url.to_string())
+}
+
+/// Keeps a picture address only when it is Civitai's image host over HTTPS.
+///
+/// The answer comes from the network, and the window loads these addresses.
+/// The window's own rules allow only this host today, but a check that lives
+/// only there opens the moment those rules are widened. Anything with a user
+/// part, a port, or another host is dropped.
+fn safe_image_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    authority.eq_ignore_ascii_case("image.civitai.com").then(|| url.to_string())
 }
 
 /// Splits the trigger words into usable tokens.

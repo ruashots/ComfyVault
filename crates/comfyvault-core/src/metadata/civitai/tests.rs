@@ -400,3 +400,21 @@ fn a_cached_answer_from_an_older_build_reads_with_no_pictures_rated() {
     let m: crate::metadata::ModelMetadata = serde_json::from_value(v).unwrap();
     assert!(m.preview_images.is_empty());
 }
+
+#[test]
+fn only_pictures_on_civitais_image_host_over_https_are_kept() {
+    let json = r#"{"id":1,"modelId":2,"files":[],"images":[
+        {"url":"https://image.civitai.com/a/1.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"http://image.civitai.com/a/2.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://evil.example/a/3.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://image.civitai.com.evil.example/4.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://image.civitai.com@evil.example/5.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://image.civitai.com:8443/6.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://civitai.com/7.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://IMAGE.civitai.com/a/8.jpeg","nsfwLevel":2,"type":"image"}
+    ]}"#;
+    let m = convert(&parse_version(json), SHA_A, false);
+    let kept: Vec<&str> = m.preview_images.iter().map(|p| p.url.as_str()).collect();
+    assert_eq!(kept, vec!["https://image.civitai.com/a/1.jpeg", "https://IMAGE.civitai.com/a/8.jpeg"]);
+    assert_eq!(m.preview_image_urls, kept);
+}
