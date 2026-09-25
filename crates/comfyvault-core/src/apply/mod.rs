@@ -563,7 +563,9 @@ impl<'a> Applier<'a> {
             if let Some(parent) = vault_path.parent() {
                 if !parent.is_dir() {
                     let entry = self.step(run, group, JournalStep::CreateDir { path: parent.to_path_buf() })?;
-                    fsops::ensure_dir(parent)?;
+                    if let Err(e) = fsops::ensure_dir(parent) {
+                        return Err(self.failed(entry, e));
+                    }
                     done.push(self.finish(run, entry)?);
                 }
             }
@@ -579,10 +581,18 @@ impl<'a> Applier<'a> {
                 sha256: group.sha256.clone(),
                 size_bytes: group.size_bytes,
             })?;
-            let kind = fsops::move_file(
+            let kind = match fsops::move_file(
                 self.platform, &group.source.abs_path, &vault_path, &group.sha256, &temp_dir, cancel,
                 &mut |_| {},
-            )?;
+            ) {
+                Ok(kind) => kind,
+                // Refused before anything moved: something already sits at
+                // the vault path. The step is closed as failed, so no undo
+                // later takes it for a move that happened and deletes that
+                // file, and no later run is told this run owns the path.
+                Err(e) if e.code == ErrorCode::Conflict => return Err(self.failed(entry, e)),
+                Err(e) => return Err(e),
+            };
             let entry = JournalEntry {
                 step: JournalStep::MoveToVault {
                     from: group.source.abs_path.clone(),
@@ -620,7 +630,10 @@ impl<'a> Applier<'a> {
                     path: link.abs_path.clone(),
                     stash: PathBuf::new(),
                 })?;
-                let stash_path = fsops::stash(&link.abs_path, &short_id(&run.apply_id))?;
+                let stash_path = match fsops::stash(&link.abs_path, &short_id(&run.apply_id)) {
+                    Ok(p) => p,
+                    Err(e) => return Err(self.failed(entry, e)),
+                };
                 let entry = JournalEntry {
                     step: JournalStep::StashOriginal {
                         path: link.abs_path.clone(),
@@ -659,9 +672,9 @@ impl<'a> Applier<'a> {
                     size_bytes: link.size_bytes,
                     mtime_nanos: Some(link.mtime_nanos),
                 })?;
-                std::fs::remove_file(&stash_path).map_err(|e| {
-                    VaultError::from_io(&e, &stash_path, "removing the duplicate")
-                })?;
+                if let Err(e) = std::fs::remove_file(&stash_path) {
+                    return Err(self.failed(entry, VaultError::from_io(&e, &stash_path, "removing the duplicate")));
+                }
                 done.push(self.finish(run, entry)?);
                 run.bytes_freed += link.size_bytes;
             }
@@ -827,8 +840,28 @@ impl<'a> Applier<'a> {
             link: link.to_path_buf(),
             target: target.to_path_buf(),
         })?;
-        self.platform.create_file_symlink(link, target)?;
+        if let Err(e) = self.platform.create_file_symlink(link, target) {
+            return Err(self.failed(entry, e));
+        }
         self.finish(run, entry)
+    }
+
+    /// Closes a step whose operation failed before it changed anything, and
+    /// hands the error back.
+    ///
+    /// Left pending, such a step outlived its group: an undo later took it
+    /// for a step that had happened, and a later run was told this run owned
+    /// its path. If the journal cannot be written the step stays pending, and
+    /// every undo reads the disk before it acts, so that is still safe.
+    fn failed(&self, entry: JournalEntry, e: VaultError) -> VaultError {
+        let closed = JournalEntry {
+            state: JournalState::Failed,
+            finished_at: Some(Timestamp::now()),
+            error: Some(e.message.clone()),
+            ..entry
+        };
+        let _ = self.store.update_journal(&closed);
+        e
     }
 
     // -- undo -------------------------------------------------------------
@@ -879,7 +912,7 @@ impl<'a> Applier<'a> {
                 fsops::remove_dir_if_empty(path)?;
                 Ok(())
             }
-            JournalStep::MoveToVault { from, to, sha256, .. } => {
+            JournalStep::MoveToVault { from, to, sha256, size_bytes, .. } => {
                 // A real file, not merely something. The link that stands in
                 // for the moved file is left there until the file replaces
                 // it, and counting that link as "the source is intact" would
@@ -906,13 +939,27 @@ impl<'a> Applier<'a> {
                         fsops::move_back(self.platform, to, from, sha256, cancel, copied)?;
                         Ok(())
                     }
-                    // The move never happened, or a copy was interrupted before
-                    // the source was removed. Either way the source is intact,
-                    // so the vault copy is the thing to drop.
+                    // A real file at both places. The vault file is dropped
+                    // only when both hold this step's bytes, which is the one
+                    // case this branch is for: a copy cut off before the
+                    // source was removed.
+                    //
+                    // Anything else is not that. A different file at the
+                    // source's place means the move happened and something
+                    // replaced its link since, so the vault file is the only
+                    // copy of the model. A different file at the vault path
+                    // means the move never happened and that file is someone
+                    // else's. Deleting on "some file is there" lost the only
+                    // copy of a model and reported success.
                     (true, true) => {
-                        std::fs::remove_file(to).map_err(|e| {
-                            VaultError::from_io(&e, to, "removing the copy made in the vault")
-                        })?;
+                        if !holds(from, sha256, *size_bytes, cancel)? {
+                            return Err(kept_copy_conflict(from, to));
+                        }
+                        if holds(to, sha256, *size_bytes, cancel)? {
+                            std::fs::remove_file(to).map_err(|e| {
+                                VaultError::from_io(&e, to, "removing the copy made in the vault")
+                            })?;
+                        }
                         Ok(())
                     }
                     (true, false) => Ok(()),
@@ -1120,6 +1167,19 @@ impl<'a> Applier<'a> {
             return Err(boundary::refusal(&refused));
         }
 
+        // A different file where a model was consolidated from stops the
+        // undo before it starts, so the preview says so and nothing is half
+        // undone around it. Only a real file there is read; a link costs
+        // nothing.
+        for e in &to_undo {
+            if let JournalStep::MoveToVault { from, to, sha256, size_bytes, .. } = &e.step {
+                let real_file = std::fs::symlink_metadata(from).map(|m| m.file_type().is_file()).unwrap_or(false);
+                if real_file && to.is_file() && !holds(from, sha256, *size_bytes, &CancelToken::new())? {
+                    return Err(kept_copy_conflict(from, to));
+                }
+            }
+        }
+
         // The contract promises this and nothing implemented it. Renaming a
         // model in the vault, or a later run touching the same files, leaves
         // this run's steps describing a world that no longer exists. Undoing
@@ -1234,7 +1294,7 @@ impl<'a> Applier<'a> {
                 continue;
             }
             for e in self.store.journal(&other)? {
-                if matches!(e.state, JournalState::Reverted | JournalState::Undone) {
+                if matches!(e.state, JournalState::Reverted | JournalState::Undone | JournalState::Failed) {
                     continue;
                 }
                 for p in step_paths_touched(&e.step) {
@@ -1548,6 +1608,29 @@ impl<'a> Applier<'a> {
             eta_ms: estimate_remaining_ms(elapsed_ms, run.bytes_moved, run.bytes_to_move),
         });
     }
+}
+
+/// Does the real file at `path` hold these bytes? The size is compared first,
+/// so a file that differs costs no read.
+fn holds(path: &Path, sha256: &str, size_bytes: u64, cancel: &CancelToken) -> Result<bool> {
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return Ok(false) };
+    if !meta.file_type().is_file() || meta.len() != size_bytes {
+        return Ok(false);
+    }
+    Ok(crate::scan::hash::hash_file_cancellable(path, cancel)?.eq_ignore_ascii_case(sha256))
+}
+
+/// The refusal when a different file sits where a model was consolidated from.
+fn kept_copy_conflict(place: &Path, vault_file: &Path) -> VaultError {
+    VaultError::conflict(
+        "A different file now sits where this model was, so the undo stopped. The model is kept in the vault. Move that file somewhere else, then undo again.",
+    )
+    .with_detail(format!(
+        "the file at {} is not this model; the model is at {}",
+        crate::paths::display_path(place),
+        crate::paths::display_path(vault_file)
+    ))
+    .with_path(place)
 }
 
 /// The paths a later step of an undo fills again with a file, by renaming it

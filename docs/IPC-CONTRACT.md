@@ -1371,6 +1371,13 @@ apply. The extra names a vault file carries are also removed, and not counted.
 
 The last update has `phase: 'finalizing'`, and then `revert:done` arrives.
 
+`revert_apply` and `preview_revert` reject with `conflict` when a different file
+now sits where a model was consolidated from, for example because a downloader
+replaced the link with a new version. The vault file is then the only copy of
+the model, and it is never deleted to make way. `detail` names both places.
+Moving the other file away and undoing again finishes the undo. Where the same
+bytes sit there, the undo goes ahead, and the vault file is the one dropped.
+
 `revert_apply` rejects with `conflict` when anything done later still uses the
 files this run created. Renaming a model in the vault with
 `set_canonical_name` is the common case. `detail` lists the paths in the way.

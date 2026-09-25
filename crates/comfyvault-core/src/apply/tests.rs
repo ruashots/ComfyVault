@@ -2432,3 +2432,115 @@ fn a_run_over_every_kind_of_model_folder_can_still_be_undone() {
         assert_eq!(std::fs::read(p).unwrap(), weights("c"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// An undo proves what it deletes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_undo_keeps_the_only_copy_when_a_different_file_replaced_its_link() {
+    // A downloader updates a model by renaming a new file onto its path,
+    // which replaces the link. The undo used to see "a file is there", take
+    // the vault file for a leftover copy, delete it, and report success.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/only.safetensors", &weights("v1"));
+    let plan = w.plan(&[a]);
+    run_apply(&w, &plan);
+    let vault_file = w.vault_root.join("loras/only.safetensors");
+
+    let tmp = p.with_extension("download");
+    std::fs::write(&tmp, weights("v2")).unwrap();
+    std::fs::rename(&tmp, &p).unwrap();
+
+    let err = applier(&w).preview_revert("ap-1").unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict, "the preview must say the undo cannot go ahead");
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(err.detail.as_deref().unwrap().contains("only.safetensors"));
+    assert_eq!(std::fs::read(&vault_file).unwrap(), weights("v1"), "the only copy of the model is gone");
+    assert_eq!(std::fs::read(&p).unwrap(), weights("v2"), "the new file was touched");
+    assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::Completed);
+}
+
+#[test]
+fn an_undo_whose_kept_copy_came_back_the_same_drops_the_vault_file() {
+    // The same bytes at the old place: the model is safe there, and the vault
+    // file is the one to drop.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a]);
+    run_apply(&w, &plan);
+    std::fs::remove_file(&p).unwrap();
+    std::fs::write(&p, weights("m")).unwrap();
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(std::fs::read(&p).unwrap(), weights("m"));
+    assert!(!w.vault_root.join("loras/m.safetensors").exists());
+}
+
+#[test]
+fn a_move_refused_because_the_vault_path_was_taken_leaves_nothing_to_undo_there() {
+    // A file landed at the vault path after the plan was made. The move was
+    // refused, but its journal step stayed pending, and the undo later took it
+    // for a move that happened and deleted that file.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/a.safetensors", &weights("y"));
+    w.write_model(&a, "models/loras/z.safetensors", &weights("z"));
+    let plan = w.plan(&[a]);
+    let squatter = w.write_file("ComfyVault/loras/a.safetensors", b"someone else's only copy");
+
+    let record = run_apply(&w, &plan);
+    assert_eq!(record.state, ApplyState::CompletedWithErrors);
+    let journal = w.store.journal("ap-1").unwrap();
+    assert!(journal.iter().all(|e| e.state != JournalState::Pending), "a refused step was left pending");
+    assert!(journal.iter().any(|e| e.state == JournalState::Failed));
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(std::fs::read(&squatter).unwrap(), b"someone else's only copy");
+}
+
+#[test]
+fn two_runs_from_plans_made_before_either_can_both_be_undone() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/a.safetensors", &weights("x"));
+    w.write_model(&b, "models/loras/a.safetensors", &weights("y"));
+    w.write_model(&b, "models/loras/z.safetensors", &weights("z"));
+    let p1 = w.plan(&[a]);
+    let p2 = w.plan(&[b]);
+    applier(&w).apply("ap-1", &p1, &request(&p1), &CancelToken::new(), &NullSink).unwrap();
+    let second = applier(&w).apply("ap-2", &p2, &request(&p2), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(second.groups_failed, 1, "the second run's move onto the taken name is refused");
+
+    applier(&w).revert("ap-2", &CancelToken::new(), &NullSink).unwrap();
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+}
+
+#[test]
+fn a_recovery_keeps_the_only_copy_when_a_different_file_replaced_its_link() {
+    // The same proof holds when a cut-off group is rolled back before a
+    // recovery finishes the run.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+    let source = plan.groups[0].source.abs_path.clone();
+    let vault_file = w.vault_root.join(&plan.groups[0].vault_rel_path);
+    // Cut off after the source's link: the rest of the group is unconfirmed.
+    simulate_crash_after(&w, "ap-1", 3);
+    std::fs::remove_file(&source).unwrap();
+    std::fs::write(&source, weights("other")).unwrap();
+
+    let err = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(std::fs::read(&vault_file).unwrap(), weights("m"), "the only copy of the model is gone");
+    assert_eq!(std::fs::read(&source).unwrap(), weights("other"));
+    let _ = (pa, pb);
+}
