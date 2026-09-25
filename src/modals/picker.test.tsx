@@ -148,6 +148,44 @@ describe("choosing the vault folder", () => {
   });
 });
 
+describe("a vault folder that already holds files", () => {
+  async function pickDocuments() {
+    const h = await mountPicker((x) => openVaultPicker(x.app));
+    await openDrive();
+    await userEvent.click(expander("Users"));
+    await waitFor(() => screen.queryAllByRole("button", { name: /Open alex/ }).length > 0);
+    await userEvent.click(expander("alex"));
+    await waitFor(() => screen.queryAllByRole("button", { name: /Documents/ }).length > 0);
+    await userEvent.click(node("Documents"));
+    await waitFor(() => verdict()?.classList.contains("ok") === true);
+    await userEvent.click(button("Use this folder"));
+    await waitFor(() => document.querySelector('.verdict.no[role="alert"]') !== null);
+    return h;
+  }
+
+  it("says why in the picker, and points at New folder as the way out", async () => {
+    const h = await pickDocuments();
+    const alert = document.querySelector('.verdict.no[role="alert"]')!;
+    expect(alert.textContent).toContain(
+      "That folder already holds files, so it cannot become the vault. Choose an empty folder, or make a new one.",
+    );
+    expect(alert.textContent).toContain("New folder, below, makes an empty one inside Documents.");
+    // Nothing beside it still says the folder is fine.
+    expect(document.querySelector(".verdict.ok")).toBeNull();
+    // The next step is the primary button now, not the one that was refused.
+    expect(button("New folder").classList.contains("pri")).toBe(true);
+    expect(button("Use this folder").classList.contains("pri")).toBe(false);
+    expect(h.app.hasVault()).toBe(true);
+  });
+
+  it("drops the refusal once another folder is picked", async () => {
+    await pickDocuments();
+    await userEvent.click(node("Downloads"));
+    await waitFor(() => document.querySelector('.verdict.no[role="alert"]') === null);
+    expect(button("New folder").classList.contains("pri")).toBe(false);
+  });
+});
+
 describe("placing a link", () => {
   it("refuses a folder outside every install", async () => {
     const h = await mountPicker(async (x) => {

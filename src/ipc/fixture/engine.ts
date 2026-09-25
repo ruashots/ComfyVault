@@ -101,6 +101,8 @@ interface FakeFolder {
   path: string;
   children: string[];
   readable?: boolean;
+  /** It holds files as well as the folders listed, which the picker never lists. */
+  hasFiles?: boolean;
 }
 
 function installTree(root: string): FakeFolder[] {
@@ -159,7 +161,7 @@ const DISK: FakeFolder[] = [
   { path: "C:\\Users", children: ["C:\\Users\\alex"] },
   { path: "C:\\Users\\alex", children: ["C:\\Users\\alex\\Downloads", "C:\\Users\\alex\\Documents"] },
   { path: "C:\\Users\\alex\\Downloads", children: [] },
-  { path: "C:\\Users\\alex\\Documents", children: [] },
+  { path: "C:\\Users\\alex\\Documents", children: [], hasFiles: true },
   { path: "D:\\", children: ["D:\\ai-models", "D:\\ComfyUI-Backup"] },
   { path: "E:\\", children: ["E:\\Backups"] },
   { path: "E:\\Backups", children: [] },
@@ -360,7 +362,22 @@ export class FixtureEngine implements Engine {
     };
   }
 
+  /**
+   * Measured against the real engine: an empty folder, a folder not made yet
+   * and an existing vault are accepted. A folder that holds files, or only
+   * folders, is refused with conflict, and nothing in it changes.
+   */
   async selectVault(path: string): Promise<VaultInfo> {
+    const folder = this.disk.find((f) => f.path.toLowerCase() === path.toLowerCase());
+    const isVault = path.toLowerCase() === VAULT_ROOT.toLowerCase();
+    if (folder && !isVault && (folder.hasFiles === true || folder.children.length > 0)) {
+      throw {
+        code: "conflict",
+        message:
+          "That folder already holds files, so it cannot become the vault. Choose an empty folder, or make a new one.",
+        path,
+      } satisfies VaultError;
+    }
     this.vaultOpen = true;
     const stored = [...this.world.vault.keys()].reduce(
       (sum, sha) =>

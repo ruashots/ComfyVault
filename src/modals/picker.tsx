@@ -17,7 +17,7 @@ import {
   type PickerPurpose,
   type TreeNode,
 } from "~/state/store";
-import type { DirectoryEntry, InstallCandidate } from "~/ipc/contract";
+import { isVaultError, type DirectoryEntry, type InstallCandidate } from "~/ipc/contract";
 
 // ── opening one ─────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ async function openPicker(
     sha256: extra.sha256 ?? null,
     replacing: extra.replacing ?? null,
     error: null,
+    folderHasFiles: false,
   });
 }
 
@@ -168,6 +169,9 @@ export function PickerModalView() {
     app.patchModal((m) => {
       if (m.kind !== "picker") return;
       m.picked = node.path;
+      // A new pick is the person acting on the last answer, so it goes.
+      m.error = null;
+      m.folderHasFiles = false;
       m.candidate = null;
       m.checking = current.purpose === "install";
       m.newFolder = null;
@@ -356,8 +360,15 @@ export function PickerModalView() {
       const message = messageOf(failure);
       // It stays in the modal, where the button they pressed is. A toast can
       // be missed, and this is the answer to something they just did.
+      // Measured against the real engine: a folder that already holds files,
+      // or only folders, is refused as the vault with conflict, and nothing in
+      // it changes. An empty folder and one not made yet are accepted.
+      const hasFiles =
+        current.purpose === "vault" && isVaultError(failure) && failure.code === "conflict";
       app.patchModal((m) => {
-        if (m.kind === "picker") m.error = message;
+        if (m.kind !== "picker") return;
+        m.error = message;
+        m.folderHasFiles = hasFiles;
       });
       app.actions.showToast(message, "bad");
     } finally {
@@ -571,7 +582,9 @@ export function PickerModalView() {
                   <p>ComfyVault is reading that folder.</p>
                 </div>
               </Show>
-              <Show when={verdict()}>
+              {/* The engine's refusal outranks the drive check: a green "same
+                  drive" beside "cannot become the vault" says two things. */}
+              <Show when={!current().folderHasFiles ? verdict() : null}>
                 {(v) => (
                   <div
                     class="verdict"
@@ -612,6 +625,14 @@ export function PickerModalView() {
                       That did not happen
                     </h4>
                     <p>{message()}</p>
+                    <Show when={current().folderHasFiles && current().picked}>
+                      {(picked) => (
+                        <p>
+                          New folder, below, makes an empty one inside{" "}
+                          {leafOf(picked()) || picked()}.
+                        </p>
+                      )}
+                    </Show>
                   </div>
                 )}
               </Show>
@@ -619,6 +640,7 @@ export function PickerModalView() {
             <div class="mf">
               <button
                 class="btn"
+                classList={{ pri: current().folderHasFiles }}
                 disabled={!canCreateFolder()}
                 title={
                   deadDrive()
@@ -643,7 +665,10 @@ export function PickerModalView() {
               </button>
               <button
                 class="btn"
-                classList={{ dng: verdict()?.warn === true, pri: verdict()?.warn !== true }}
+                classList={{
+                  dng: verdict()?.warn === true,
+                  pri: verdict()?.warn !== true && !current().folderHasFiles,
+                }}
                 disabled={!canConfirm()}
                 onClick={() => void confirm()}
               >

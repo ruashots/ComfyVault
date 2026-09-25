@@ -124,6 +124,11 @@ export interface PickerModal {
    * something they just pressed is not allowed to go by unnoticed.
    */
   error: string | null;
+  /**
+   * The engine refused the picked folder as the vault because it already
+   * holds files. The way out is a new folder, so the picker points there.
+   */
+  folderHasFiles: boolean;
 }
 
 export type ConfirmLine = ReadonlyArray<{ text: string; emph?: boolean }>;
