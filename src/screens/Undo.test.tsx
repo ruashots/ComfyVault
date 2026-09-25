@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import { costLine } from "~/screens/ApplyDone";
+import { costLine } from "~/modals/undo";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;

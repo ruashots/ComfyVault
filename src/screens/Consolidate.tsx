@@ -15,6 +15,7 @@ import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
 import { ApplyDone } from "~/screens/ApplyDone";
+import { openUndoBox } from "~/modals/undo";
 import type { BlockedRow, PlanGroup } from "~/ipc/contract";
 
 export function ConsolidateScreen() {
@@ -640,13 +641,7 @@ function BlockerPanel() {
                           <button
                             class="btn sm dng"
                             onClick={() =>
-                              void app.actions.run(
-                                () =>
-                                  app.engine.revertApply(
-                                    stopped().applies[0]!.applyId,
-                                  ),
-                                "Put back where it started",
-                              )
+                              void openUndoBox(app, stopped().applies[0]!.applyId)
                             }
                           >
                             Undo it
