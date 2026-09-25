@@ -234,6 +234,13 @@ export class FixtureEngine implements Engine {
    * compressed model occupies far less than its size, and so does its copy.
    */
   private revertRoomBytes: number | null = null;
+  /** Set by `devCutOffApply`: the next tick ends the run where it is. */
+  private cuttingOff = false;
+  /** Runs cut off part way, with what they did and what they still owe. */
+  private cutOffRuns = new Map<
+    string,
+    { done: PlanGroup[]; pending: PlanGroup[]; freeBefore: number }
+  >();
   /** How many of each run's undo steps are done, kept across a stopped undo. */
   private revertStepsDone = new Map<string, number>();
   /** The groups each run finished, which are what undoing it puts back. */
@@ -341,7 +348,7 @@ export class FixtureEngine implements Engine {
       lastScanId: this.lastScan?.scanId ?? null,
       lastPlanId: [...this.plans.keys()].at(-1) ?? null,
       interruptedApplies: this.applies
-        .filter((a) => a.state === "interrupted")
+        .filter((a) => a.state === "running" && this.busy?.id !== a.applyId)
         .map((a) => a.applyId),
       busy: this.busy,
     };
@@ -763,6 +770,39 @@ export class FixtureEngine implements Engine {
     let elapsed = 0;
 
     const step = () => {
+      // The process ends where the run is: nothing more is committed, and the
+      // record is left as it was written when the run started.
+      if (this.cuttingOff) {
+        this.cuttingOff = false;
+        this.stopApplyTimer();
+        this.busy = null;
+        const done = groups.slice(0, reached).filter((_, i) => i !== changesAt);
+        this.cutOffRuns.set(applyId, { done, pending: groups.slice(reached), freeBefore });
+        this.applies = [
+          {
+            applyId,
+            planId: args.planId,
+            groupIds: args.groupIds,
+            state: "running",
+            startedAt: new Date(started).toISOString(),
+            finishedAt: null,
+            groupsRequested: groups.length,
+            groupsApplied: done.length,
+            groupsFailed: 0,
+            bytesFreed: done.reduce((sum, g) => sum + g.bytesFreed, 0),
+            vaultFreeBytesBefore: freeBefore,
+            vaultFreeBytesAfter: null,
+            filesMoved: done.length,
+            linksCreated: done.reduce((sum, g) => sum + g.occurrences, 0),
+            failures: [],
+            revertible: true,
+            lastUndoStepAt: null,
+          },
+          ...this.applies,
+        ];
+        this.appliedGroups.set(applyId, done);
+        return;
+      }
       elapsed += TICK_MS;
       // A cancel stops where the run is. The group it was part way through is
       // undone, which here means it is simply never committed, and no group
@@ -842,6 +882,7 @@ export class FixtureEngine implements Engine {
               ]
             : [],
           revertible: true,
+          lastUndoStepAt: null,
         };
         this.applies = [result, ...this.applies];
         this.appliedGroups.set(applyId, done);
@@ -922,8 +963,10 @@ export class FixtureEngine implements Engine {
 
   async getInterruptedApplies(): Promise<InterruptedApply[]> {
     this.requireVault();
+    // Measured against the real engine: a run cut off comes back as state
+    // "running", and that is what it lists here.
     return this.applies
-      .filter((a) => a.state === "interrupted")
+      .filter((a) => a.state === "running" && this.busy?.id !== a.applyId)
       .map((a) => ({
         applyId: a.applyId,
         planId: a.planId,
@@ -937,8 +980,66 @@ export class FixtureEngine implements Engine {
   }
 
   async resumeApply(applyId: string): Promise<{ applyId: string }> {
+    this.requireVault();
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
+    const cut = this.cutOffRuns.get(applyId);
+    if (!cut) throw error("notFound", "That run is not waiting to be finished.");
+    this.busy = { kind: "apply", id: applyId };
+    let reached = 0;
+    const step = () => {
+      const group = cut.pending[reached];
+      if (group) {
+        this.commitGroup(group);
+        reached += 1;
+      }
+      const all = [...cut.done, ...cut.pending.slice(0, reached)];
+      const finished = reached >= cut.pending.length;
+      this.applyProgressEvent.emit({
+        applyId,
+        phase: finished ? "finalizing" : "applying",
+        groupIndex: reached,
+        groupTotal: cut.pending.length,
+        currentGroupId: cut.pending[reached]?.groupId ?? null,
+        currentPath: cut.pending[reached]?.source.absPath ?? null,
+        step: "moving",
+        bytesMoved: 0,
+        bytesToMove: 0,
+        bytesFreed: all.reduce((sum, g) => sum + g.bytesFreed, 0),
+        filesMoved: all.length,
+        linksCreated: all.reduce((sum, g) => sum + g.occurrences, 0),
+        failures: 0,
+        elapsedMs: reached * TICK_MS,
+        etaMs: null,
+      });
+      if (!finished) return;
+      this.stopApplyTimer();
+      this.busy = null;
+      this.cutOffRuns.delete(applyId);
+      this.appliedGroups.set(applyId, all);
+      // The contract: a resumed run continues the same journal as one run, so
+      // its record describes the whole run.
+      this.applies = this.applies.map((a) =>
+        a.applyId === applyId
+          ? {
+              ...a,
+              state: "completed" as const,
+              finishedAt: this.stamp(),
+              groupsApplied: all.length,
+              filesMoved: all.length,
+              linksCreated: all.reduce((sum, g) => sum + g.occurrences, 0),
+              bytesFreed: all.reduce((sum, g) => sum + g.bytesFreed, 0),
+              vaultFreeBytesAfter: this.world.freeBytes,
+            }
+          : a,
+      );
+      const record = this.applies.find((a) => a.applyId === applyId);
+      if (record) this.applyDoneEvent.emit(record);
+    };
+    this.tick = step;
+    if (!this.manual) this.applyTimer = setInterval(step, this.tickMs);
     return { applyId };
   }
+
 
   /** Why an undo would refuse before it starts, or null when it would not. */
   private revertRefusal(): VaultError | null {
@@ -1050,6 +1151,11 @@ export class FixtureEngine implements Engine {
     let elapsed = 0;
 
     const complete = (st: Step) => {
+      // Written before each step, the way the engine writes it.
+      const at = this.stamp();
+      this.applies = this.applies.map((a) =>
+        a.applyId === applyId ? { ...a, lastUndoStepAt: at } : a,
+      );
       index += 1;
       this.revertStepsDone.set(applyId, (this.revertStepsDone.get(applyId) ?? 0) + 1);
       intoStep = 0;
@@ -1526,6 +1632,16 @@ export class FixtureEngine implements Engine {
       step();
     }
     throw new Error(`devFinish: still running after ${limit} steps`);
+  }
+
+  /**
+   * The process is cut off in the middle of the running apply, the way a crash
+   * or a closed app ends it: the run stays on record as `running`.
+   */
+  devCutOffApply(): void {
+    if (this.busy?.kind !== "apply") throw new Error("devCutOffApply: no run is going");
+    this.cuttingOff = true;
+    this.tick?.();
   }
 
   /** The copies an undo makes occupy this much, as sparse files would. */

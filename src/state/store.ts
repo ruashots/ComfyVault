@@ -165,6 +165,15 @@ export interface AppStore {
   readonly danglingLinks: Accessor<readonly LinkRecord[]>;
   readonly running: Accessor<readonly RunningComfy[]>;
   readonly interrupted: Accessor<readonly InterruptedApply[]>;
+  /**
+   * The last run, when it was cut off and nothing is running it now.
+   *
+   * Measured against the real engine: a run cut off by a crash comes back as
+   * state `running`, and `getInterruptedApplies` lists it. Shown as finished,
+   * it read "undefined" in its header and offered only Undo, so the promise that
+   * a run cut off can be finished had no door.
+   */
+  readonly cutOffRun: Accessor<InterruptedApply | null>;
   readonly lastApply: Accessor<ApplyRecord | null>;
   /**
    * The plan the last run actually applied, as the engine stored it.
@@ -186,7 +195,8 @@ export interface AppStore {
    */
   readonly scanPredatesRun: Accessor<boolean>;
   /**
-   * The last scan was taken before a run was undone.
+   * The last scan was taken before an undo touched the disk, whether that undo
+   * finished or stopped part way.
    *
    * Measured against the real engine: an undo does not scan either. When the
    * last scan was taken after the run, a plan built from it after the undo
@@ -306,16 +316,23 @@ export function detailOf(error: unknown): readonly string[] {
 }
 
 /**
- * When the most recent undo finished. The engine stamps `finishedAt` again
- * when it undoes a run, so on a reverted record it is the time of the undo.
+ * When an undo last touched the disk, on any run.
+ *
+ * `lastUndoStepAt` is written before every undo step, so it covers an undo
+ * that stopped part way as well as one that finished. A reverted record from
+ * an older build has none, and there the undo's own finish time stands in:
+ * the engine stamps `finishedAt` again when it undoes a run.
+ *
+ * Measured against the real engine, in the person's order (run, scan, undo,
+ * stop): the scan finished at .376, the undo's last step began at .388, so the
+ * scan is out of date. A scan after the stop finished at .681 and is current.
  */
 function latestUndo(applies: readonly ApplyRecord[]): string | null {
   let latest: string | null = null;
   for (const a of applies) {
-    if (a.state !== "reverted" || a.finishedAt === null) continue;
-    if (latest === null || Date.parse(a.finishedAt) > Date.parse(latest)) {
-      latest = a.finishedAt;
-    }
+    const at = a.lastUndoStepAt ?? (a.state === "reverted" ? a.finishedAt : null);
+    if (at === null) continue;
+    if (latest === null || Date.parse(at) > Date.parse(latest)) latest = at;
   }
   return latest;
 }
@@ -350,6 +367,11 @@ export function createAppStore(engine: Engine): AppStore {
   });
   /** When the most recent undo finished, as the engine recorded it. */
   const [lastUndoneAt, setLastUndoneAt] = createSignal<string | null>(null);
+  const cutOffRun = createMemo(() => {
+    const run = lastApply();
+    if (!run || appState()?.busy?.id === run.applyId) return null;
+    return interrupted().find((i) => i.applyId === run.applyId) ?? null;
+  });
   const scanPredatesUndo = createMemo(() => overtakenByUndo(lastUndoneAt(), scan()));
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
@@ -724,6 +746,7 @@ export function createAppStore(engine: Engine): AppStore {
     danglingLinks,
     running,
     interrupted,
+    cutOffRun,
     lastApply,
     appliedPlan,
     scanPredatesRun,

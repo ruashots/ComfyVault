@@ -555,6 +555,12 @@ export interface ApplyFailure {
 }
 
 export type ApplyState =
+  /**
+   * Written as a run starts. A run still in this state when nothing is running
+   * was cut off, by a crash or a closed app, and the engine lists it in
+   * `getInterruptedApplies` to be finished or undone.
+   */
+  | "running"
   | "completed"
   | "completedWithErrors"
   | "cancelled"
@@ -594,6 +600,12 @@ export interface ApplyRecord {
   linksCreated: number;
   failures: ApplyFailure[];
   revertible: boolean;
+  /**
+   * When an undo last began a step on this run, including an undo that was
+   * stopped, failed or cut off. Null when nothing was ever undone, and on a
+   * record from an older build. A scan that finished before it is out of date.
+   */
+  lastUndoStepAt: string | null;
 }
 
 export interface InterruptedApply {

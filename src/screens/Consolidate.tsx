@@ -15,7 +15,7 @@ import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
 import { ApplyDone } from "~/screens/ApplyDone";
-import { openUndoBox } from "~/modals/undo";
+import { RunCutOff } from "~/screens/RunCutOff";
 import { UndoStopped } from "~/screens/UndoStopped";
 import type { BlockedRow, PlanGroup } from "~/ipc/contract";
 
@@ -45,10 +45,17 @@ export function ConsolidateScreen() {
           when={!app.lastApply()}
           fallback={
             <Show
-              when={app.lastApply()!.state === "partlyReverted"}
-              fallback={<ApplyDone />}
+              when={app.cutOffRun()}
+              fallback={
+                <Show
+                  when={app.lastApply()!.state === "partlyReverted"}
+                  fallback={<ApplyDone />}
+                >
+                  <UndoStopped />
+                </Show>
+              }
             >
-              <UndoStopped />
+              {(run) => <RunCutOff run={run()} />}
             </Show>
           }
         >
@@ -620,49 +627,7 @@ function BlockerPanel() {
           <Show
             when={blocker.kind === "symlinks_unsupported" ? blocker : null}
             fallback={
-              <Show
-                when={blocker.kind === "comfy_running" ? blocker : null}
-                fallback={
-                  <Show when={blocker.kind === "interrupted_apply" ? blocker : null}>
-                    {(stopped) => (
-                      <div class="blkrow">
-                        <div class="bl">
-                          <div class="bt">A run stopped part way through</div>
-                          <div class="bd">
-                            {stopped().applies[0]?.description}{" "}
-                            {stopped().applies[0]?.stepsPending} steps are still
-                            waiting. Nothing else can start until this is settled.
-                          </div>
-                        </div>
-                        <div class="ba">
-                          <button
-                            class="btn sm pri"
-                            onClick={() =>
-                              void app.actions.run(
-                                () =>
-                                  app.engine.resumeApply(
-                                    stopped().applies[0]!.applyId,
-                                  ),
-                                "Finishing where it stopped",
-                              )
-                            }
-                          >
-                            Finish it
-                          </button>
-                          <button
-                            class="btn sm dng"
-                            onClick={() =>
-                              void openUndoBox(app, stopped().applies[0]!.applyId)
-                            }
-                          >
-                            Undo it
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </Show>
-                }
-              >
+              <Show when={blocker.kind === "comfy_running" ? blocker : null}>
                 {(comfy) => (
                   <div class="blkrow">
                     <div class="bl">

@@ -122,6 +122,9 @@ export function Rail() {
       return <div class="rail-sub">putting files back</div>;
     }
     const run = app.lastApply();
+    if (app.cutOffRun()) {
+      return <div class="rail-sub">a run stopped part way</div>;
+    }
     if (run?.state === "partlyReverted") {
       return <div class="rail-sub">undo stopped part way</div>;
     }

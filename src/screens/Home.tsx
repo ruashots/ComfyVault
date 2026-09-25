@@ -320,6 +320,20 @@ function HomeReport() {
                   />
                 </div>
 
+                <Show when={app.cutOffRun()}>
+                  <div class="hero">
+                    <div class="txt">
+                      <div class="l1">A run stopped part way through.</div>
+                      <div class="l2">
+                        It can be finished or undone. Nothing else can start until
+                        it is settled.
+                      </div>
+                    </div>
+                    <button class="btn" onClick={() => app.actions.go("consolidate")}>
+                      Finish it or undo it
+                    </button>
+                  </div>
+                </Show>
                 <Show when={run()?.state === "partlyReverted"}>
                   <div class="hero">
                     <div class="txt">
@@ -336,7 +350,7 @@ function HomeReport() {
                   </div>
                 </Show>
                 <Show
-                  when={run()?.state !== "partlyReverted" && run()}
+                  when={!app.cutOffRun() && run()?.state !== "partlyReverted" && run()}
                   fallback={
                     <Show when={!run()}>
                       <PlanHero afterFree={afterFree()} />

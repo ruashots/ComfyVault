@@ -10,6 +10,7 @@ import type { ApplyState } from "~/ipc/contract";
 import { useApp } from "~/state/store";
 
 const HOW_IT_ENDED: Record<ApplyState, string> = {
+  running: "cut off part way",
   completed: "finished",
   completedWithErrors: "finished, with some files left alone",
   cancelled: "stopped when you asked",

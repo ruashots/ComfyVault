@@ -316,3 +316,49 @@ describe("an undo stopped part way", () => {
     expect(text()).not.toContain("copies are now links");
   });
 });
+
+describe("the figures after an undo that stopped part way", () => {
+  it("are out of date when the scan came after the run and before the stop", async () => {
+    const engine = new FixtureEngine({ manual: true });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const h = await renderWithApp(() => <App />, { engine });
+    harness = h;
+    await waitFor(() => h.app.plan() !== null);
+    h.app.actions.go("consolidate");
+    await waitFor(() => h.app.gate().can);
+    await userEvent.click(
+      screen.getAllByRole("button").find((b) => /^Apply/.test(b.textContent ?? ""))!,
+    );
+    engine.devFinish();
+    await waitFor(() => h.app.lastApply() !== null && h.app.applyProgress() === null);
+
+    // The person's order: a scan after the run, then the undo, then a stop.
+    await engine.startScan();
+    engine.devFinish();
+    await h.app.actions.refresh();
+    await waitFor(() => !h.app.scanPredatesRun());
+    expect(h.app.scanPredatesUndo()).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /Undo this run/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Undo the run/ }));
+    await waitFor(() => document.querySelector('[role="dialog"]') === null);
+    await advance(h, 40);
+    await userEvent.click(screen.getByRole("button", { name: /Stop now/ }));
+    engine.devAdvance(1);
+    await waitFor(() => h.app.revertProgress() === null);
+    await waitFor(() => h.app.lastApply()?.lastUndoStepAt != null);
+    expect(h.app.lastApply()!.state).toBe("partlyReverted");
+    await waitFor(() => h.app.scanPredatesUndo());
+    h.app.actions.go("home");
+    await waitFor(() => text().includes("Instances"));
+    expect(text()).toContain("not scanned since the undo");
+
+    // A scan after the stop is current again.
+    await engine.startScan();
+    engine.devFinish();
+    await h.app.actions.refresh();
+    await waitFor(() => !h.app.scanPredatesUndo());
+    expect(text()).not.toContain("not scanned since the undo");
+  });
+});
