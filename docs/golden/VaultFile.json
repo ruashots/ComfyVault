@@ -34,7 +34,26 @@
     "nsfwLevel": 0,
     "pageUrl": "https://civitai.com/models/58390",
     "previewImageUrls": [
-      "https://image.civitai.com/preview/58390.jpeg"
+      "https://image.civitai.com/preview/58390-a.jpeg",
+      "https://image.civitai.com/preview/58390-b.jpeg",
+      "https://image.civitai.com/preview/58390-c.jpeg"
+    ],
+    "previewImages": [
+      {
+        "nsfwLevel": 2,
+        "type": "image",
+        "url": "https://image.civitai.com/preview/58390-a.jpeg"
+      },
+      {
+        "nsfwLevel": 1,
+        "type": "image",
+        "url": "https://image.civitai.com/preview/58390-b.jpeg"
+      },
+      {
+        "nsfwLevel": 8,
+        "type": "image",
+        "url": "https://image.civitai.com/preview/58390-c.jpeg"
+      }
     ],
     "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
     "source": "civitai",

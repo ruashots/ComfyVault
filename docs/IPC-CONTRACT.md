@@ -1823,9 +1823,22 @@ type ModelMetadata = {
   pageUrl: string | null
   downloadUrl: string | null
   previewImageUrls: string[]
+  previewImages: PreviewImage[]    // the same pictures, each with its own rating
   ambiguous: boolean               // the hash matched more than one model version
 }
+
+type PreviewImage = {
+  url: string
+  nsfwLevel: number                // Civitai's rating of this picture. 0: none sent
+  type: string                     // 'image' or 'video', as Civitai sends it. '': none sent
+}
 ```
+
+`previewImages` holds the pictures of `previewImageUrls`, in Civitai's order,
+each with the rating and kind Civitai gives it. Civitai rates every picture on
+its own, and a version whose own `nsfwLevel` is high can still show pictures
+that are fine for anyone. A picture Civitai sent without a URL is left out of
+both lists. An answer cached by an older build has an empty `previewImages`.
 
 ### 10.2 `fetch_metadata_batch`
 

@@ -39,9 +39,29 @@ pub struct ModelMetadata {
     pub page_url: Option<String>,
     pub download_url: Option<String>,
     pub preview_image_urls: Vec<String>,
+    /// The same pictures, in the same order, each with the rating and kind
+    /// Civitai gives it. Civitai rates every picture on its own: one version
+    /// can show pictures safe for anyone next to ones that are not, so the
+    /// version's own rating cannot choose a picture. A row cached by an older
+    /// build has none.
+    #[serde(default)]
+    pub preview_images: Vec<PreviewImage>,
     /// The hash matched more than one published model version, because people
     /// re-upload identical files under their own pages.
     pub ambiguous: bool,
+}
+
+/// One picture of a model version, as Civitai describes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewImage {
+    pub url: String,
+    /// Civitai's rating of this picture, as Civitai sends it. 0 when Civitai
+    /// sent none, which is not a rating.
+    pub nsfw_level: u32,
+    /// `image` or `video`, as Civitai sends it. Empty when Civitai sent none.
+    #[serde(rename = "type")]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +91,7 @@ impl ModelMetadata {
             page_url: None,
             download_url: None,
             preview_image_urls: Vec::new(),
+            preview_images: Vec::new(),
             ambiguous: false,
         }
     }

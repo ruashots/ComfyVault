@@ -204,6 +204,17 @@ fn convert(v: &ApiVersion, sha256: &str, ambiguous: bool) -> ModelMetadata {
             .or_else(|| v.download_url.clone())
             .and_then(|u| safe_download_url(&u)),
         preview_image_urls: v.images.iter().filter_map(|i| i.url.clone()).collect(),
+        preview_images: v
+            .images
+            .iter()
+            .filter_map(|i| {
+                Some(super::PreviewImage {
+                    url: i.url.clone()?,
+                    nsfw_level: i.nsfw_level.unwrap_or(0),
+                    kind: i.kind.clone().unwrap_or_default(),
+                })
+            })
+            .collect(),
         ambiguous,
     }
 }
@@ -289,6 +300,9 @@ pub struct ApiHashes {
 #[serde(rename_all = "camelCase")]
 pub struct ApiImage {
     pub url: Option<String>,
+    pub nsfw_level: Option<u32>,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
 }
 
 #[cfg(test)]

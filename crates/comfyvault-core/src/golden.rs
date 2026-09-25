@@ -178,7 +178,20 @@ fn metadata() -> ModelMetadata {
         civitai_version_id: Some(135_867),
         page_url: Some("https://civitai.com/models/58390".into()),
         download_url: Some("https://civitai.com/api/download/models/135867".into()),
-        preview_image_urls: vec!["https://image.civitai.com/preview/58390.jpeg".into()],
+        preview_image_urls: vec![
+            "https://image.civitai.com/preview/58390-a.jpeg".into(),
+            "https://image.civitai.com/preview/58390-b.jpeg".into(),
+            "https://image.civitai.com/preview/58390-c.jpeg".into(),
+        ],
+        // Rated one by one, as Civitai does: a PG-13, a PG, and one that is not.
+        preview_images: [(2, "a"), (1, "b"), (8, "c")]
+            .into_iter()
+            .map(|(level, n)| crate::metadata::PreviewImage {
+                url: format!("https://image.civitai.com/preview/58390-{n}.jpeg"),
+                nsfw_level: level,
+                kind: "image".into(),
+            })
+            .collect(),
         ambiguous: false,
     }
 }

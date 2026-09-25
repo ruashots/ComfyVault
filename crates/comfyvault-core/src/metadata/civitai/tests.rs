@@ -365,3 +365,38 @@ fn an_empty_batch_asks_nothing() {
     assert!(c.fetch_many(&[]).unwrap().is_empty());
     assert_eq!(server.request_count(), 0);
 }
+
+#[test]
+fn each_picture_keeps_its_own_rating_and_kind_in_civitais_order() {
+    // Civitai rates each picture on its own. Measured on the batch answer for
+    // DreamShaper 8: 2, 1, 1, 1, 1, 1, 8, 1, 1, 1, while the version says 11.
+    // A picture with no rating is kept with 0, which is not a rating.
+    let json = r#"{"id":1,"modelId":2,"files":[],"images":[
+        {"url":"https://image.civitai.com/a/1.jpeg","nsfwLevel":2,"type":"image"},
+        {"url":"https://image.civitai.com/a/2.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://image.civitai.com/a/3.mp4","nsfwLevel":8,"type":"video"},
+        {"url":"https://image.civitai.com/a/4.jpeg"},
+        {"nsfwLevel":1,"type":"image"}
+    ]}"#;
+    let m = convert(&parse_version(json), SHA_A, false);
+    let got: Vec<(&str, u32, &str)> =
+        m.preview_images.iter().map(|p| (p.url.as_str(), p.nsfw_level, p.kind.as_str())).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("https://image.civitai.com/a/1.jpeg", 2, "image"),
+            ("https://image.civitai.com/a/2.jpeg", 1, "image"),
+            ("https://image.civitai.com/a/3.mp4", 8, "video"),
+            ("https://image.civitai.com/a/4.jpeg", 0, ""),
+        ]
+    );
+    assert_eq!(m.preview_image_urls.len(), 4, "the plain list stays as it was");
+}
+
+#[test]
+fn a_cached_answer_from_an_older_build_reads_with_no_pictures_rated() {
+    let mut v = serde_json::to_value(crate::metadata::ModelMetadata::not_found(SHA_A)).unwrap();
+    v.as_object_mut().unwrap().remove("previewImages");
+    let m: crate::metadata::ModelMetadata = serde_json::from_value(v).unwrap();
+    assert!(m.preview_images.is_empty());
+}
