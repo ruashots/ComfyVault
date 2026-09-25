@@ -162,7 +162,12 @@ const DISK: FakeFolder[] = [
   { path: "C:\\Users\\alex", children: ["C:\\Users\\alex\\Downloads", "C:\\Users\\alex\\Documents"] },
   { path: "C:\\Users\\alex\\Downloads", children: [] },
   { path: "C:\\Users\\alex\\Documents", children: [], hasFiles: true },
-  { path: "D:\\", children: ["D:\\ai-models", "D:\\ComfyUI-Backup"] },
+  { path: "D:\\", children: ["D:\\AI", "D:\\ai-models", "D:\\ComfyUI-Backup"] },
+  // Three installs under one folder that is not an install itself.
+  { path: "D:\\AI", children: ["D:\\AI\\ComfyUI-Flux", "D:\\AI\\ComfyUI-SDXL", "D:\\AI\\ComfyUI-Video"] },
+  ...installTree("D:\\AI\\ComfyUI-Flux"),
+  ...installTree("D:\\AI\\ComfyUI-SDXL"),
+  ...installTree("D:\\AI\\ComfyUI-Video"),
   { path: "E:\\", children: ["E:\\Backups"] },
   { path: "E:\\Backups", children: [] },
   // Listed, because the operating system lists it. Opening it fails.
@@ -463,36 +468,63 @@ export class FixtureEngine implements Engine {
 
   // ── installs ──────────────────────────────────────────────────────────────
 
+  /**
+   * Measured against the real engine: the search goes three folders down,
+   * one level at a time with each level sorted, and never looks inside an
+   * install it found. The first becomes the root and the rest are the other
+   * candidates, whether or not any of them is registered already.
+   */
+  private findRoots(start: string): string[] {
+    const found: string[] = [];
+    let frontier = [start];
+    for (let depth = 0; depth <= 3 && frontier.length > 0; depth += 1) {
+      const next: string[] = [];
+      for (const dir of [...frontier].sort()) {
+        const folder = this.disk.find((f) => f.path === dir);
+        if (!folder || folder.readable === false) continue;
+        if (folder.children.some((c) => leafOf(c).toLowerCase() === "models")) {
+          found.push(dir);
+          continue;
+        }
+        next.push(...folder.children);
+      }
+      frontier = next;
+    }
+    return found;
+  }
+
   async validateInstallPath(path: string): Promise<InstallCandidate> {
     const folder = this.disk.find((f) => f.path === path);
     if (!folder || folder.readable === false) {
       return invalidCandidate("ComfyVault could not read that folder.");
     }
-    if (!folder.children.some((c) => leafOf(c).toLowerCase() === "models")) {
+    const roots = this.findRoots(path);
+    const root = roots[0];
+    if (!root) {
       return invalidCandidate("No models folder was found inside that folder.");
     }
     // An install this world already knows carries its real yaml, complaints
     // and all, so the picker shows what registering it will really read.
     const known = this.world.installs.find(
-      (i) => i.root.toLowerCase() === path.toLowerCase(),
+      (i) => i.root.toLowerCase() === root.toLowerCase(),
     );
-    const extraPaths = known?.extraPaths ?? YAML_ON_DISK[path] ?? [];
+    const extraPaths = known?.extraPaths ?? YAML_ON_DISK[root] ?? [];
     return {
       valid: true,
-      root: path,
-      nestedDepth: 0,
+      root,
+      nestedDepth: root.split("\\").filter(Boolean).length - path.split("\\").filter(Boolean).length,
       markersFound: [
         "main.py", "nodes.py", "folder_paths.py", "execution.py",
         "server.py", "comfy/", "comfy_extras/",
       ],
       markersMissing: [],
       contentCheckPassed: true,
-      otherCandidates: [],
+      otherCandidates: roots.slice(1),
       version: known?.version ?? "0.29.1",
       versionSource: known?.versionSource ?? "comfyui_version.py",
-      modelsDir: `${path}\\models`,
+      modelsDir: `${root}\\models`,
       modelsDirExists: true,
-      extraPathsFile: extraPaths.length > 0 ? `${path}\\extra_model_paths.yaml` : null,
+      extraPathsFile: extraPaths.length > 0 ? `${root}\\extra_model_paths.yaml` : null,
       extraPaths: extraPaths.filter((e) => !refusedCategory(e.rawCategory)),
       extraPathsProblems: extraPaths
         .filter((e) => refusedCategory(e.rawCategory))
@@ -513,18 +545,20 @@ export class FixtureEngine implements Engine {
   async registerInstall(path: string, label?: string): Promise<Install> {
     this.requireVault();
     const candidate = await this.validateInstallPath(path);
-    if (!candidate.valid) {
+    if (!candidate.valid || !candidate.root) {
       throw error("notAComfyInstall", candidate.reason ?? "Not a ComfyUI install.");
     }
-    if (this.world.installs.some((i) => i.root.toLowerCase() === path.toLowerCase())) {
-      throw error("alreadyRegistered", "This install is registered already.");
+    const root = candidate.root;
+    if (this.world.installs.some((i) => i.root.toLowerCase() === root.toLowerCase())) {
+      throw error("alreadyRegistered", "That install is already in the list.");
     }
     const install: Install = {
-      id: leafOf(path).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      label: label ?? (leafOf(path).replace(/^ComfyUI-?/i, "") || leafOf(path)),
+      id: leafOf(root).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      // The engine names an install after its folder, as it is.
+      label: label ?? leafOf(root),
       registeredPath: path,
-      root: path,
-      modelsDir: `${path}\\models`,
+      root,
+      modelsDir: `${root}\\models`,
       version: candidate.version,
       versionSource: candidate.versionSource,
       extraPaths: candidate.extraPaths,
@@ -565,7 +599,9 @@ export class FixtureEngine implements Engine {
       copies: c.copies.filter((copy) => copy.installId !== id),
     }));
     this.world.links = this.world.links.filter((l) => l.installId !== id);
-    this.recordScan(this.lastScan?.scanId ?? "scan-1");
+    // Measured against the real engine: forgetting an install never makes a
+    // scan record. Before the first scan there is still none afterwards.
+    if (this.lastScan) this.recordScan(this.lastScan.scanId);
     return { removed: true, linksLeftInPlace };
   }
 
@@ -709,10 +745,31 @@ export class FixtureEngine implements Engine {
     return { scanId };
   }
 
+  /**
+   * Measured against the real engine: a cancelled scan is kept as the last
+   * scan, marked cancelled, with every total at zero, and it stamps each
+   * install's last scan time as a finished one does.
+   */
   async cancelScan(scanId: string): Promise<{ cancelled: true }> {
     this.stopScanTimer();
     this.busy = null;
-    this.scanDoneEvent.emit(scanResultOf(this.world, scanId, true));
+    const full = scanResultOf(this.world, scanId, true);
+    const zero = <T extends object>(t: T): T =>
+      Object.fromEntries(
+        Object.entries(t).map(([k, v]) => [k, typeof v === "number" ? 0 : v]),
+      ) as T;
+    const record: ScanRecord = {
+      ...full,
+      finishedAt: this.stamp(),
+      totals: zero(full.totals),
+      perInstall: full.perInstall.map(zero),
+    };
+    this.lastScan = record;
+    this.world.installs = this.world.installs.map((install) => ({
+      ...install,
+      lastScanAt: record.finishedAt,
+    }));
+    this.scanDoneEvent.emit(record);
     return { cancelled: true };
   }
 
@@ -1526,7 +1583,7 @@ export class FixtureEngine implements Engine {
         searched: true,
         matches: Array.from({ length: Math.min(hits, 4) }, (_, i) => ({
           installId: "studio",
-          installLabel: "Studio",
+          installLabel: "ComfyUI-Studio",
           workflowPath: `C:\\ComfyUI-Studio\\user\\default\\workflows\\flow-${i + 1}.json`,
           workflowName: `flow-${i + 1}.json`,
         })),
@@ -1720,7 +1777,8 @@ export class FixtureEngine implements Engine {
         }
       }
     }
-    this.recordScan(this.lastScan?.scanId ?? "scan-1");
+    // Starting or closing ComfyUI never makes a scan record where none was.
+    if (this.lastScan) this.recordScan(this.lastScan.scanId);
   }
 
   /**

@@ -195,7 +195,7 @@ describe("the report says what is holding Apply back", () => {
     expect(text).toContain("points back out of the vault");
     expect(text).toContain("Fix the category name in that file and scan again");
     // It says which install's file, because the person has two of them.
-    expect(text).toContain("that Sandbox uses");
+    expect(text).toContain("that ComfyUI-Sandbox uses");
     expect(text).not.toContain("unsafeVaultPath");
   });
 

@@ -237,7 +237,7 @@ function buildInstalls(): Install[] {
   return [
     {
       id: "studio",
-      label: "Studio",
+      label: "ComfyUI-Studio",
       registeredPath: INSTALL_ROOTS.studio!,
       root: INSTALL_ROOTS.studio!,
       modelsDir: `${INSTALL_ROOTS.studio}\\models`,
@@ -251,7 +251,7 @@ function buildInstalls(): Install[] {
     },
     {
       id: "sandbox",
-      label: "Sandbox",
+      label: "ComfyUI-Sandbox",
       registeredPath: INSTALL_ROOTS.sandbox!,
       root: INSTALL_ROOTS.sandbox!,
       modelsDir: `${INSTALL_ROOTS.sandbox}\\models`,
@@ -644,7 +644,7 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
           ? `${INSTALL_ROOTS.studio}\\custom_nodes`
           : "C:\\Users\\alex\\.cache\\huggingface\\hub",
       installId: kind === "inCustomNodes" ? "studio" : null,
-      installLabel: kind === "inCustomNodes" ? "Studio" : null,
+      installLabel: kind === "inCustomNodes" ? "ComfyUI-Studio" : null,
       sizeBytes:
         kind === "inCustomNodes"
           ? COUNTED_NEVER_MOVED.customNodeBytes
