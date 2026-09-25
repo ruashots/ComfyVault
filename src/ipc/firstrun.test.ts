@@ -79,6 +79,7 @@ const ANSWERING_ARGS: Record<string, unknown[]> = {
   validateInstallPath: ["C:\\ComfyUI-Studio"],
   checkLockedFiles: [["C:\\ComfyUI-Studio\\models\\a.safetensors"]],
   selectVault: ["C:\\ComfyVault"],
+  openCivitaiPage: [4384, 128713],
 };
 
 const commands = commandsThatNeedAVault();

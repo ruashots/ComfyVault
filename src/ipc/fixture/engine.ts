@@ -1762,6 +1762,30 @@ export class FixtureEngine implements Engine {
     this.opened.push(target);
   }
 
+  /** Whether Windows opens a Civitai page when asked. */
+  private civitaiPageOpens = true;
+  /** Every Civitai page the app asked for, by its numbers, in order. */
+  civitaiPagesOpened: { modelId: number; versionId: number | null }[] = [];
+
+  devSetCivitaiPageOpens(opens: boolean): void {
+    this.civitaiPageOpens = opens;
+  }
+
+  /**
+   * As the engine does: the page is named by whole numbers only, anything else
+   * is refused before anything opens, and it answers before a vault exists.
+   */
+  async openCivitaiPage(modelId: number, versionId: number | null): Promise<null> {
+    if (!Number.isInteger(modelId) || (versionId !== null && !Number.isInteger(versionId))) {
+      throw error("invalidArgument", "A Civitai page is named by whole numbers.");
+    }
+    if (!this.civitaiPageOpens) {
+      throw error("ioError", "Windows did not open the Civitai page.");
+    }
+    this.civitaiPagesOpened.push({ modelId, versionId });
+    return null;
+  }
+
   /** Whether Windows starts Task Manager when asked. */
   private taskManagerStarts = true;
   /** How many times Task Manager was asked for, so a test can see it. */

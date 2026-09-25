@@ -48,6 +48,29 @@ describe("the Civitai lookup", () => {
     expect(screen.getByRole("button", { name: /Open on Civitai/ })).toBeTruthy();
   });
 
+  it("opens the model's page by its numbers, never by an address", async () => {
+    const h = await open();
+    await waitFor(() => h.app.lookup().kind === "done");
+    const found = await openRow(h, (r) => r.metadata?.found === true);
+    await waitFor(() => text().includes(found.metadata!.modelName!));
+    await userEvent.click(screen.getByRole("button", { name: /Open on Civitai/ }));
+    expect(h.engine.civitaiPagesOpened).toEqual([
+      { modelId: found.metadata!.civitaiModelId, versionId: found.metadata!.civitaiVersionId },
+    ]);
+  });
+
+  it("says so when Windows does not open the page", async () => {
+    const h = await open((e) => e.devSetCivitaiPageOpens(false));
+    await waitFor(() => h.app.lookup().kind === "done");
+    const found = await openRow(h, (r) => r.metadata?.found === true);
+    await waitFor(() => text().includes(found.metadata!.modelName!));
+    await userEvent.click(screen.getByRole("button", { name: /Open on Civitai/ }));
+    await waitFor(() => document.querySelector(".toast") !== null);
+    expect(document.querySelector(".toast")!.textContent).toBe(
+      "Windows did not open the Civitai page.",
+    );
+  });
+
   it("loads no picture for a model Civitai knows", async () => {
     const h = await open();
     await waitFor(() => h.app.lookup().kind === "done");

@@ -172,6 +172,8 @@ export function createTauriEngine(): Engine {
     checkLockedFiles: (paths) => call<LockState[]>("check_locked_files", { paths }),
 
     openExternal: (target) => openUrl(target),
+    openCivitaiPage: (modelId, versionId) =>
+      call<null>("open_civitai_page", { modelId, versionId }),
     openTaskManager: () => callNoArgs<null>("open_task_manager"),
     revealInFileManager: (path) => revealItemInDir(path),
     windowMinimize: () => appWindow.minimize(),

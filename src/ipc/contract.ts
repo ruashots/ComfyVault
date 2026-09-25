@@ -1010,6 +1010,11 @@ export interface Engine {
 
   // the window itself
   openExternal(target: string): Promise<void>;
+  /**
+   * Opens a model's Civitai page, named by its numbers. The engine builds the
+   * address, so the window never passes one.
+   */
+  openCivitaiPage(modelId: number, versionId: number | null): Promise<null>;
   /** Opens Windows Task Manager. Rejects when Windows does not open it. */
   openTaskManager(): Promise<null>;
   revealInFileManager(path: string): Promise<void>;

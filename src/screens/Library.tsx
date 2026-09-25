@@ -19,7 +19,7 @@ import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openLinkPicker } from "~/modals/picker";
-import { useApp, type LibrarySort } from "~/state/store";
+import { messageOf, useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
 import type { ContentRow, UsageResult } from "~/ipc/contract";
 
@@ -721,12 +721,20 @@ function DrawerBody(props: { row: ContentRow }) {
                 <span class="v">{meta().triggerWords.join(", ")}</span>
               </div>
             </Show>
-            <Show when={meta().pageUrl}>
-              {(url) => (
+            <Show when={meta().civitaiModelId !== null}>
+              {(_) => (
                 <div class="det-acts" style={{ "margin-top": "9px" }}>
                   <button
                     class="btn sm"
-                    onClick={() => void app.engine.openExternal(url())}
+                    onClick={() => {
+                      // The engine builds the address from the numbers, so the
+                      // window never opens an address a cached answer carried.
+                      app.engine
+                        .openCivitaiPage(meta().civitaiModelId!, meta().civitaiVersionId)
+                        .catch((error: unknown) =>
+                          app.actions.showToast(messageOf(error), "bad"),
+                        );
+                    }}
                   >
                     <Icon name="external" size={11} />
                     Open on Civitai
