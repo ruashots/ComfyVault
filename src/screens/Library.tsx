@@ -6,7 +6,6 @@ import {
   createEffect,
   createMemo,
   createResource,
-  createSignal,
   onCleanup,
   onMount,
 } from "solid-js";
@@ -22,7 +21,7 @@ import { openConfirm } from "~/modals/confirm";
 import { openLinkPicker } from "~/modals/picker";
 import { useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
-import type { ContentRow, ModelMetadata, UsageResult } from "~/ipc/contract";
+import type { ContentRow, UsageResult } from "~/ipc/contract";
 
 export interface LibraryFilters {
   query: string;
@@ -699,7 +698,6 @@ function DrawerBody(props: { row: ContentRow }) {
       >
         {(meta) => (
           <>
-            <CivitaiPicture meta={meta()} />
             <div class="kv">
               <span class="k w96">Name</span>
               <span class="v">
@@ -811,66 +809,5 @@ function CivitaiNothing(props: { answered: boolean }) {
         )}
       </Match>
     </Switch>
-  );
-}
-
-/**
- * The first picture Civitai rates PG or PG-13, and no picture above that.
- *
- * Civitai rates each picture on its own. Measured against the live service:
- * DreamShaper 8's ten pictures are rated 2, 1, 1, 1, 1, 1, 8, 1, 1, 1, so the
- * first of them is shown. A version with no such picture shows none, and says
- * so in one line rather than leaving an empty space that looks broken.
- */
-export function safePicture(meta: ModelMetadata): string | null {
-  const picture = meta.previewImages.find(
-    (p) => p.type === "image" && (p.nsfwLevel === 1 || p.nsfwLevel === 2),
-  );
-  return picture?.url ?? null;
-}
-
-/**
- * The picture is fetched with no credentials and no referrer, so the image
- * host cannot keep a cookie that ties one request to the last, and learns
- * nothing about the page asking. Measured on the live service: the image host
- * answers with a redirect to Civitai's file host, and both allow an anonymous
- * cross-origin load, the file host for the "null" origin a redirect leaves.
- */
-export function CivitaiPicture(props: { meta: ModelMetadata }) {
-  const [broken, setBroken] = createSignal(false);
-  return (
-    <Show
-      when={safePicture(props.meta)}
-      fallback={
-        <Show when={props.meta.previewImages.length > 0}>
-          <div class="note" style={{ "margin-bottom": "8px" }}>
-            Civitai has no picture of this model rated PG or PG-13, so none is
-            shown here. Its pictures are on its Civitai page.
-          </div>
-        </Show>
-      }
-    >
-      {(url) => (
-        <Show
-          when={!broken()}
-          fallback={
-            <div class="note" style={{ "margin-bottom": "8px" }}>
-              Civitai&rsquo;s picture for this model did not load, so none is shown
-              here. It is on its Civitai page.
-            </div>
-          }
-        >
-          <img
-            class="civ-pic"
-            src={url()}
-            alt={`A picture of ${props.meta.modelName ?? "this model"} from Civitai`}
-            loading="lazy"
-            crossorigin="anonymous"
-            referrerpolicy="no-referrer"
-            onError={() => setBroken(true)}
-          />
-        </Show>
-      )}
-    </Show>
   );
 }

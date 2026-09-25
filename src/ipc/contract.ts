@@ -813,22 +813,8 @@ export interface ModelMetadata {
   civitaiVersionId: number | null;
   pageUrl: string | null;
   downloadUrl: string | null;
-  previewImageUrls: string[];
-  /** The same pictures in Civitai's order, each with its own rating and kind. */
-  previewImages: PreviewImage[];
   /** The hash matched more than one model version. */
   ambiguous: boolean;
-}
-
-/**
- * One Civitai picture. `nsfwLevel` is Civitai's rating for this picture alone:
- * 1 is PG, 2 is PG-13, and 4 and above are adult. 0 means Civitai sent none.
- * `type` is "image" or "video", and "" when Civitai sent none.
- */
-export interface PreviewImage {
-  url: string;
-  nsfwLevel: number;
-  type: string;
 }
 
 // ── running programs ────────────────────────────────────────────────────────

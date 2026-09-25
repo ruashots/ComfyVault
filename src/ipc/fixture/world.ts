@@ -347,8 +347,6 @@ export function buildWorld(): World {
             civitaiVersionId: 5000 + index,
             pageUrl: `https://civitai.com/models/${1000 + index}`,
             downloadUrl: null,
-            previewImageUrls: [],
-            previewImages: [],
             ambiguous: false,
           }
         : null,

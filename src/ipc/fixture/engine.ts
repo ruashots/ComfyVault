@@ -1879,8 +1879,6 @@ function notFoundMetadata(sha256: string): ModelMetadata {
     civitaiVersionId: null,
     pageUrl: null,
     downloadUrl: null,
-    previewImageUrls: [],
-    previewImages: [],
     ambiguous: false,
   };
 }

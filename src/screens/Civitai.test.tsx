@@ -1,11 +1,10 @@
-import { render, screen } from "@solidjs/testing-library";
+import { screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import type { ContentRow, ModelMetadata } from "~/ipc/contract";
-import { CivitaiPicture } from "~/screens/Library";
+import type { ContentRow } from "~/ipc/contract";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
@@ -47,6 +46,19 @@ describe("the Civitai lookup", () => {
     const meta = found.metadata!;
     await waitFor(() => text().includes(meta.modelName!));
     expect(screen.getByRole("button", { name: /Open on Civitai/ })).toBeTruthy();
+  });
+
+  it("loads no picture for a model Civitai knows", async () => {
+    const h = await open();
+    await waitFor(() => h.app.lookup().kind === "done");
+    const found = await openRow(h, (r) => r.metadata?.found === true);
+    await waitFor(() => text().includes(found.metadata!.modelName!));
+    // Nothing in the window loads a remote image.
+    const remote = [...document.querySelectorAll("img")].filter((img) =>
+      /^https?:/i.test(img.getAttribute("src") ?? ""),
+    );
+    expect(remote).toEqual([]);
+    expect(document.querySelectorAll("img").length).toBe(0);
   });
 
   it("says a file Civitai does not know is normal, not an error", async () => {
@@ -113,91 +125,5 @@ describe("the Civitai lookup", () => {
     h.engine.devFinish();
     await waitFor(() => h.app.lookup().kind === "done");
     expect(h.engine.devCivitaiRequests()).toBeGreaterThan(0);
-  });
-});
-
-const meta = (over: Partial<ModelMetadata>): ModelMetadata => ({
-  sha256: "A".repeat(64),
-  source: "civitai",
-  fetchedAt: "2026-09-25T00:00:00Z",
-  found: true,
-  modelName: "Some model",
-  modelType: "Checkpoint",
-  versionName: "1",
-  baseModel: "SDXL 1.0",
-  triggerWords: [],
-  nsfw: false,
-  nsfwLevel: 1,
-  civitaiModelId: 1,
-  civitaiVersionId: 1,
-  pageUrl: "https://civitai.com/models/1",
-  downloadUrl: null,
-  previewImageUrls: ["https://image.civitai.com/x/1.jpeg"],
-  previewImages: [],
-  ambiguous: false,
-  ...over,
-});
-
-const pic = (nsfwLevel: number, n: number, type = "image") => ({
-  url: `https://image.civitai.com/x/${n}.jpeg`,
-  nsfwLevel,
-  type,
-});
-
-describe("the Civitai picture", () => {
-  it("shows the first picture when it is rated PG or PG-13", () => {
-    const { unmount } = render(() => (
-      <CivitaiPicture meta={meta({ previewImages: [pic(2, 1), pic(1, 2), pic(8, 3)] })} />
-    ));
-    expect(screen.getByRole("img").getAttribute("src")).toBe("https://image.civitai.com/x/1.jpeg");
-    unmount();
-  });
-
-  it("asks for the picture with no credentials and no referrer", () => {
-    const { unmount } = render(() => (
-      <CivitaiPicture meta={meta({ previewImages: [pic(1, 1)] })} />
-    ));
-    const img = screen.getByRole("img");
-    expect(img.getAttribute("crossorigin")).toBe("anonymous");
-    expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
-    unmount();
-  });
-
-  it("says so in one line when the picture fails to load, instead of going blank", () => {
-    const { unmount } = render(() => (
-      <CivitaiPicture meta={meta({ previewImages: [pic(1, 1)] })} />
-    ));
-    screen.getByRole("img").dispatchEvent(new Event("error"));
-    expect(screen.queryByRole("img")).toBeNull();
-    expect(document.body.textContent).toContain("picture for this model did not load");
-    unmount();
-  });
-
-  it("skips adult, unrated and video entries to the first safe picture", () => {
-    const { unmount } = render(() => (
-      <CivitaiPicture
-        meta={meta({
-          nsfwLevel: 11,
-          previewImages: [pic(8, 1), pic(0, 2), pic(1, 3, "video"), pic(16, 4), pic(1, 5), pic(2, 6)],
-        })}
-      />
-    ));
-    expect(screen.getByRole("img").getAttribute("src")).toBe("https://image.civitai.com/x/5.jpeg");
-    unmount();
-  });
-
-  it("shows none, and says so in one line, when no picture is rated PG or PG-13", () => {
-    const { unmount } = render(() => (
-      <CivitaiPicture meta={meta({ previewImages: [pic(4, 1), pic(8, 2), pic(0, 3)] })} />
-    ));
-    expect(screen.queryByRole("img")).toBeNull();
-    expect(document.body.textContent).toContain("Civitai has no picture of this model rated PG or PG-13");
-    unmount();
-  });
-
-  it("says nothing when Civitai has no picture at all", () => {
-    const { container, unmount } = render(() => <CivitaiPicture meta={meta({ previewImages: [] })} />);
-    expect(container.textContent).toBe("");
-    unmount();
   });
 });
