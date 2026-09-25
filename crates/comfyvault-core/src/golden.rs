@@ -1299,6 +1299,21 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
 }
 
 #[test]
+fn only_one_copy_of_the_program_runs_at_a_time() {
+    // A second copy opened a second window on the same vault. The single
+    // instance plugin stops it, but only when it is the first plugin: Tauri
+    // starts plugins in order, and one before it would run in the second copy
+    // too. The real behavior is proven on Windows by
+    // src-tauri/tests/single_instance.rs.
+    let wiring = read_repo_file("src-tauri/src/lib.rs");
+    let first = wiring.find(".plugin(").expect("no plugin is registered");
+    assert!(
+        wiring[first..].starts_with(".plugin(tauri_plugin_single_instance::init("),
+        "the single instance plugin must be the first plugin registered"
+    );
+}
+
+#[test]
 fn every_command_is_wired_into_the_window() {
     // A command that is written but never listed in the handler does not exist
     // at run time. The build says nothing, and the interface gets "command not

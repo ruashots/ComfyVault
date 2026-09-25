@@ -249,6 +249,34 @@ The test program gets its own Windows manifest from `src-tauri/build.rs`. The
 shipped program does not use it. Without that manifest Windows refuses to start
 the test program, with an "Entry Point Not Found" message.
 
+### 3.5 One copy of the program at a time
+
+`src-tauri/tests/single_instance.rs` starts the real release program, then
+launches it a second time. The second copy must exit, and the open window must
+come to the front, restored if it was minimized. Build the release program
+first, as in section 2, then:
+
+```
+cargo xwin test -p comfyvault --test single_instance --no-run --target x86_64-pc-windows-msvc
+cp target/x86_64-pc-windows-msvc/release/comfyvault.exe /mnt/c/<scratch folder>/
+cp "$(ls -t target/x86_64-pc-windows-msvc/debug/deps/single_instance-*.exe | head -1)" \
+   /mnt/c/<scratch folder>/single-instance-tests.exe
+cd /mnt/c/<scratch folder>
+COMFYVAULT_EXE='C:\<scratch folder>\comfyvault.exe' WSLENV=COMFYVAULT_EXE \
+  ./single-instance-tests.exe --ignored --test-threads=1
+```
+
+Close ComfyVault before you run it. The test refuses to start while a copy
+runs, because the second launch would hand over to that copy.
+
+The program opens the vault that this Windows user last chose, as it does for
+a person. The test only minimizes the window, launches the program again, and
+closes it.
+
+Do not use the mouse or the keyboard while the test runs. Windows gives the
+front of the screen to the last program that a person used, so input during
+the test can make it fail.
+
 ---
 
 ## 4. What a Linux build cannot do

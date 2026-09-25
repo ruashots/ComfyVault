@@ -15,6 +15,7 @@ mod commands;
 mod events;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use comfyvault_core::engine::Engine;
@@ -35,11 +36,39 @@ fn config_path(app: &tauri::AppHandle) -> PathBuf {
         .join("config.json")
 }
 
+/// A second launch arrived before the window was ready to be shown.
+///
+/// Two quick clicks on the program can hand over while the first copy is still
+/// in `setup`, before its window is registered. The request is kept here and
+/// served when `setup` ends, rather than dropped.
+static FOCUS_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Shows the open window in front of everything, restored if it was
+/// minimized. The second copy grants the right to take the foreground before
+/// it exits, which is what lets this work from a program in the background.
+fn bring_to_front(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        FOCUS_PENDING.store(true, Ordering::SeqCst);
+        return;
+    };
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 pub fn run() {
-    // Only the opener plugin is registered. Browsing the disk goes through the
-    // engine's own list_directory and create_directory, so the window holds no
-    // file system permission of its own.
+    // One copy of the program at a time. A second launch hands over to the
+    // window that is already open and exits. Tauri starts plugins before it
+    // makes any window or runs `setup`, so the second copy never opens a
+    // window and never touches the vault. It must stay the first plugin.
+    //
+    // Besides it, only the opener plugin is registered. Browsing the disk goes
+    // through the engine's own list_directory and create_directory, so the
+    // window holds no file system permission of its own.
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            bring_to_front(app)
+        }))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let engine = Engine::new(config_path(&app.handle().clone()));
@@ -53,6 +82,9 @@ pub fn run() {
             }
 
             app.manage(AppEngine(engine));
+            if FOCUS_PENDING.swap(false, Ordering::SeqCst) {
+                bring_to_front(app.handle());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
