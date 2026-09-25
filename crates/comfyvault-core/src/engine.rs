@@ -13,6 +13,7 @@
 //! operation while one runs is refused with `vaultBusy`, so two of them can
 //! never touch the same files at once.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -948,10 +949,52 @@ impl Engine {
             .into_iter()
             .map(|i| (i.id, i.root))
             .collect();
-        Ok(crate::platform::match_processes_to_installs(
-            &self.platform.list_processes(),
-            &installs,
-        ))
+        let mut found =
+            crate::platform::match_processes_to_installs(&self.platform.list_processes(), &installs);
+        if found.is_empty() {
+            return Ok(found);
+        }
+
+        // What tells a working ComfyUI from one that never exited: a port it
+        // serves, and a model file it holds, which is what blocks a move.
+        let pids: Vec<u32> = found.iter().map(|r| r.pid).collect();
+        let ports = self.platform.listening_ports(&pids);
+        let files = self.known_model_files(&store)?;
+        // With no scan and an empty vault there is nothing to ask about, and
+        // "holds none of no files" is not an answer.
+        let holding = if files.is_empty() {
+            HashMap::new()
+        } else {
+            self.platform.processes_holding(&pids, &files)
+        };
+        for r in &mut found {
+            r.listening_ports = ports.get(&r.pid).map(|p| {
+                let mut p = p.clone();
+                p.sort_unstable();
+                p.dedup();
+                p
+            });
+            r.holds_model_files = holding.get(&r.pid).copied();
+        }
+        Ok(found)
+    }
+
+    /// Every model file the vault knows about: what the last scan found in the
+    /// installs, where each of its links points, and every file in the vault.
+    /// That is every file an apply or an undo could move.
+    fn known_model_files(&self, store: &Store) -> Result<Vec<PathBuf>> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        if let Some(id) = store.last_scan_id()? {
+            for e in store.scan_entries(&id)? {
+                files.push(e.abs_path);
+                files.extend(e.link_target);
+            }
+        }
+        let root = store.vault_root();
+        files.extend(store.vault_files()?.iter().map(|f| root.join(f.vault_rel_path())));
+        files.sort();
+        files.dedup();
+        Ok(files)
     }
 
     pub fn locked_files(&self, paths: &[PathBuf]) -> Vec<LockState> {

@@ -40,6 +40,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, Result, VaultError};
+use crate::time_util::Timestamp;
 
 #[cfg(unix)]
 mod unix;
@@ -198,9 +199,19 @@ pub struct ProcessInfo {
     pub exe_path: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
     pub command_line: Vec<String>,
+    /// When the process started. `None` when the system would not say.
+    #[serde(default)]
+    pub started_at: Option<Timestamp>,
 }
 
 /// A running process that belongs to a registered install.
+///
+/// The last three fields are what tell a working ComfyUI from a process that
+/// never exited. Each is `None` when the operating system could not answer,
+/// which is never the same as "no": a false "not listening" reads to a person
+/// as "safe to end", and could end a ComfyUI in the middle of its work.
+///
+/// Older payloads lack them, so each reads back as `None`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunningComfy {
@@ -211,6 +222,14 @@ pub struct RunningComfy {
     pub command_line: Vec<String>,
     pub matched_install_ids: Vec<String>,
     pub match_reason: MatchReason,
+    #[serde(default)]
+    pub started_at: Option<Timestamp>,
+    /// The TCP ports this process listens on. Empty means it serves nothing.
+    #[serde(default)]
+    pub listening_ports: Option<Vec<u16>>,
+    /// Whether it holds open any model file the vault knows about.
+    #[serde(default)]
+    pub holds_model_files: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,6 +257,20 @@ pub trait Platform: Send + Sync {
     fn file_identity(&self, path: &Path) -> Option<FileIdentity>;
     fn disk_space(&self, path: &Path) -> Result<DiskSpace>;
     fn list_processes(&self) -> Vec<ProcessInfo>;
+
+    /// The TCP ports each of these processes listens on.
+    ///
+    /// The map has an entry for every process the system answered for, with
+    /// an empty list for one that listens on nothing. A process with no entry
+    /// is unknown, never "not listening".
+    fn listening_ports(&self, pids: &[u32]) -> HashMap<u32, Vec<u16>>;
+
+    /// Which of these processes hold any of these files open.
+    ///
+    /// Same rule: an entry for every process the system answered for, and no
+    /// entry for one it could not.
+    fn processes_holding(&self, pids: &[u32], files: &[PathBuf]) -> HashMap<u32, bool>;
+
     /// Windows only. `None` elsewhere.
     fn long_paths_enabled(&self) -> Option<bool>;
 
@@ -339,6 +372,14 @@ impl Platform for NativePlatform {
 
     fn list_processes(&self) -> Vec<ProcessInfo> {
         list_processes_via_sysinfo()
+    }
+
+    fn listening_ports(&self, pids: &[u32]) -> HashMap<u32, Vec<u16>> {
+        sys::listening_ports(pids)
+    }
+
+    fn processes_holding(&self, pids: &[u32], files: &[PathBuf]) -> HashMap<u32, bool> {
+        sys::processes_holding(pids, files)
     }
 
     fn long_paths_enabled(&self) -> Option<bool> {
@@ -489,6 +530,11 @@ fn list_processes_via_sysinfo() -> Vec<ProcessInfo> {
                 .iter()
                 .map(|s| s.to_string_lossy().to_string())
                 .collect(),
+            // Zero is sysinfo's word for "could not read it".
+            started_at: match p.start_time() {
+                0 => None,
+                secs => Some(Timestamp::from_millis(secs as i64 * 1000)),
+            },
         })
         .collect()
 }
@@ -548,6 +594,9 @@ pub fn match_processes_to_installs(
                 command_line: p.command_line.clone(),
                 matched_install_ids: matched,
                 match_reason: reason.unwrap_or(MatchReason::ArgUnderRoot),
+                started_at: p.started_at,
+                listening_ports: None,
+                holds_model_files: None,
             });
         }
     }
@@ -606,6 +655,10 @@ struct FakeState {
     /// Paths whose volume is reported as this identifier.
     volume_overrides: Vec<(PathBuf, VolumeId)>,
     processes: Option<Vec<ProcessInfo>>,
+    listening: Option<HashMap<u32, Vec<u16>>>,
+    holding: Option<HashMap<u32, bool>>,
+    /// The files the engine last asked about, so a test can see which.
+    asked_about: Option<Vec<PathBuf>>,
     free_bytes_override: Option<u64>,
     disk_space_fails: bool,
     /// Paths where a rename fails outright, with the error kind to raise.
@@ -682,6 +735,23 @@ impl FakePlatform {
     pub fn set_processes(&self, procs: Vec<ProcessInfo>) -> &Self {
         self.state.lock().unwrap().processes = Some(procs);
         self
+    }
+
+    /// What the port table says. Processes left out are unknown.
+    pub fn set_listening(&self, table: HashMap<u32, Vec<u16>>) -> &Self {
+        self.state.lock().unwrap().listening = Some(table);
+        self
+    }
+
+    /// Who holds a model file open. Processes left out are unknown.
+    pub fn set_holding(&self, table: HashMap<u32, bool>) -> &Self {
+        self.state.lock().unwrap().holding = Some(table);
+        self
+    }
+
+    /// The files the last open-file question named, or `None` if none was asked.
+    pub fn files_asked_about(&self) -> Option<Vec<PathBuf>> {
+        self.state.lock().unwrap().asked_about.clone()
     }
 
     pub fn set_drive_roots(&self, roots: Vec<PathBuf>) -> &Self {
@@ -793,6 +863,23 @@ impl Platform for FakePlatform {
         self.inner.list_processes()
     }
 
+    fn listening_ports(&self, pids: &[u32]) -> HashMap<u32, Vec<u16>> {
+        if let Some(t) = self.state.lock().unwrap().listening.clone() {
+            return t.into_iter().filter(|(p, _)| pids.contains(p)).collect();
+        }
+        self.inner.listening_ports(pids)
+    }
+
+    fn processes_holding(&self, pids: &[u32], files: &[PathBuf]) -> HashMap<u32, bool> {
+        let mut s = self.state.lock().unwrap();
+        s.asked_about = Some(files.to_vec());
+        if let Some(t) = s.holding.clone() {
+            return t.into_iter().filter(|(p, _)| pids.contains(p)).collect();
+        }
+        drop(s);
+        self.inner.processes_holding(pids, files)
+    }
+
     fn long_paths_enabled(&self) -> Option<bool> {
         self.inner.long_paths_enabled()
     }
@@ -842,6 +929,7 @@ mod tests {
             exe_path: exe.map(PathBuf::from),
             cwd: cwd.map(PathBuf::from),
             command_line: args.iter().map(|s| s.to_string()).collect(),
+            started_at: None,
         }
     }
 
@@ -1162,6 +1250,113 @@ mod tests {
         assert_eq!(got[0].match_reason, MatchReason::CwdUnderRoot);
     }
 
+    /// A throwaway program that holds `held` open and listens on two ports,
+    /// one IPv4 and one IPv6. Ended when dropped, so a failed assertion does
+    /// not leave it running.
+    struct Holder {
+        child: std::process::Child,
+        ports: Vec<u16>,
+    }
+
+    impl Holder {
+        fn start(dir: &Path, held: &Path) -> Holder {
+            use std::io::BufRead;
+            let mut cmd = if cfg!(windows) {
+                let script = format!(
+                    "$f=[IO.File]::Open('{}','Open','Read','None'); \
+                     $a=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0); $a.Start(); \
+                     $b=[Net.Sockets.TcpListener]::new([Net.IPAddress]::IPv6Loopback,0); $b.Start(); \
+                     [Console]::Out.WriteLine(\"$($a.LocalEndpoint.Port) $($b.LocalEndpoint.Port)\"); \
+                     [Console]::Out.Flush(); Start-Sleep 60",
+                    held.display()
+                );
+                let mut c = std::process::Command::new("powershell.exe");
+                c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+                c
+            } else {
+                let mut c = std::process::Command::new("python3");
+                c.args([
+                    "-c",
+                    "import socket,sys,time\n\
+                     f=open(sys.argv[1],'rb')\n\
+                     a=socket.socket(); a.bind(('127.0.0.1',0)); a.listen()\n\
+                     b=socket.socket(socket.AF_INET6); b.bind(('::1',0)); b.listen()\n\
+                     print(a.getsockname()[1], b.getsockname()[1], flush=True)\n\
+                     time.sleep(60)",
+                ]);
+                c.arg(held);
+                c
+            };
+            let mut child = cmd
+                .current_dir(dir)
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .expect("start the throwaway program");
+            let mut line = String::new();
+            std::io::BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let ports = line.split_whitespace().map(|p| p.parse().unwrap()).collect();
+            Holder { child, ports }
+        }
+    }
+
+    impl Drop for Holder {
+        fn drop(&mut self) {
+            // This test's own child, and nothing else.
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[test]
+    fn a_real_process_is_seen_listening_and_holding_a_file() {
+        // Over the real operating system: the port table, the open-file
+        // question, and the start time, each against a process whose answers
+        // are known because this test made them so.
+        let d = tempfile::tempdir().unwrap();
+        let held = d.path().join("held.safetensors");
+        let other = d.path().join("other.safetensors");
+        std::fs::write(&held, b"weights").unwrap();
+        std::fs::write(&other, b"weights").unwrap();
+
+        let before = Timestamp::now().as_millis();
+        let h = Holder::start(d.path(), &held);
+        let pid = h.child.id();
+        assert_eq!(h.ports.len(), 2);
+        let p = NativePlatform::new();
+
+        let me = std::process::id();
+        let ports = p.listening_ports(&[pid, me]);
+        let mut got = ports.get(&pid).expect("the port table said nothing about it").clone();
+        got.sort_unstable();
+        let mut want = h.ports.clone();
+        want.sort_unstable();
+        assert_eq!(got, want, "the ports it listens on, IPv4 and IPv6, in host order");
+        // Other tests in this process may listen, so only the entry is checked:
+        // every process asked about is answered for.
+        assert!(ports.contains_key(&me), "no answer for this test's own process");
+
+        let holding = p.processes_holding(&[pid, me], &[held.clone()]);
+        assert_eq!(holding.get(&pid), Some(&true), "it holds the file open");
+        assert_eq!(holding.get(&me), Some(&false), "this test does not");
+        let holding = p.processes_holding(&[pid], &[other.clone()]);
+        assert_eq!(holding.get(&pid), Some(&false), "a file it never opened");
+
+        let started = p
+            .list_processes()
+            .into_iter()
+            .find(|q| q.pid == pid)
+            .and_then(|q| q.started_at)
+            .expect("no start time for a process this test started")
+            .as_millis();
+        // Whole seconds on some systems, so allow for the rounding.
+        assert!(
+            started >= before - 2_000 && started <= Timestamp::now().as_millis() + 1_000,
+            "started at {started}, the test began at {before}"
+        );
+    }
+
     #[test]
     fn disk_space_answers_for_the_temp_directory() {
         let d = tempfile::tempdir().unwrap();
@@ -1225,6 +1420,51 @@ mod drive_tests {
                 assert!(total > 0, "{} says it has no size at all", d.root);
                 assert!(free <= total, "{} says more is free than exists", d.root);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod never_ends_a_process {
+    /// The engine reports on a person's processes and never acts on them.
+    /// Ending a ComfyUI is the person's decision, made in Task Manager.
+    #[test]
+    fn no_code_outside_the_tests_can_end_pause_or_signal_a_process() {
+        let sources = [
+            ("platform/mod.rs", include_str!("mod.rs")),
+            ("platform/windows.rs", include_str!("windows.rs")),
+            ("platform/unix.rs", include_str!("unix.rs")),
+            ("engine.rs", include_str!("../engine.rs")),
+        ];
+        let forbidden = [
+            "RmShutdown",
+            "RmRestart",
+            "TerminateProcess",
+            "NtSuspendProcess",
+            "DebugActiveProcess",
+            "GenerateConsoleCtrlEvent",
+            "libc::kill",
+            ".kill(",
+            "taskkill",
+        ];
+        let mut found = Vec::new();
+        for (name, text) in sources {
+            // Everything from the first test module on is test code, where the
+            // tests end the throwaway programs they started themselves.
+            let shipped = text.split("#[cfg(test)]").next().unwrap_or(text);
+            assert!(shipped.len() > 1000, "{name}: the shipped code was not found");
+            for word in forbidden {
+                if shipped.contains(word) {
+                    found.push(format!("{name}: {word}"));
+                }
+            }
+        }
+        assert!(found.is_empty(), "the engine can end a process: {found:?}");
+        // The code that asks about processes sits before the tests, where the
+        // check above reads it.
+        for (name, text) in &sources[1..3] {
+            let shipped = text.split("#[cfg(test)]").next().unwrap();
+            assert!(shipped.contains("fn processes_holding"), "{name}: moved past the tests");
         }
     }
 }

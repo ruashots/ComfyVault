@@ -620,6 +620,9 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 command_line: vec!["python.exe".into(), "main.py".into()],
                 matched_install_ids: vec!["inst-1".into()],
                 match_reason: MatchReason::ExeUnderRoot,
+                started_at: Some(SCAN_START),
+                listening_ports: Some(vec![8188]),
+                holds_model_files: Some(true),
             },
         ),
         s(

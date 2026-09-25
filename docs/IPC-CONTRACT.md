@@ -1942,6 +1942,9 @@ type RunningComfy = {
   commandLine: string[]
   matchedInstallIds: string[]
   matchReason: 'exeUnderRoot' | 'cwdUnderRoot' | 'argUnderRoot'
+  startedAt: string | null          // RFC 3339, UTC
+  listeningPorts: number[] | null   // TCP ports it listens on
+  holdsModelFiles: boolean | null   // holds a model file open
 }
 ```
 
@@ -1949,6 +1952,30 @@ Returns `RunningComfy[]`.
 
 A process matches an install when its executable, its working directory, or one
 of its arguments sits under that install root.
+
+The last three fields tell a working ComfyUI from a process that never exited.
+For each of them, `null` means that the operating system gave no answer. `null`
+never means "no".
+
+- `startedAt` is when the process started.
+- `listeningPorts` lists the TCP ports that the process listens on, on any
+  local address. An empty list means that the process serves nothing: no
+  person can open it in a browser. A ComfyUI that is still loading also listens
+  on nothing, for a few seconds up to a few minutes. Use `startedAt` to tell a
+  loading ComfyUI from one that started yesterday.
+- `holdsModelFiles` tells whether the process holds open any model file that
+  the vault knows about: every file that the last scan found, every place that
+  a found link points to, and every file in the vault. Windows refuses to move
+  a file that a program holds open, so this is the fact that blocks an apply.
+  It is `null` before the first scan when the vault is empty, because then
+  there is no file to ask about.
+
+The engine never ends, pauses or signals a process. Ending one is the person's
+action. `pid`, `exePath` and `startedAt` are there so that the person can find
+the same process in Task Manager.
+
+Data from a build before these fields existed reads back with all three set to
+`null`.
 
 ### 11.2 `check_locked_files`
 

@@ -952,3 +952,123 @@ fn a_vault_is_made_only_in_an_empty_folder_or_opened_where_one_already_is() {
     f.engine.select_vault(&empty, false).unwrap();
     f.engine.select_vault(&vault, false).unwrap();
 }
+
+// --- a ComfyUI that serves nothing, and one that holds a file ---------------
+
+fn comfy_process(pid: u32, root: &Path) -> crate::platform::ProcessInfo {
+    crate::platform::ProcessInfo {
+        pid,
+        name: "python.exe".into(),
+        exe_path: Some(root.join("python_embeded").join("python.exe")),
+        cwd: Some(root.to_path_buf()),
+        command_line: vec!["python.exe".into(), "ComfyUI/main.py".into()],
+        started_at: Some(crate::time_util::Timestamp::from_millis(1_758_412_800_000)),
+    }
+}
+
+#[test]
+fn each_running_comfyui_says_what_it_serves_and_what_it_holds() {
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("ComfyUI-A");
+    f.write_model(&a, "models/checkpoints/base.safetensors", &weights("base"));
+    f.scan();
+
+    // 7 serves a page, 8 is the leftover that serves nothing, and the system
+    // could not answer anything about 9.
+    f.platform.set_processes(vec![
+        comfy_process(7, &a.root),
+        comfy_process(8, &a.root),
+        comfy_process(9, &a.root),
+    ]);
+    f.platform.set_listening([(7, vec![8188, 8188, 80]), (8, vec![])].into());
+    f.platform.set_holding([(7, false), (8, true)].into());
+
+    let got = f.engine.running_comfy().unwrap();
+    let by = |pid: u32| got.iter().find(|r| r.pid == pid).unwrap();
+
+    assert_eq!(by(7).listening_ports, Some(vec![80, 8188]), "sorted, each port once");
+    assert_eq!(by(7).holds_model_files, Some(false));
+    assert_eq!(by(8).listening_ports, Some(vec![]), "a leftover listens on nothing");
+    assert_eq!(by(8).holds_model_files, Some(true));
+    // Unknown stays unknown. Reporting "not listening" here would tell a
+    // person that a working ComfyUI is safe to end.
+    assert_eq!(by(9).listening_ports, None);
+    assert_eq!(by(9).holds_model_files, None);
+    assert_eq!(
+        by(9).started_at,
+        Some(crate::time_util::Timestamp::from_millis(1_758_412_800_000)),
+        "when it started reaches the interface"
+    );
+}
+
+#[test]
+fn the_files_asked_about_are_every_file_an_apply_or_an_undo_could_move() {
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("ComfyUI-A");
+    let found = f.write_model(&a, "models/loras/detail.safetensors", &weights("detail"));
+
+    // A link the scan finds, pointing at a file elsewhere on the disk.
+    let elsewhere = f.dir.path().join("elsewhere").join("style.safetensors");
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    std::fs::write(&elsewhere, weights("style")).unwrap();
+    let link = a.root.join("models/loras/style.safetensors");
+    crate::platform::NativePlatform::new().create_file_symlink(&link, &elsewhere).unwrap();
+
+    // A file already in the vault.
+    let store = f.engine.store().unwrap();
+    let spare = f.dir.path().join("spare.safetensors");
+    std::fs::write(&spare, weights("spare")).unwrap();
+    let placed = crate::vault::place_file(
+        &store,
+        f.platform.as_ref(),
+        &spare,
+        "checkpoints",
+        "spare.safetensors",
+        &weights_hash("spare"),
+        &CancelToken::new(),
+    )
+    .unwrap();
+    let in_vault = store.vault_root().join(placed.vault_rel_path());
+
+    f.scan();
+    f.platform.set_processes(vec![comfy_process(7, &a.root)]);
+    f.engine.running_comfy().unwrap();
+
+    let asked = f.platform.files_asked_about().expect("the engine asked no question");
+    for want in [&found, &link, &elsewhere, &in_vault] {
+        assert!(asked.contains(want), "{} was not asked about: {asked:?}", want.display());
+    }
+}
+
+#[test]
+fn with_nothing_scanned_and_an_empty_vault_whether_a_file_is_held_is_unknown() {
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("ComfyUI-A");
+    f.platform.set_processes(vec![comfy_process(7, &a.root)]);
+    f.platform.set_holding([(7, false)].into());
+
+    let got = f.engine.running_comfy().unwrap();
+    // "Holds none of no files" is not an answer, so no question is asked.
+    assert_eq!(f.platform.files_asked_about(), None);
+    assert_eq!(got[0].holds_model_files, None);
+}
+
+#[test]
+fn a_running_comfyui_sent_by_an_older_build_still_reads() {
+    let old = serde_json::json!({
+        "pid": 18244,
+        "name": "python.exe",
+        "exePath": "C:\\ComfyUI-Main\\python_embeded\\python.exe",
+        "cwd": "C:\\ComfyUI-Main",
+        "commandLine": ["python.exe", "main.py"],
+        "matchedInstallIds": ["inst-1"],
+        "matchReason": "exeUnderRoot"
+    });
+    let r: RunningComfy = serde_json::from_value(old).unwrap();
+    assert_eq!(r.started_at, None);
+    assert_eq!(r.listening_ports, None);
+    assert_eq!(r.holds_model_files, None);
+}

@@ -131,6 +131,97 @@ pub(super) fn size_on_disk(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.blocks() * 512)
 }
 
+/// What each open descriptor of a process names: a file path, or a socket
+/// written as `socket:[inode]`.
+///
+/// `None` when the table cannot be read, which is the case for another user's
+/// process, and then nothing about that process is known.
+fn open_descriptors(pid: u32) -> Option<Vec<PathBuf>> {
+    let dir = std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?;
+    Some(dir.filter_map(|e| std::fs::read_link(e.ok()?.path()).ok()).collect())
+}
+
+/// Reads `/proc/net/tcp` and `/proc/net/tcp6`, and joins each listening
+/// socket to the process that holds it through the socket's inode.
+pub(super) fn listening_ports(pids: &[u32]) -> std::collections::HashMap<u32, Vec<u16>> {
+    use std::collections::HashMap;
+
+    let mut by_inode: HashMap<u64, u16> = HashMap::new();
+    let mut read_any = false;
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else { continue };
+        read_any = true;
+        for line in text.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // sl local rem st tx:rx tr:when retrnsmt uid timeout inode
+            if cols.len() < 10 || cols[3] != "0A" {
+                continue; // 0A is LISTEN
+            }
+            let port = cols[1].rsplit(':').next().and_then(|h| u16::from_str_radix(h, 16).ok());
+            if let (Some(port), Ok(inode)) = (port, cols[9].parse::<u64>()) {
+                by_inode.insert(inode, port);
+            }
+        }
+    }
+    if !read_any {
+        return HashMap::new();
+    }
+
+    let mut out = HashMap::new();
+    for &pid in pids {
+        let Some(fds) = open_descriptors(pid) else { continue };
+        let ports: Vec<u16> = fds
+            .iter()
+            .filter_map(|l| {
+                let s = l.to_str()?;
+                let inode = s.strip_prefix("socket:[")?.strip_suffix(']')?.parse().ok()?;
+                by_inode.get(&inode).copied()
+            })
+            .collect();
+        out.insert(pid, ports);
+    }
+    out
+}
+
+/// Whether each process has any of these files open, or mapped into memory.
+///
+/// A model loaded with `mmap` may close its descriptor and keep only the
+/// mapping, so the maps are read as well as the descriptors.
+pub(super) fn processes_holding(
+    pids: &[u32],
+    files: &[PathBuf],
+) -> std::collections::HashMap<u32, bool> {
+    use std::collections::{HashMap, HashSet};
+
+    // The kernel reports the real file, so a link is compared by its target.
+    let mut wanted: HashSet<PathBuf> = HashSet::new();
+    for f in files {
+        wanted.insert(f.clone());
+        if let Ok(real) = std::fs::canonicalize(f) {
+            wanted.insert(real);
+        }
+    }
+
+    let mut out = HashMap::new();
+    for &pid in pids {
+        let Some(fds) = open_descriptors(pid) else { continue };
+        let mut held = fds.iter().any(|p| wanted.contains(p));
+        if !held {
+            if let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) {
+                held = maps.lines().any(|l| {
+                    // The path is the sixth column, and is the rest of the line.
+                    l.splitn(6, char::is_whitespace)
+                        .nth(5)
+                        .map(|p| wanted.contains(Path::new(p.trim_start())))
+                        .unwrap_or(false)
+                });
+            }
+        }
+        out.insert(pid, held);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

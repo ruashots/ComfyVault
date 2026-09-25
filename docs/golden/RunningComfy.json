@@ -5,10 +5,15 @@
   ],
   "cwd": "C:\\ComfyUI-Main",
   "exePath": "C:\\ComfyUI-Main\\python_embeded\\python.exe",
+  "holdsModelFiles": true,
+  "listeningPorts": [
+    8188
+  ],
   "matchReason": "exeUnderRoot",
   "matchedInstallIds": [
     "inst-1"
   ],
   "name": "python.exe",
-  "pid": 18244
+  "pid": 18244,
+  "startedAt": "2025-09-22T00:00:00Z"
 }

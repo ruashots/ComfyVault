@@ -30,8 +30,9 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION,
-    GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, ERROR_LOCK_VIOLATION,
+    ERROR_MORE_DATA, ERROR_SHARING_VIOLATION, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
+    NO_ERROR,
 };
 use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows_sys::Win32::Storage::FileSystem::{
@@ -369,7 +370,7 @@ pub(super) fn copy_storage_traits(src: &std::fs::File, dst: &std::fs::File) -> s
 /// What the file occupies on the drive, which for a sparse or compressed file
 /// is less than its size.
 pub(super) fn size_on_disk(path: &Path) -> Option<u64> {
-    use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
+    use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::{GetCompressedFileSizeW, INVALID_FILE_SIZE};
 
     let w = wide(path);
@@ -381,6 +382,161 @@ pub(super) fn size_on_disk(path: &Path) -> Option<u64> {
         return None;
     }
     Some(((high as u64) << 32) | low as u64)
+}
+
+/// Reads the listening half of the TCP table, for IPv4 and for IPv6, and
+/// keeps the rows owned by these processes.
+///
+/// When neither table can be read, nothing is known and the map is empty.
+/// When one can, every asked process gets an entry, an empty one included.
+pub(super) fn listening_ports(pids: &[u32]) -> std::collections::HashMap<u32, Vec<u16>> {
+    use std::collections::HashMap;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID,
+        TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+
+    /// The whole table for one address family, as raw bytes.
+    fn table(family: u16) -> Option<Vec<u8>> {
+        let mut size: u32 = 0;
+        // The table can grow between the two calls, so ask until it fits.
+        for _ in 0..5 {
+            let mut buf = vec![0u8; size as usize];
+            let ptr = if buf.is_empty() { std::ptr::null_mut() } else { buf.as_mut_ptr().cast() };
+            let rc = unsafe {
+                GetExtendedTcpTable(ptr, &mut size, 0, family as u32, TCP_TABLE_OWNER_PID_LISTENER, 0)
+            };
+            match rc {
+                NO_ERROR if !buf.is_empty() => return Some(buf),
+                NO_ERROR | ERROR_INSUFFICIENT_BUFFER => continue,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Reads the row count, then each row, without assuming alignment.
+    fn rows<T: Copy>(buf: &[u8]) -> Vec<T> {
+        if buf.len() < 4 {
+            return Vec::new();
+        }
+        let n = u32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        // The rows start after the count, padded to the row's alignment.
+        let start = std::mem::align_of::<T>().max(4);
+        let size = std::mem::size_of::<T>();
+        (0..n)
+            .map_while(|i| {
+                let at = start + i * size;
+                (at + size <= buf.len())
+                    .then(|| unsafe { std::ptr::read_unaligned(buf[at..].as_ptr().cast::<T>()) })
+            })
+            .collect()
+    }
+
+    // The port sits in the low word in network byte order.
+    let port = |raw: u32| u16::from_be(raw as u16);
+
+    let v4 = table(AF_INET);
+    let v6 = table(AF_INET6);
+    if v4.is_none() && v6.is_none() {
+        return HashMap::new();
+    }
+
+    let mut out: HashMap<u32, Vec<u16>> = pids.iter().map(|&p| (p, Vec::new())).collect();
+    for r in v4.map(|b| rows::<MIB_TCPROW_OWNER_PID>(&b)).unwrap_or_default() {
+        if let Some(list) = out.get_mut(&r.dwOwningPid) {
+            list.push(port(r.dwLocalPort));
+        }
+    }
+    for r in v6.map(|b| rows::<MIB_TCP6ROW_OWNER_PID>(&b)).unwrap_or_default() {
+        if let Some(list) = out.get_mut(&r.dwOwningPid) {
+            list.push(port(r.dwLocalPort));
+        }
+    }
+    out
+}
+
+/// Asks Restart Manager which processes hold any of these files open.
+///
+/// Restart Manager is Windows' own answer to "who is using this file", the one
+/// installers use. Only its question half is used: the session registers the
+/// files, reads the list, and ends. Nothing is ever shut down or restarted.
+///
+/// On any failure nothing is known and the map is empty.
+pub(super) fn processes_holding(
+    pids: &[u32],
+    files: &[PathBuf],
+) -> std::collections::HashMap<u32, bool> {
+    use std::collections::{HashMap, HashSet};
+    use windows_sys::Win32::System::RestartManager::{
+        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
+        RM_PROCESS_INFO,
+    };
+
+    let mut session: u32 = 0;
+    let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
+    if unsafe { RmStartSession(&mut session, 0, key.as_mut_ptr()) } != NO_ERROR {
+        return HashMap::new();
+    }
+
+    let holders = (|| -> Option<HashSet<u32>> {
+        let names: Vec<Vec<u16>> = files.iter().map(|f| wide(f)).collect();
+        // Registered in batches, so no single call carries an unbounded list.
+        for chunk in names.chunks(512) {
+            let ptrs: Vec<*const u16> = chunk.iter().map(|n| n.as_ptr()).collect();
+            let rc = unsafe {
+                RmRegisterResources(
+                    session,
+                    ptrs.len() as u32,
+                    ptrs.as_ptr(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                )
+            };
+            if rc != NO_ERROR {
+                return None;
+            }
+        }
+
+        let mut list: Vec<RM_PROCESS_INFO> = Vec::new();
+        // The list can grow between the two calls, so ask until it fits.
+        for _ in 0..5 {
+            let mut needed: u32 = 0;
+            let mut count: u32 = list.len() as u32;
+            let mut reasons: u32 = 0;
+            let rc = unsafe {
+                RmGetList(
+                    session,
+                    &mut needed,
+                    &mut count,
+                    if list.is_empty() { std::ptr::null_mut() } else { list.as_mut_ptr() },
+                    &mut reasons,
+                )
+            };
+            match rc {
+                NO_ERROR => {
+                    return Some(
+                        list[..count as usize].iter().map(|p| p.Process.dwProcessId).collect(),
+                    );
+                }
+                ERROR_MORE_DATA => {
+                    list = vec![unsafe { std::mem::zeroed() }; needed as usize];
+                }
+                _ => return None,
+            }
+        }
+        None
+    })();
+
+    unsafe { RmEndSession(session) };
+
+    match holders {
+        Some(h) => pids.iter().map(|&p| (p, h.contains(&p))).collect(),
+        None => HashMap::new(),
+    }
 }
 
 #[cfg(test)]
