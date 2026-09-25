@@ -181,7 +181,12 @@ export interface Content {
   bytes: number;
   workflowHits: number;
   copies: Copy[];
-  metadata: ModelMetadata | null;
+  /**
+   * What Civitai answers for these bytes when asked, or null when it does not
+   * know them. Nothing reads it until a lookup asks, the way the engine starts
+   * with an empty cache.
+   */
+  civitai: ModelMetadata | null;
 }
 
 export interface VaultEntry {
@@ -325,7 +330,7 @@ export function buildWorld(): World {
       bytes: mb * MB,
       workflowHits,
       copies: copies.map((c) => parseCopy(c, filename)),
-      metadata: civitai
+      civitai: civitai
         ? {
             sha256,
             source: "civitai",
@@ -683,7 +688,14 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
   };
 }
 
-export function vaultFilesOf(world: World): VaultFile[] {
+/**
+ * The listings carry what the metadata cache holds, whatever the switch says,
+ * the way the engine's listings read its cache.
+ */
+export function vaultFilesOf(
+  world: World,
+  cache: ReadonlyMap<string, ModelMetadata> = new Map(),
+): VaultFile[] {
   return [...world.vault.values()].map((entry) => {
     const content = world.contents.find((c) => c.sha256 === entry.sha256);
     const links = world.links.filter((l) => l.sha256 === entry.sha256);
@@ -697,14 +709,17 @@ export function vaultFilesOf(world: World): VaultFile[] {
       aliases: entry.aliases,
       linkCount: links.length,
       links,
-      metadata: world.metadataLookupsEnabled ? (content?.metadata ?? null) : null,
+      metadata: cache.get(entry.sha256) ?? null,
       present: true,
     };
   });
 }
 
 /** One row per unique content, across the vault and the installs. */
-export function contentRowsOf(world: World): ContentRow[] {
+export function contentRowsOf(
+  world: World,
+  cache: ReadonlyMap<string, ModelMetadata> = new Map(),
+): ContentRow[] {
   const rows: ContentRow[] = [];
   for (const content of world.contents) {
     const entry = world.vault.get(content.sha256);
@@ -725,7 +740,7 @@ export function contentRowsOf(world: World): ContentRow[] {
       inVault: entry !== undefined,
       installIds: [...new Set(content.copies.map((c) => c.installId))],
       addedAt: entry?.addedAt ?? null,
-      metadata: world.metadataLookupsEnabled ? content.metadata : null,
+      metadata: cache.get(content.sha256) ?? null,
     });
   }
   return rows;

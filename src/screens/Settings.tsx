@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Match, Show, Switch, createMemo } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
@@ -32,6 +32,14 @@ export function SettingsScreen() {
   const platform = () => app.appState()?.platform ?? null;
   const settings = () => app.appState()?.settings ?? null;
   const vault = () => app.vault();
+  const lookupRunning = () => {
+    const l = app.lookup();
+    return l.kind === "running" ? l : null;
+  };
+  const lookupRefused = () => {
+    const l = app.lookup();
+    return l.kind === "unreachable" ? l : null;
+  };
 
   const recheck = async () => {
     await app.actions.refresh();
@@ -446,10 +454,30 @@ export function SettingsScreen() {
                   </span>
                 </div>
                 <div class="note up">
-                  The fingerprint goes out, nothing else. No filename, no path. Turn
-                  it off and ComfyVault runs with no network at all. Files Civitai
-                  does not know stay unlabelled, which is normal.
+                  The fingerprint goes out, nothing else. No filename, no path. After
+                  each scan ComfyVault asks, in the background, about the files it has
+                  not asked about before, a hundred at a time. Turn it off and
+                  ComfyVault runs with no network at all. Files Civitai does not know
+                  stay unlabelled, which is normal.
                 </div>
+                <Show when={current().metadataLookupsEnabled === true}>
+                  <Switch>
+                    <Match when={lookupRunning()}>
+                      {(r) => (
+                        <div class="note up">
+                          Asking now: {r().asked} of {r().total} files so far.
+                        </div>
+                      )}
+                    </Match>
+                    <Match when={lookupRefused()}>
+                      {(r) => (
+                        <div class="note up">
+                          {r().message} ComfyVault asks again after the next scan.
+                        </div>
+                      )}
+                    </Match>
+                  </Switch>
+                </Show>
               </>
             )}
           </Show>

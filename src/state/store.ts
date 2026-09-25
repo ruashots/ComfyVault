@@ -32,6 +32,7 @@ import {
   type Selection,
 } from "~/domain/selection";
 import { volumeLabel } from "~/domain/drives";
+import { runLookups } from "~/domain/lookup";
 import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
@@ -219,6 +220,8 @@ export interface AppStore {
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
+  /** Where the background Civitai lookup is. */
+  readonly lookup: Accessor<LookupStatus>;
   readonly scanProgress: Accessor<ScanProgress | null>;
   readonly applyProgress: Accessor<ApplyProgress | null>;
   /** An undo while it runs, which reports in its own shape. */
@@ -359,6 +362,20 @@ function overtakenByUndo(undoneAt: string | null, scan: ScanRecord | null): bool
   );
 }
 
+/**
+ * The background Civitai lookup.
+ *
+ * `unreachable` holds the engine's own words for why: the network is down, or
+ * Civitai asked the app to slow down. It is not retried until the next scan or
+ * until the switch is turned on again, so a refusal is never answered by asking
+ * again straight away.
+ */
+export type LookupStatus =
+  | { kind: "idle" }
+  | { kind: "running"; asked: number; total: number }
+  | { kind: "done" }
+  | { kind: "unreachable"; message: string };
+
 export function createAppStore(engine: Engine): AppStore {
   const [appState, setAppState] = createSignal<AppState | null>(null);
   const [vault, setVault] = createSignal<VaultInfo | null>(null);
@@ -402,6 +419,7 @@ export function createAppStore(engine: Engine): AppStore {
   const [libraryTotal, setLibraryTotal] = createSignal(0);
   const [nothingSearched, setNothingSearched] = createSignal(false);
 
+  const [lookup, setLookup] = createSignal<LookupStatus>({ kind: "idle" });
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
   const [revertProgress, setRevertProgress] = createSignal<RevertProgress | null>(null);
@@ -645,6 +663,14 @@ export function createAppStore(engine: Engine): AppStore {
       );
 
       await loadUsage(contents.rows);
+
+      const lookupsOn = state.settings.metadataLookupsEnabled === true;
+      if (lookupsOn && !lookupsWereOn) lookupDue = true;
+      lookupsWereOn = lookupsOn;
+      if (lookupDue) {
+        lookupDue = false;
+        void lookUpMetadata();
+      }
     } catch (error) {
       batch(() => {
         // "No vault folder is open yet" is not a failure. It is what a program
@@ -655,6 +681,83 @@ export function createAppStore(engine: Engine): AppStore {
           : messageOf(error));
         setReady(true);
       });
+    }
+  };
+
+  // ── the Civitai lookup ────────────────────────────────────────────────────
+
+  /**
+   * Set after every scan, and when the switch is seen on where it was not
+   * before, which includes the first load with the switch on.
+   */
+  let lookupDue = false;
+  let lookupsWereOn = false;
+  let lookupPass = 0;
+  let disposed = false;
+
+  /** Every content the cache has no answer for, across every page. */
+  const unanswered = async (): Promise<string[]> => {
+    const out: string[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const page = await engine.listContents({ offset, limit: 1000, sort: "size" });
+      for (const row of page.rows) if (row.metadata === null) out.push(row.sha256);
+      if (page.rows.length === 0 || offset + page.rows.length >= page.total) return out;
+    }
+  };
+
+  /**
+   * Asks Civitai about every file it has not answered for, in the background.
+   *
+   * `refresh` is passed only for hashes with no cached answer, so it costs no
+   * extra request, and it is what makes the engine say so when the network is
+   * down rather than answer "not found" for everything. Measured against the
+   * real engine and the live service: a known model comes back found with its
+   * name, base model, page and pictures; an unknown hash comes back found:
+   * false and is cached, so it is not asked again; with the switch off nothing
+   * goes out.
+   */
+  const lookUpMetadata = async () => {
+    if (appState()?.settings.metadataLookupsEnabled !== true) return;
+    if (lookup().kind === "running") return;
+    const pass = (lookupPass += 1);
+    let hashes: string[];
+    try {
+      hashes = await unanswered();
+    } catch {
+      return;
+    }
+    if (hashes.length === 0) {
+      setLookup({ kind: "done" });
+      return;
+    }
+    setLookup({ kind: "running", asked: 0, total: hashes.length });
+    const end = await runLookups({
+      hashes,
+      fetch: (batch) => engine.fetchMetadataBatch(batch, true),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      shouldStop: () =>
+        disposed ||
+        pass !== lookupPass ||
+        appState()?.settings.metadataLookupsEnabled !== true,
+      onAnswers: (answers, asked) => {
+        if (disposed) return;
+        const bySha = new Map(answers.map((m) => [m.sha256, m]));
+        batch(() => {
+          setLibrary((rows) =>
+            rows.map((row) => {
+              const found = bySha.get(row.sha256);
+              return found ? { ...row, metadata: found } : row;
+            }),
+          );
+          setLookup({ kind: "running", asked, total: hashes.length });
+        });
+      },
+    });
+    if (disposed || pass !== lookupPass) return;
+    if (end.kind === "refused") {
+      setLookup({ kind: "unreachable", message: messageOf(end.error) });
+    } else {
+      setLookup(end.kind === "done" ? { kind: "done" } : { kind: "idle" });
     }
   };
 
@@ -681,6 +784,7 @@ export function createAppStore(engine: Engine): AppStore {
         setShowAllDuplicates(false);
       });
       if (result.cancelled) showToast("Scan cancelled · nothing was changed");
+      else lookupDue = true;
       void refresh();
     }),
     engine.onScanError((error) => {
@@ -718,6 +822,7 @@ export function createAppStore(engine: Engine): AppStore {
     }),
   ];
   onCleanup(() => {
+    disposed = true;
     for (const stop of stops) stop();
     if (toastTimer) clearTimeout(toastTimer);
   });
@@ -778,6 +883,7 @@ export function createAppStore(engine: Engine): AppStore {
     scanPredatesUndo,
     usage,
     usageMethod,
+    lookup,
     scanProgress,
     applyProgress,
     revertProgress,

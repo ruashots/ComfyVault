@@ -234,6 +234,10 @@ export class FixtureEngine implements Engine {
    * compressed model occupies far less than its size, and so does its copy.
    */
   private revertRoomBytes: number | null = null;
+  /** The engine's metadata cache. It lives in the vault, so an undo keeps it. */
+  private metadataCache = new Map<string, ModelMetadata>();
+  private civitaiReachable = true;
+  private civitaiRequests = 0;
   /** Set by `devCutOffApply`: the next tick ends the run where it is. */
   private cuttingOff = false;
   /** Runs cut off part way, with what they did and what they still owe. */
@@ -1324,7 +1328,7 @@ export class FixtureEngine implements Engine {
     limit: number;
   }): Promise<VaultFilePage> {
     this.requireVault();
-    const all = vaultFilesOf(this.world);
+    const all = vaultFilesOf(this.world, this.metadataCache);
     return {
       total: all.length,
       offset: args.offset,
@@ -1341,7 +1345,7 @@ export class FixtureEngine implements Engine {
   }): Promise<ContentPage> {
     this.requireVault();
     const filter = args.filter ?? {};
-    let rows = contentRowsOf(this.world);
+    let rows = contentRowsOf(this.world, this.metadataCache);
     if (filter.inVault !== undefined) {
       rows = rows.filter((r) => r.inVault === filter.inVault);
     }
@@ -1401,7 +1405,7 @@ export class FixtureEngine implements Engine {
     if (!names.includes(name)) names.push(name);
     entry.canonicalName = name;
     entry.aliases = names.filter((n) => n !== name);
-    const file = vaultFilesOf(this.world).find((f) => f.sha256 === sha256);
+    const file = vaultFilesOf(this.world, this.metadataCache).find((f) => f.sha256 === sha256);
     if (!file) throw error("notFound", "The vault does not hold that file.");
     return file;
   }
@@ -1507,20 +1511,59 @@ export class FixtureEngine implements Engine {
     });
   }
 
-  async getMetadata(sha256: string): Promise<ModelMetadata | null> {
+  async getMetadata(sha256: string, refresh = false): Promise<ModelMetadata | null> {
     this.requireVault();
-    if (!this.world.metadataLookupsEnabled) return null;
-    return this.world.contents.find((c) => c.sha256 === sha256)?.metadata ?? null;
+    const [answer] = await this.fetchMetadataBatch([sha256], refresh);
+    return this.metadataCache.get(sha256) ?? (answer?.found ? answer : null);
   }
 
-  async fetchMetadataBatch(hashes: string[]): Promise<ModelMetadata[]> {
+  /**
+   * Measured against the real engine and the live service: a known hash comes
+   * back found and is cached, an unknown one comes back found: false and is
+   * cached too. With lookups off nothing goes out: every hash with no cached
+   * answer comes back found: false and nothing is cached. Offline, a call with
+   * `refresh` rejects with networkUnavailable.
+   */
+  async fetchMetadataBatch(hashes: string[], refresh = false): Promise<ModelMetadata[]> {
     this.requireVault();
     const out: ModelMetadata[] = [];
+    const toFetch: string[] = [];
     for (const sha of hashes) {
-      const found = await this.getMetadata(sha);
-      if (found) out.push(found);
+      const cached = this.metadataCache.get(sha);
+      if (cached && !refresh) out.push(cached);
+      else toFetch.push(sha);
+    }
+    if (toFetch.length === 0 || !this.world.metadataLookupsEnabled) {
+      return [...out, ...toFetch.map(notFoundMetadata)];
+    }
+    if (!this.civitaiReachable) {
+      if (refresh) {
+        throw error(
+          "networkUnavailable",
+          "Could not reach Civitai, so model details are not available right now. Everything else still works.",
+        );
+      }
+      return [...out, ...toFetch.map(notFoundMetadata)];
+    }
+    // One request for every hundred hashes, as the engine sends them.
+    this.civitaiRequests += Math.ceil(toFetch.length / 100);
+    for (const sha of toFetch) {
+      const known = this.world.contents.find((c) => c.sha256 === sha)?.civitai ?? null;
+      const answer = known ? { ...known, fetchedAt: this.stamp() } : notFoundMetadata(sha);
+      this.metadataCache.set(sha, answer);
+      out.push(answer);
     }
     return out;
+  }
+
+  /** How many requests have gone out to Civitai. */
+  devCivitaiRequests(): number {
+    return this.civitaiRequests;
+  }
+
+  /** Civitai answers, or the network does not reach it. */
+  devSetCivitaiReachable(reachable: boolean): void {
+    this.civitaiReachable = reachable;
   }
 
   // ── running programs ──────────────────────────────────────────────────────
@@ -1733,6 +1776,28 @@ function refusedCategory(rawCategory: string): boolean {
 /** The drive a path is on, for example "C:". */
 function volumeOfPath(path: string): string {
   return path.slice(0, 2).toUpperCase();
+}
+
+function notFoundMetadata(sha256: string): ModelMetadata {
+  return {
+    sha256,
+    source: "civitai",
+    fetchedAt: new Date().toISOString(),
+    found: false,
+    modelName: null,
+    modelType: null,
+    versionName: null,
+    baseModel: null,
+    triggerWords: [],
+    nsfw: false,
+    nsfwLevel: 0,
+    civitaiModelId: null,
+    civitaiVersionId: null,
+    pageUrl: null,
+    downloadUrl: null,
+    previewImageUrls: [],
+    ambiguous: false,
+  };
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {

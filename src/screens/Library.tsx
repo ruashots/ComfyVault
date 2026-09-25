@@ -1,9 +1,12 @@
 import {
   For,
+  Match,
   Show,
+  Switch,
   createEffect,
   createMemo,
   createResource,
+  createSignal,
   onCleanup,
   onMount,
 } from "solid-js";
@@ -19,7 +22,7 @@ import { openConfirm } from "~/modals/confirm";
 import { openLinkPicker } from "~/modals/picker";
 import { useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
-import type { ContentRow, UsageResult } from "~/ipc/contract";
+import type { ContentRow, ModelMetadata, UsageResult } from "~/ipc/contract";
 
 export interface LibraryFilters {
   query: string;
@@ -692,26 +695,11 @@ function DrawerBody(props: { row: ContentRow }) {
       </div>
       <Show
         when={row().metadata?.found ? row().metadata : null}
-        fallback={
-          <Show
-            when={app.appState()?.settings.metadataLookupsEnabled}
-            fallback={
-              <div class="note">
-                Civitai lookup is off, so nothing was asked about this file.
-                ComfyVault works the same either way. Turn it on in Settings.
-              </div>
-            }
-          >
-            <div class="note">
-              Civitai has no file with this fingerprint. That is normal: official
-              releases and anything you built or renamed yourself will never match.
-              ComfyVault works the same either way.
-            </div>
-          </Show>
-        }
+        fallback={<CivitaiNothing answered={row().metadata !== null} />}
       >
         {(meta) => (
           <>
+            <CivitaiPicture meta={meta()} />
             <div class="kv">
               <span class="k w96">Name</span>
               <span class="v">
@@ -762,5 +750,107 @@ function DrawerBody(props: { row: ContentRow }) {
         )}
       </Show>
     </>
+  );
+}
+
+/**
+ * Why the Civitai section has nothing to show for this file, in the one way
+ * that is true right now.
+ *
+ * A file Civitai does not know is normal. A file nobody has asked about yet,
+ * or asked while Civitai could not be reached, is a different fact, and saying
+ * "Civitai has no such file" for it would be false.
+ */
+function CivitaiNothing(props: { answered: boolean }) {
+  const app = useApp();
+  const on = () => app.appState()?.settings.metadataLookupsEnabled === true;
+  const status = () => app.lookup();
+  const running = () => {
+    const s = status();
+    return s.kind === "running" ? s : null;
+  };
+  const refused = () => {
+    const s = status();
+    return s.kind === "unreachable" ? s : null;
+  };
+  return (
+    <Switch
+      fallback={
+        <div class="note">
+          Civitai has not been asked about this file yet. It is asked in the
+          background after the next scan.
+        </div>
+      }
+    >
+      <Match when={props.answered}>
+        <div class="note">
+          Civitai has no file with this fingerprint. That is normal: official
+          releases and anything you built or renamed yourself will never match.
+          ComfyVault works the same either way.
+        </div>
+      </Match>
+      <Match when={!on()}>
+        <div class="note">
+          Civitai lookup is off, so nothing was asked about this file. ComfyVault
+          works the same either way. Turn it on in Settings.
+        </div>
+      </Match>
+      <Match when={running()}>
+        {(r) => (
+          <div class="note">
+            Asking Civitai in the background, {r().asked} of {r().total} files so
+            far. This one has not come back yet.
+          </div>
+        )}
+      </Match>
+      <Match when={refused()}>
+        {(r) => (
+          <div class="note">
+            {r().message} ComfyVault asks again after the next scan.
+          </div>
+        )}
+      </Match>
+    </Switch>
+  );
+}
+
+/**
+ * The model's first picture on Civitai.
+ *
+ * Civitai marks each model version with the ratings of its pictures, one bit
+ * for each rating: 1 is PG and 2 is PG-13, and 4 and above are adult. A version
+ * whose pictures include any adult rating shows none here, because the picture
+ * that comes first can be any of them. Measured against the live service:
+ * DreamShaper 8 carries 11, so its pictures stay on Civitai.
+ */
+export function CivitaiPicture(props: { meta: ModelMetadata }) {
+  const [broken, setBroken] = createSignal(false);
+  const safe = () => !props.meta.nsfw && props.meta.nsfwLevel <= 3;
+  const first = () => props.meta.previewImageUrls[0] ?? null;
+  return (
+    <Show when={first()}>
+      {(url) => (
+        <Show
+          when={safe()}
+          fallback={
+            <div class="note" style={{ "margin-bottom": "8px" }}>
+              Civitai rates some pictures of this model as adult, so none is shown
+              here. They are on its Civitai page.
+            </div>
+          }
+        >
+          <Show when={!broken()}>
+            <img
+              class="civ-pic"
+              src={url()}
+              alt={`A picture of ${props.meta.modelName ?? "this model"} from Civitai`}
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              onError={() => setBroken(true)}
+            />
+          </Show>
+        </Show>
+      )}
+    </Show>
   );
 }
