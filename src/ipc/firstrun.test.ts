@@ -48,7 +48,7 @@ const camel = (snake: string) =>
 /** Arguments that get each call as far as the guard and no further. */
 const ARGS: Record<string, unknown[]> = {
   buildPlan: ["scan-1"],
-  registerInstall: ["C:\\ComfyUI-Alpha"],
+  registerInstall: ["C:\\ComfyUI-Studio"],
   checkModelUsage: [["a.safetensors"]],
   getMetadata: ["A".repeat(64)],
   fetchMetadataBatch: [["A".repeat(64)]],
@@ -76,8 +76,8 @@ function commandsThatAnswer(): string[] {
 
 /** Arguments for the handful that answer before a vault is chosen. */
 const ANSWERING_ARGS: Record<string, unknown[]> = {
-  validateInstallPath: ["C:\\ComfyUI-Alpha"],
-  checkLockedFiles: [["C:\\ComfyUI-Alpha\\models\\a.safetensors"]],
+  validateInstallPath: ["C:\\ComfyUI-Studio"],
+  checkLockedFiles: [["C:\\ComfyUI-Studio\\models\\a.safetensors"]],
   selectVault: ["C:\\ComfyVault"],
 };
 

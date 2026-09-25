@@ -82,10 +82,10 @@ describe("registering an install", () => {
   it("refuses an install that is registered already", async () => {
     await mountPicker((h) => openInstallPicker(h.app));
     await openDrive();
-    await userEvent.click(node("ComfyUI-Alpha"));
+    await userEvent.click(node("ComfyUI-Studio"));
     await waitFor(() => verdict()?.classList.contains("no") === true);
     expect(verdict()!.textContent).toContain("Already registered");
-    expect(verdict()!.textContent).toContain("Production");
+    expect(verdict()!.textContent).toContain("Studio");
     expect(button("Add this install")).toBeDisabled();
   });
 
@@ -126,14 +126,14 @@ describe("choosing the vault folder", () => {
     await mountPicker((h) => openVaultPicker(h.app));
     await userEvent.click(expander("C:\\"));
     await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Studio/ }).length > 0,
     );
-    await userEvent.click(expander("ComfyUI-Alpha"));
+    await userEvent.click(expander("ComfyUI-Studio"));
     await waitFor(() => screen.queryAllByRole("button", { name: /Open models/ }).length > 0);
     await userEvent.click(node("models"));
     await waitFor(() => verdict()?.classList.contains("no") === true);
     expect(verdict()!.textContent).toContain("That is inside an install");
-    expect(verdict()!.textContent).toContain("Production");
+    expect(verdict()!.textContent).toContain("Studio");
     expect(button("Use this folder")).toBeDisabled();
   });
 
@@ -168,9 +168,9 @@ describe("placing a link", () => {
     });
     await userEvent.click(expander("C:\\"));
     await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Studio/ }).length > 0,
     );
-    await userEvent.click(expander("ComfyUI-Alpha"));
+    await userEvent.click(expander("ComfyUI-Studio"));
     await waitFor(() => screen.queryAllByRole("button", { name: /custom_nodes/ }).length > 0);
     await userEvent.click(node("custom_nodes"));
     await waitFor(() => verdict() !== null);
@@ -184,9 +184,9 @@ describe("placing a link", () => {
     });
     await userEvent.click(expander("C:\\"));
     await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Alpha/ }).length > 0,
+      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Studio/ }).length > 0,
     );
-    await userEvent.click(expander("ComfyUI-Alpha"));
+    await userEvent.click(expander("ComfyUI-Studio"));
     await waitFor(() => screen.queryAllByRole("button", { name: /Open models/ }).length > 0);
     await userEvent.click(expander("models"));
     await waitFor(() => screen.queryAllByRole("button", { name: /^loras/ }).length > 0);

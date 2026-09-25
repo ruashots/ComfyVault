@@ -142,16 +142,16 @@ const DISK: FakeFolder[] = [
   {
     path: "C:\\",
     children: [
-      "C:\\ComfyUI-Alpha",
-      "C:\\ComfyUI-Beta",
+      "C:\\ComfyUI-Studio",
+      "C:\\ComfyUI-Sandbox",
       "C:\\ComfyUI-Portable",
       "C:\\ComfyVault",
       "C:\\Program Files",
       "C:\\Users",
     ],
   },
-  ...installTree("C:\\ComfyUI-Alpha"),
-  ...installTree("C:\\ComfyUI-Beta"),
+  ...installTree("C:\\ComfyUI-Studio"),
+  ...installTree("C:\\ComfyUI-Sandbox"),
   ...installTree("C:\\ComfyUI-Portable"),
   { path: "C:\\ComfyVault", children: MODEL_DIRS.map((d) => `C:\\ComfyVault\\${d}`) },
   ...MODEL_DIRS.map((d) => ({ path: `C:\\ComfyVault\\${d}`, children: [] as string[] })),
@@ -1497,9 +1497,9 @@ export class FixtureEngine implements Engine {
         used: hits > 0,
         searched: true,
         matches: Array.from({ length: Math.min(hits, 4) }, (_, i) => ({
-          installId: "prod",
-          installLabel: "Production",
-          workflowPath: `C:\\ComfyUI-Alpha\\user\\default\\workflows\\flow-${i + 1}.json`,
+          installId: "studio",
+          installLabel: "Studio",
+          workflowPath: `C:\\ComfyUI-Studio\\user\\default\\workflows\\flow-${i + 1}.json`,
           workflowName: `flow-${i + 1}.json`,
         })),
         method: USAGE_METHOD,
@@ -1567,7 +1567,7 @@ export class FixtureEngine implements Engine {
 
   /** Close or start ComfyUI, which only the person can really do. */
   devSetComfyRunning(running: boolean): void {
-    this.world.running = running ? ["prod"] : [];
+    this.world.running = running ? ["studio"] : [];
     for (const content of this.world.contents) {
       for (const copy of content.copies) {
         if (copy.blocked === "fileLocked" && !running) copy.blocked = null;

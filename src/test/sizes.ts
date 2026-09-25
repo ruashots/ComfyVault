@@ -1,8 +1,8 @@
 /**
- * Figures that were settled when the person approved the mock and do not depend
- * on any engine rule: how a size reads on screen.
+ * How a size reads on screen, as design/mock/comfyvault.html prints it. These
+ * figures depend on no engine rule.
  *
- * The mock's totals are NOT here. They were produced under the mock's own
+ * The design file's totals are NOT here. They were produced under its own
  * grouping rules, and docs/IPC-CONTRACT.md settles those rules differently: a
  * copy on another drive is copied across rather than left behind, and the copy
  * that becomes the vault file is the one already on the vault's drive. The

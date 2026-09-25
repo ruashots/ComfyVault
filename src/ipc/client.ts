@@ -26,10 +26,9 @@ export async function createEngine(): Promise<Engine> {
   // ?first-run opens the browser build with nothing registered.
   const empty = new URLSearchParams(window.location.search).has("first-run");
   const engine = new FixtureEngine({ empty });
-  // The mock carried a control bar outside the window for setting the machine's
-  // condition. This is the same thing for the running app: it sets Developer
-  // Mode and whether ComfyUI is running, which only Windows can do for real.
-  // It lives on this path only, so it cannot reach the desktop window.
+  // Only Windows can really turn Developer Mode on or close ComfyUI, so the
+  // browser build sets both from the console instead. It lives on this path
+  // only, so it cannot reach the desktop window.
   (window as unknown as { comfyVaultDev?: unknown }).comfyVaultDev = {
     symlinks: (on: boolean) => engine.devSetSymlinksSupported(on),
     comfyRunning: (on: boolean) => engine.devSetComfyRunning(on),

@@ -84,7 +84,7 @@ describe("what the picker refuses, and why", () => {
 
   it("allows a name taken somewhere else", () => {
     expect(
-      folderNameError("loras", "C:\\ComfyUI-Beta\\models", siblings),
+      folderNameError("loras", "C:\\ComfyUI-Sandbox\\models", siblings),
     ).toBeNull();
   });
 

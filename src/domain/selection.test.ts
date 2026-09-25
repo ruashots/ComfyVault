@@ -111,10 +111,10 @@ const platform = (supported: boolean): PlatformReport => ({
 const comfy: RunningComfy = {
   pid: 18244,
   name: "python.exe",
-  exePath: "C:\\ComfyUI-Alpha\\python.exe",
-  cwd: "C:\\ComfyUI-Alpha",
+  exePath: "C:\\ComfyUI-Studio\\python.exe",
+  cwd: "C:\\ComfyUI-Studio",
   commandLine: ["python.exe", "main.py"],
-  matchedInstallIds: ["prod"],
+  matchedInstallIds: ["studio"],
   matchReason: "exeUnderRoot",
 };
 

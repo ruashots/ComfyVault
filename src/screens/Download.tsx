@@ -3,8 +3,8 @@ import { Header } from "~/components/Shell";
 import { useApp } from "~/state/store";
 
 /**
- * The one screen that stands as a placeholder in this version, by the person's
- * decision. It says exactly what it will hold and what to do until then.
+ * The one screen that holds no tool in this version. It says exactly what it
+ * will hold and what to do until then.
  */
 export function DownloadScreen() {
   const app = useApp();

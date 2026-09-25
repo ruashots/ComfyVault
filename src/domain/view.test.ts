@@ -202,7 +202,7 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
     distinctFiles: 2,
     source: {
       installId: "a",
-      installLabel: "Production",
+      installLabel: "Studio",
       absPath: "C:\\a\\models\\loras\\x.safetensors",
       relPath: "models\\loras\\x.safetensors",
       sameVolumeAsVault: true,
@@ -223,7 +223,7 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
 describe("why the engine kept that copy", () => {
   it("says so in words, never in the engine's own token", () => {
     const sameVolume = chosenBecauseText(group(), "C:");
-    expect(sameVolume).toContain("Production");
+    expect(sameVolume).toContain("Studio");
     expect(sameVolume).toContain("drive C:");
     expect(sameVolume).not.toContain("sameVolume");
 
@@ -250,8 +250,8 @@ describe("every place one content is reachable from", () => {
     const { plan } = await readyPlan();
     const group = plan.groups.find((g) => g.occurrences > 1)!;
     const labels = new Map([
-      ["prod", "Production"],
-      ["norm", "Normal"],
+      ["studio", "Studio"],
+      ["sandbox", "Sandbox"],
     ]);
     const places = placesOf(group.sha256, plan, [], labels);
     expect(places).toHaveLength(group.occurrences);
@@ -313,9 +313,9 @@ describe("what each install gives up", () => {
   it("marks a running install as running", async () => {
     const { engine, plan } = await readyPlan();
     const installs = await engine.listInstalls();
-    const views = buildInstallViews(installs, plan, new Set(["prod"]));
-    expect(views.find((v) => v.install.id === "prod")!.running).toBe(true);
-    expect(views.find((v) => v.install.id === "norm")!.running).toBe(false);
+    const views = buildInstallViews(installs, plan, new Set(["studio"]));
+    expect(views.find((v) => v.install.id === "studio")!.running).toBe(true);
+    expect(views.find((v) => v.install.id === "sandbox")!.running).toBe(false);
   });
 });
 
@@ -345,8 +345,8 @@ describe("which ComfyUI versions lose model thumbnails", () => {
     const engine = new FixtureEngine();
     const installs: Install[] = await engine.listInstalls();
     const views = buildInstallViews(installs, null, new Set());
-    expect(views.find((v) => v.install.id === "prod")!.thumbnails).toBe("affected");
-    expect(views.find((v) => v.install.id === "norm")!.thumbnails).toBe("unaffected");
+    expect(views.find((v) => v.install.id === "studio")!.thumbnails).toBe("affected");
+    expect(views.find((v) => v.install.id === "sandbox")!.thumbnails).toBe("unaffected");
   });
 
   it("carries the unknown answer through to the view", async () => {
@@ -377,8 +377,8 @@ describe("which name the vault should keep", () => {
   it("prefers the name the most links already resolve through", () => {
     const view = buildNameGroupView(
       nameGroup([
-        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["prod"] },
-        { name: "bbbbbb.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 4, seenInInstalls: ["norm"] },
+        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["studio"] },
+        { name: "bbbbbb.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 4, seenInInstalls: ["sandbox"] },
       ]),
     );
     expect(view.suggestion.name).toBe("bbbbbb.safetensors");
@@ -388,7 +388,7 @@ describe("which name the vault should keep", () => {
   it("says one link, not one links", () => {
     const view = buildNameGroupView(
       nameGroup([
-        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["prod"] },
+        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["studio"] },
         { name: "b.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 0, seenInInstalls: [] },
       ]),
     );
@@ -400,8 +400,8 @@ describe("which name the vault should keep", () => {
   it("says so plainly when the links are level and only the length separates them", () => {
     const view = buildNameGroupView(
       nameGroup([
-        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["prod"] },
-        { name: "a-longer.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 1, seenInInstalls: ["norm"] },
+        { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 1, seenInInstalls: ["studio"] },
+        { name: "a-longer.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 1, seenInInstalls: ["sandbox"] },
       ]),
     );
     expect(view.suggestion.name).toBe("a-longer.safetensors");
@@ -414,11 +414,11 @@ describe("which name the vault should keep", () => {
     const view = buildNameGroupView(
       nameGroup([
         { name: "a.safetensors", isCanonical: true, vaultRelPath: "vae/a", usedByLinks: 0, seenInInstalls: [] },
-        { name: "b.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 0, seenInInstalls: ["Normal"] },
+        { name: "b.safetensors", isCanonical: false, vaultRelPath: "vae/b", usedByLinks: 0, seenInInstalls: ["Sandbox"] },
       ]),
     );
     expect(view.suggestion.name).toBe("b.safetensors");
-    expect(view.suggestion.reason).toContain("Normal");
+    expect(view.suggestion.reason).toContain("Sandbox");
   });
 
   it("falls back to the longer name when nothing else separates them", () => {
@@ -435,8 +435,8 @@ describe("which name the vault should keep", () => {
   it("only offers to remove a name nothing uses", () => {
     const view = buildNameGroupView(
       nameGroup([
-        { name: "keep.safetensors", isCanonical: true, vaultRelPath: "vae/k", usedByLinks: 2, seenInInstalls: ["prod"] },
-        { name: "used.safetensors", isCanonical: false, vaultRelPath: "vae/u", usedByLinks: 1, seenInInstalls: ["norm"] },
+        { name: "keep.safetensors", isCanonical: true, vaultRelPath: "vae/k", usedByLinks: 2, seenInInstalls: ["studio"] },
+        { name: "used.safetensors", isCanonical: false, vaultRelPath: "vae/u", usedByLinks: 1, seenInInstalls: ["sandbox"] },
         { name: "spare.safetensors", isCanonical: false, vaultRelPath: "vae/s", usedByLinks: 0, seenInInstalls: [] },
       ]),
     );

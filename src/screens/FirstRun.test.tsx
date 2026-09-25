@@ -121,7 +121,7 @@ describe("the order the two steps come in", () => {
     expect((await engine.getVaultInfo()).root).toBe("C:\\ComfyVault");
 
     await addInstall();
-    await pickFolder("ComfyUI-Alpha", "Add this install");
+    await pickFolder("ComfyUI-Studio", "Add this install");
     await waitFor(() => app.setupDone(), 4000);
     expect((await engine.listInstalls()).length).toBe(1);
     expect(document.body.textContent).not.toContain("Two things to set");
@@ -254,7 +254,7 @@ describe("the drive meter before anything has been read", () => {
   it("does not claim every model is already held once", async () => {
     const engine = new FixtureEngine({ empty: true });
     await engine.selectVault("C:\\ComfyVault");
-    await engine.registerInstall("C:\\ComfyUI-Alpha");
+    await engine.registerInstall("C:\\ComfyUI-Studio");
     harness = await renderWithApp(() => <App />, { engine });
     await waitFor(() => harness!.app.ready());
 

@@ -18,9 +18,9 @@ import {
   shortHash,
   usedPercent,
 } from "~/domain/format";
-import { MB, SIZE_STRINGS } from "~/test/blessed";
+import { MB, SIZE_STRINGS } from "~/test/sizes";
 
-describe("sizes read the way the blessed mock reads them", () => {
+describe("sizes read the way the design file prints them", () => {
   it.each(SIZE_STRINGS.map((row) => [...row] as [number, string]))(
     "%i MB reads as %s",
     (mb: number, expected: string) => {
@@ -55,7 +55,7 @@ describe("sizes read the way the blessed mock reads them", () => {
 });
 
 describe("what percentage of the drive is used", () => {
-  it("matches the mock's figure for the person's drive", () => {
+  it("matches the design file's figure for its drive", () => {
     expect(usedPercent(1908408 * MB, 139264 * MB)).toBe(93);
   });
 

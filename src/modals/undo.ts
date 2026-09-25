@@ -18,7 +18,7 @@ import { detailOf, messageOf, type AppStore, type ConfirmLine } from "~/state/st
  * that refusal and no button to confirm.
  */
 export async function openUndoBox(app: AppStore, applyId: string): Promise<void> {
-  const lead: ConfirmLine = [
+  const opening: ConfirmLine = [
     {
       text: "Every file this run moved goes back to the path it came from, and the link left in its place is removed. Nothing else in the vault is touched.",
     },
@@ -30,7 +30,7 @@ export async function openUndoBox(app: AppStore, applyId: string): Promise<void>
     openConfirm(app, {
       title: "Undo this run",
       cta: null,
-      body: [lead],
+      body: [opening],
       action: () => undefined,
       refusal: {
         head: "This run cannot be undone now",
@@ -46,7 +46,7 @@ export async function openUndoBox(app: AppStore, applyId: string): Promise<void>
   openConfirm(app, {
     title: "Undo this run",
     cta: short.length > 0 ? null : "Undo the run",
-    body: [lead, costLine(preview), ...preview.drives.map(roomLine)],
+    body: [opening, costLine(preview), ...preview.drives.map(roomLine)],
     action: async () => {
       await app.engine.revertApply(applyId);
     },

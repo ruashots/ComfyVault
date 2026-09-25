@@ -44,9 +44,9 @@ describe("whether anything was searched at all", () => {
           used: true,
           matches: [
             {
-              installId: "prod",
-              installLabel: "Production",
-              workflowPath: "C:\\ComfyUI-Alpha\\user\\default\\workflows\\a.json",
+              installId: "studio",
+              installLabel: "Studio",
+              workflowPath: "C:\\ComfyUI-Studio\\user\\default\\workflows\\a.json",
               workflowName: "a.json",
             },
           ],
@@ -76,8 +76,8 @@ describe("a link's state is read off the drive, not remembered", () => {
   it("is not stored on the record itself", () => {
     const record: LinkRecord = {
       id: "link-1",
-      installId: "prod",
-      absPath: "C:\\ComfyUI-Alpha\\models\\loras\\a.safetensors",
+      installId: "studio",
+      absPath: "C:\\ComfyUI-Studio\\models\\loras\\a.safetensors",
       relPath: "models\\loras\\a.safetensors",
       linkName: "a.safetensors",
       sha256: "A".repeat(64),

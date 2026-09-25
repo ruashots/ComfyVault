@@ -3,7 +3,7 @@ import { Show, createMemo } from "solid-js";
 import { useApp } from "~/state/store";
 import type { InstallView } from "~/domain/view";
 
-/** "Production", "Production and Normal", "A, B and C". */
+/** "Studio", "Studio and Sandbox", "A, B and C". */
 export function listOf(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
