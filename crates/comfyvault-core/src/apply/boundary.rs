@@ -15,6 +15,12 @@
 //!   vault and is a ComfyUI install on this disk now, and never inside that
 //!   install's `custom_nodes`.
 //!
+//! A file a run moves, links, or puts back must also be a model file by its
+//! name: a plain file name with one of the extensions the scan looks for. A
+//! run only ever handles files the scan found, so nothing a real run did is
+//! refused, and a crafted one cannot add, say, `notes.txt` or a script to a
+//! model folder.
+//!
 //! A run that names any other place is refused whole, before a file is touched.
 
 use std::path::{Path, PathBuf};
@@ -33,6 +39,7 @@ pub struct Places {
     /// Every folder the scan walks, per proved install, with that install's
     /// `custom_nodes`, which is never touched.
     install_roots: Vec<(PathBuf, PathBuf)>,
+    settings: crate::settings::Settings,
 }
 
 impl Places {
@@ -48,6 +55,7 @@ impl Places {
             vault_root: store.vault_root().to_path_buf(),
             internal: store.internal_dir(),
             install_roots,
+            settings: store.settings()?,
         })
     }
 
@@ -73,6 +81,25 @@ impl Places {
         })
     }
 
+    /// Is the last part of `path` a model file's name: a plain name, with an
+    /// extension the scan looks for?
+    pub fn is_model_name(&self, path: &Path) -> bool {
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
+            return false;
+        };
+        crate::paths::validate_file_name(&name).is_ok() && self.settings.matches_extension(&name)
+    }
+
+    /// A model file inside a proved install.
+    fn model_in_an_install(&self, path: &Path) -> bool {
+        self.is_model_name(path) && self.in_an_install(path)
+    }
+
+    /// A model file inside the vault.
+    fn model_in_vault(&self, path: &Path) -> bool {
+        self.is_model_name(path) && self.in_vault(path)
+    }
+
     /// The paths of one journal step that are not places a run may touch.
     pub fn refused_in_step(&self, step: &JournalStep) -> Vec<PathBuf> {
         let mut bad = Vec::new();
@@ -86,24 +113,24 @@ impl Places {
                 want(self.in_vault(path) || self.in_an_install(path), path);
             }
             JournalStep::MoveToVault { from, to, .. } => {
-                want(self.in_an_install(from), from);
-                want(self.in_vault(to), to);
+                want(self.model_in_an_install(from), from);
+                want(self.model_in_vault(to), to);
             }
             JournalStep::StashOriginal { path, stash } => {
-                want(self.in_an_install(path), path);
+                want(self.model_in_an_install(path), path);
                 if !stash.as_os_str().is_empty() {
                     want(is_stash_of(path, stash), stash);
                 }
             }
             JournalStep::CreateLink { link, target } | JournalStep::RemoveLink { link, target } => {
                 // A link in an install, or a second name beside a vault file.
-                want(self.in_an_install(link) || self.in_vault(link), link);
-                want(self.in_vault(target), target);
+                want(self.model_in_an_install(link) || self.model_in_vault(link), link);
+                want(self.model_in_vault(target), target);
             }
             JournalStep::DeleteStash { stash, original, vault_path, .. } => {
-                want(self.in_an_install(original), original);
+                want(self.model_in_an_install(original), original);
                 want(is_stash_of(original, stash), stash);
-                want(self.in_vault(vault_path), vault_path);
+                want(self.model_in_vault(vault_path), vault_path);
             }
         }
         bad
@@ -121,7 +148,7 @@ impl Places {
     pub fn refused_in_group(&self, group: &PlanGroup) -> Vec<PathBuf> {
         let mut bad: Vec<PathBuf> = std::iter::once(&group.source.abs_path)
             .chain(group.links.iter().map(|l| &l.abs_path))
-            .filter(|p| !self.in_an_install(p))
+            .filter(|p| !self.model_in_an_install(p))
             .cloned()
             .collect();
         bad.sort();

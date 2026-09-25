@@ -3100,3 +3100,59 @@ fn a_run_the_engine_can_finish_or_undo_is_not_set_aside() {
     assert_eq!(applier(&w).set_aside("ap-1").unwrap_err().code, ErrorCode::Conflict, "a run that can be finished");
     assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::Running);
 }
+
+#[test]
+fn a_crafted_run_cannot_add_a_file_that_is_not_a_model_to_a_model_folder() {
+    // Inside the places a run may touch, a crafted run could still name a
+    // file of any kind, and a recovery would put it there.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/x.safetensors", &weights("x"));
+    let plan = w.plan(&[a.clone()]);
+    w.store.put_plan(&plan).unwrap();
+    let content = b"neutral test bytes".to_vec();
+    let in_vault = w.write_file("ComfyVault/loras/y.safetensors", &content);
+    let target = a.root.join("models/loras/notes.txt");
+
+    w.store
+        .put_apply(&ApplyRecord {
+            apply_id: "ap-x".into(),
+            plan_id: plan.plan_id.clone(),
+            state: ApplyState::Running,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            groups_requested: 1,
+            group_ids: vec![],
+            groups_applied: 0,
+            groups_failed: 0,
+            bytes_freed: 0,
+            files_moved: 0,
+            links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
+            failures: vec![],
+            revertible: true,
+            last_undo_step_at: None,
+        })
+        .unwrap();
+    w.store
+        .append_journal(&crafted(
+            "ap-x",
+            0,
+            JournalStep::DeleteStash {
+                stash: a.root.join("models/loras/notes.txt.comfyvault-old-zz"),
+                original: target.clone(),
+                vault_path: in_vault,
+                sha256: crate::scan::hash::hash_bytes(&content),
+                size_bytes: content.len() as u64,
+                mtime_nanos: None,
+            },
+            JournalState::Pending,
+        ))
+        .unwrap();
+
+    let err = applier(&w).resume("ap-x", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+    assert!(err.detail.unwrap().contains("notes.txt"));
+    assert!(!target.exists(), "a file that is not a model was added to a model folder");
+}

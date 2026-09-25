@@ -1277,7 +1277,11 @@ reports anything, every path the run names is proved to be one of two places:
 - inside a folder the scan walks for a registered install whose folder is a
   ComfyUI install on this disk now, and not inside its `custom_nodes`.
 
-If any path is neither, the whole call rejects with `pathOutsideBoundary`
+A file a run moves, links or puts back must also have a model file's name: a
+plain name with one of the extensions in the settings' `scanExtensions`. A run
+only handles files a scan found, so this refuses nothing a real run did.
+
+If any path fails, the whole call rejects with `pathOutsideBoundary`
 before a file is touched. `detail` lists every such path, and `path` is the
 first. `start_apply` proves each group of the stored plan the same way, and a
 group that fails is reported in `failures` and not touched.
