@@ -141,7 +141,7 @@ fn split_at_existing(path: &Path) -> (PathBuf, Vec<OsString>) {
 }
 
 /// Canonicalizes the part of `path` that exists and appends the rest verbatim.
-fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
+pub fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
     let (existing, remainder) = split_at_existing(path);
     let mut real = crate::paths::canonicalize_clean(&existing)
         .map_err(|e| VaultError::from_io(&e, &existing, "checking where the folder really is"))?;

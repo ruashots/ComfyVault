@@ -40,7 +40,7 @@ use crate::AppEngine;
 /// The small reply shapes live in the engine crate, so that their contract
 /// samples come from the same serialiser the product uses.
 pub use comfyvault_core::reply::{
-    Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted, DirEntryInfo,
+    Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted,
     DirectoryListing, Removed, RemovedLinks, StartedApply, StartedScan, UnregisterResult,
 };
 
@@ -776,66 +776,7 @@ pub async fn list_directory(
     args: ListDirectoryArgs,
 ) -> Reply<DirectoryListing> {
     let e = engine(&state);
-    blocking(move || {
-        let raw = args.path.unwrap_or_default();
-        if raw.trim().is_empty() {
-            return Ok(DirectoryListing {
-                path: String::new(),
-                parent: None,
-                entries: e
-                    .platform()
-                    .drive_roots()
-                    .into_iter()
-                    .map(|p| DirEntryInfo {
-                        name: comfyvault_core::paths::display_path(&p),
-                        path: comfyvault_core::paths::display_path(&p),
-                        is_directory: true,
-                        is_symlink: false,
-                    })
-                    .collect(),
-            });
-        }
-        let path = PathBuf::from(raw);
-
-        let read = std::fs::read_dir(&path)
-            .map_err(|e| VaultError::from_io(&e, &path, "opening the folder"))?;
-
-        let mut entries: Vec<DirEntryInfo> = Vec::new();
-        for e in read.flatten() {
-            let Ok(file_type) = e.file_type() else { continue };
-            let p = e.path();
-            let is_symlink = file_type.is_symlink();
-            let is_directory = file_type.is_dir() || (is_symlink && p.is_dir());
-            if !is_directory {
-                continue;
-            }
-            let name = e.file_name().to_string_lossy().to_string();
-            // Hidden and system folders are noise in a picker.
-            if name.starts_with('.') {
-                continue;
-            }
-            entries.push(DirEntryInfo {
-                name,
-                path: comfyvault_core::paths::display_path(&p),
-                is_directory,
-                is_symlink,
-            });
-        }
-        entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-
-        // A drive root's parent is the drive list, which is the empty path.
-        // Without this, the picker cannot go back up and pick another drive.
-        let parent = match path.parent() {
-            Some(p) => Some(comfyvault_core::paths::display_path(p)),
-            None => Some(String::new()),
-        };
-
-        Ok(DirectoryListing {
-            parent,
-            path: comfyvault_core::paths::display_path(&path),
-            entries,
-        })
-    })
+    blocking(move || e.list_directory(&args.path.unwrap_or_default()))
     .await
 }
 

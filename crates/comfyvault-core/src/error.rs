@@ -187,10 +187,24 @@ impl VaultError {
     /// "you lack permission" apart from "the disk refused".
     pub fn from_io(err: &std::io::Error, path: &Path, doing: &str) -> Self {
         use std::io::ErrorKind;
+        // Windows says "in use" with its own two codes, a sharing violation
+        // and a lock violation, which the standard library does not name.
+        // Reported as a disk error they told the person nothing they could
+        // act on. ComfyUI holds a model open while it is loaded.
+        if cfg!(windows) && matches!(err.raw_os_error(), Some(32) | Some(33)) {
+            return Self::new(
+                ErrorCode::FileLocked,
+                format!("Another program has this file open, so {doing} was stopped. ComfyUI keeps a model open while it is loaded. Close it and try again."),
+            )
+            .with_detail(err.to_string())
+            .with_path(path);
+        }
         let (code, message) = match err.kind() {
+            // Only what happened. Guessing a cause misled: a folder Windows
+            // protects was put down to another program holding a file.
             ErrorKind::PermissionDenied => (
                 ErrorCode::PermissionDenied,
-                format!("Windows refused access while {doing}. Another program may hold the file, or the file may be read only."),
+                format!("Windows did not give permission for {doing}."),
             ),
             ErrorKind::NotFound => (
                 ErrorCode::NotFound,
@@ -335,5 +349,25 @@ mod tests {
         let e = VaultError::from_io(&io, Path::new("/tmp/x"), "creating the link");
         assert_eq!(e.code, ErrorCode::Conflict);
         assert!(e.message.contains("Nothing was overwritten"));
+    }
+
+    #[test]
+    fn a_refused_permission_is_reported_without_a_guessed_cause() {
+        // A folder Windows protects was put down to "another program may hold
+        // the file, or the file may be read only". Neither was true.
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let e = VaultError::from_io(&io, Path::new("/tmp/x"), "opening the folder");
+        assert_eq!(e.message, "Windows did not give permission for opening the folder.");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_is_reported_as_locked() {
+        for code in [32, 33] {
+            let io = std::io::Error::from_raw_os_error(code);
+            let e = VaultError::from_io(&io, Path::new(r"C:\x"), "putting the file back");
+            assert_eq!(e.code, ErrorCode::FileLocked, "os error {code}");
+            assert!(e.message.contains("Close it and try again"));
+        }
     }
 }

@@ -865,3 +865,60 @@ fn a_stored_install_row_is_proved_on_the_disk_before_it_is_scanned_or_linked_int
     assert_eq!(err.code, ErrorCode::NotAComfyInstall);
     assert!(!elsewhere.join("models/loras/new").exists(), "a folder was made where only a row pointed");
 }
+
+#[test]
+fn choosing_the_vault_that_is_already_open_answers_with_it() {
+    let f = Fixture::new();
+    let first = f.open_vault();
+    let again = f.engine.select_vault(&f.dir.path().join("ComfyVault"), true).unwrap();
+    assert_eq!(again.root, first.root);
+    assert!(f.engine.vault_info().is_ok(), "the vault was closed by choosing it again");
+}
+
+#[test]
+fn a_vault_refused_inside_an_install_leaves_nothing_behind() {
+    let f = Fixture::new();
+    f.open_vault();
+    let i = f.add_install("A");
+    let inside = i.root.join("models").join("vault");
+    let err = f.engine.select_vault(&inside, true).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(!inside.exists(), "a refused vault still made a folder and a database inside the install");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_folder_picker_leaves_out_hidden_and_system_folders() {
+    let f = Fixture::new();
+    let root = f.dir.path().join("Pick");
+    for name in ["Shown", "Hidden", "System"] {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+    }
+    for (name, flag) in [("Hidden", "+h"), ("System", "+s")] {
+        let out = std::process::Command::new("attrib").arg(flag).arg(root.join(name)).output().unwrap();
+        assert!(out.status.success(), "attrib failed: {out:?}");
+    }
+    let listing = f.engine.list_directory(&root.to_string_lossy()).unwrap();
+    let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["Shown"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
+    let f = Fixture::new();
+    let locked = f.dir.path().join("Refused");
+    std::fs::create_dir_all(&locked).unwrap();
+    let who = std::env::var("USERNAME").unwrap();
+    let deny = std::process::Command::new("icacls")
+        .arg(&locked)
+        .args(["/deny", &format!("{who}:(RD)")])
+        .output()
+        .unwrap();
+    assert!(deny.status.success(), "icacls could not deny: {deny:?}");
+    let result = f.engine.list_directory(&locked.to_string_lossy());
+    let _ = std::process::Command::new("icacls").arg(&locked).args(["/remove:d", &who]).output();
+    let err = result.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+    assert!(!err.message.contains("Another program"), "a cause was guessed: {}", err.message);
+}

@@ -2815,3 +2815,30 @@ fn a_recovery_checks_files_the_way_the_run_was_asked_to() {
     assert_eq!(resumed.failures[0].reason, BlockReason::FileChanged);
     assert_eq!(std::fs::read(&copy).unwrap(), edited, "the edited file was deleted");
 }
+
+#[cfg(windows)]
+#[test]
+fn an_undo_while_comfyui_holds_the_model_says_so_and_can_be_finished() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    let native = crate::platform::NativePlatform::new();
+    Applier::new(&w.store, &native)
+        .apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink)
+        .unwrap();
+    let vault_file = w.vault_root.join(&plan.groups[0].vault_rel_path);
+    // Read sharing only, the way Python opens a file.
+    let held = std::fs::File::options().read(true).share_mode(0x1).open(&vault_file).unwrap();
+
+    let err = Applier::new(&w.store, &native).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::FileLocked, "{}", err.message);
+    every_place_loads(&[pa.clone(), pb.clone()], &weights("m"), "while held");
+
+    drop(held);
+    Applier::new(&w.store, &native).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    every_place_loads(&[pa, pb], &weights("m"), "after closing");
+}

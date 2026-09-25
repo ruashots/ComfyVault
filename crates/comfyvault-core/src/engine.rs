@@ -239,16 +239,30 @@ impl Engine {
         // Installs known right now, before the vault is swapped. A folder
         // inside one of them cannot be the vault, whether that install is
         // listed in the vault being opened or in the one already open.
-        let known_roots: Vec<PathBuf> = self
-            .store
-            .read()
-            .ok()
-            .and_then(|g| g.clone())
+        let open = self.store.read().ok().and_then(|g| g.clone());
+        let known_roots: Vec<PathBuf> = open
+            .as_ref()
             .map(|s| s.installs().unwrap_or_default())
             .unwrap_or_default()
             .into_iter()
             .map(|i| i.root)
             .collect();
+
+        // Where the vault would really be, followed through every link that
+        // exists, before anything is created. A refused folder used to be
+        // created first, database and all, inside the person's install.
+        let target = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(path))?;
+        if let Some(root) = known_roots.iter().find(|r| target.starts_with(r)) {
+            return Err(inside_an_install(&target).with_detail(crate::paths::display_path(root)));
+        }
+
+        // The vault that is already open. Opening it a second time failed as
+        // if another copy of the app held it.
+        if let Some(current) = &open {
+            if crate::paths::canonicalize_clean(current.vault_root()).ok().as_deref() == Some(target.as_path()) {
+                return self.vault_info_of(current);
+            }
+        }
 
         let store = Arc::new(Store::open(path, create_if_missing)?);
 
@@ -258,10 +272,7 @@ impl Engine {
         roots.extend(store.installs()?.into_iter().map(|i| i.root));
         for root in roots {
             if store.vault_root().starts_with(&root) {
-                return Err(VaultError::conflict(
-                    "That folder is inside a ComfyUI install, so it cannot be the vault. Choose a folder outside every install.",
-                )
-                .with_path(store.vault_root()));
+                return Err(inside_an_install(store.vault_root()));
             }
         }
 
@@ -274,6 +285,65 @@ impl Engine {
 
         AppConfig { vault_root: Some(PathBuf::from(&info.root)) }.save(&self.config_path)?;
         Ok(info)
+    }
+
+    /// The folders inside one folder, for the folder picker. An empty path
+    /// lists the drives.
+    ///
+    /// Folders Windows marks hidden or system, such as `$RECYCLE.BIN` and
+    /// `System Volume Information`, are left out, and so are names starting
+    /// with a dot.
+    pub fn list_directory(&self, raw: &str) -> Result<crate::reply::DirectoryListing> {
+        use crate::reply::{DirEntryInfo, DirectoryListing};
+        if raw.trim().is_empty() {
+            return Ok(DirectoryListing {
+                path: String::new(),
+                parent: None,
+                entries: self
+                    .platform
+                    .drive_roots()
+                    .into_iter()
+                    .map(|p| DirEntryInfo {
+                        name: crate::paths::display_path(&p),
+                        path: crate::paths::display_path(&p),
+                        is_directory: true,
+                        is_symlink: false,
+                    })
+                    .collect(),
+            });
+        }
+        let path = PathBuf::from(raw);
+        let read = std::fs::read_dir(&path).map_err(|e| VaultError::from_io(&e, &path, "opening the folder"))?;
+
+        let mut entries: Vec<DirEntryInfo> = Vec::new();
+        for e in read.flatten() {
+            let Ok(file_type) = e.file_type() else { continue };
+            let p = e.path();
+            let is_symlink = file_type.is_symlink();
+            let is_directory = file_type.is_dir() || (is_symlink && p.is_dir());
+            if !is_directory {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || hidden_by_windows(&e) {
+                continue;
+            }
+            entries.push(DirEntryInfo {
+                name,
+                path: crate::paths::display_path(&p),
+                is_directory,
+                is_symlink,
+            });
+        }
+        entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        // A drive root's parent is the drive list, which is the empty path.
+        // Without this, the picker cannot go back up and pick another drive.
+        let parent = match path.parent() {
+            Some(p) => Some(crate::paths::display_path(p)),
+            None => Some(String::new()),
+        };
+        Ok(DirectoryListing { parent, path: crate::paths::display_path(&path), entries })
     }
 
     /// Facts about the open vault, without reopening it.
@@ -931,6 +1001,27 @@ pub struct ScanEntryWithCount {
     #[serde(flatten)]
     pub entry: ScanEntryRecord,
     pub occurrence_count: u64,
+}
+
+fn inside_an_install(path: &Path) -> VaultError {
+    VaultError::conflict(
+        "That folder is inside a ComfyUI install, so it cannot be the vault. Choose a folder outside every install.",
+    )
+    .with_path(path)
+}
+
+/// Does Windows mark this entry hidden or system?
+#[cfg(windows)]
+fn hidden_by_windows(e: &std::fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const HIDDEN: u32 = 0x2;
+    const SYSTEM: u32 = 0x4;
+    e.metadata().map(|m| m.file_attributes() & (HIDDEN | SYSTEM) != 0).unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn hidden_by_windows(_e: &std::fs::DirEntry) -> bool {
+    false
 }
 
 #[cfg(test)]
