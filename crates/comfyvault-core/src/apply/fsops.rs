@@ -121,12 +121,7 @@ pub fn copy_verify_then_remove(
             .with_detail(format!("expected {expected_sha256}, the copy is {actual}"))
             .with_path(from));
         }
-        // Through the platform, so a temporary file on the wrong drive fails
-        // here in a test the way it fails on Windows.
-        platform
-            .rename(&temp, to)
-            .map_err(|e| e.into_vault_error(to, "putting the copy in place"))?;
-        Ok(())
+        put_in_place(platform, &temp, to, from)
     })();
 
     if result.is_err() {
@@ -280,17 +275,56 @@ pub fn stash_names_tried(path: &Path, tag: &str) -> Vec<PathBuf> {
 /// A link standing in its place is replaced by the rename itself, so the path
 /// is never empty, not even for an instant.
 pub fn unstash(stash: &Path, original: &Path) -> Result<()> {
-    let is_link = std::fs::symlink_metadata(original)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false);
-    if std::fs::symlink_metadata(original).is_ok() && !is_link {
-        return Err(VaultError::new(
+    match std::fs::symlink_metadata(original) {
+        Err(_) => rename_new(stash, original),
+        Ok(m) if m.file_type().is_symlink() => {
+            std::fs::rename(stash, original).ctx(stash, "putting the old file back")
+        }
+        Ok(_) => Err(VaultError::new(
             ErrorCode::Conflict,
             "Could not put the old file back, because something is in its place.",
         )
-        .with_path(original));
+        .with_path(original)),
     }
-    std::fs::rename(stash, original).ctx(stash, "putting the old file back")
+}
+
+/// Renames a finished file onto a place that must still be empty.
+fn rename_new(from: &Path, to: &Path) -> Result<()> {
+    crate::platform::rename_new(from, to).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            written_meanwhile(to)
+        } else {
+            VaultError::from_io(&e, to, "putting the file in place")
+        }
+    })
+}
+
+fn written_meanwhile(place: &Path) -> VaultError {
+    VaultError::new(
+        ErrorCode::Conflict,
+        "Something was written to this place while the file was being copied, so it was left alone.",
+    )
+    .with_path(place)
+}
+
+/// Puts a checked copy at its place, the last step of every copy.
+///
+/// The place was checked before the copy began, and a copy can take minutes.
+/// So it is checked again here, and an empty place is taken only by a rename
+/// that refuses if anything has appeared there. Only a link to `source`, the
+/// file the copy was made from, is ever replaced. Renaming over the place
+/// unconditionally replaced whatever the person or another program had
+/// written there during the copy.
+fn put_in_place(platform: &dyn Platform, temp: &Path, place: &Path, source: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(place).is_err() {
+        return rename_new(temp, place);
+    }
+    replaceable(place, source).map_err(|_| written_meanwhile(place))?;
+    // Through the platform, so a temporary file on the wrong drive fails
+    // here in a test the way it fails on Windows.
+    platform
+        .rename(temp, place)
+        .map_err(|e| e.into_vault_error(place, "putting the copy in place"))
 }
 
 /// Copies a file out of the vault, to put an original back during a revert.
@@ -339,8 +373,7 @@ pub fn restore_from_vault(
         // Replaces the link in one step. Removing the link first left the
         // path empty for as long as the copy took, and for good when the copy
         // was stopped or failed: ComfyUI then had neither the file nor a link.
-        std::fs::rename(&temp, original).ctx(original, "putting the file back")?;
-        Ok(())
+        put_in_place(&crate::platform::NativePlatform::new(), &temp, original, vault_file)
     })();
 
     if result.is_err() {
@@ -403,6 +436,40 @@ fn time_from_nanos(nanos: i128) -> Option<std::time::SystemTime> {
     } else {
         std::time::UNIX_EPOCH.checked_sub(magnitude)
     }
+}
+
+/// Removes the half-written copies a copy leaves in `dir` when the process
+/// ends in the middle of it: a closed window, a crash, a power cut. Returns how
+/// many went.
+///
+/// A copy removes its own file when it fails or is stopped. A process that
+/// ends cannot, and nothing else ever did, so each cut-off copy left a file up
+/// to the size of a model beside it for good. Only the two names a copy gives
+/// its file are touched: `<name>.comfyvault-restore-<32 hex>` and
+/// `<digits>-<32 hex>.part`.
+pub fn remove_leftovers(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
+    for e in entries.flatten() {
+        let is_file = e.file_type().map(|t| t.is_file()).unwrap_or(false);
+        if is_file && is_leftover(&e.file_name().to_string_lossy()) && std::fs::remove_file(e.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+fn is_leftover(name: &str) -> bool {
+    let hex32 = |s: &str| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    if let Some((_, tail)) = name.rsplit_once(".comfyvault-restore-") {
+        return hex32(tail);
+    }
+    if let Some(stem) = name.strip_suffix(".part") {
+        if let Some((pid, id)) = stem.split_once('-') {
+            return !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) && hex32(id);
+        }
+    }
+    false
 }
 
 /// Removes a folder only when it is empty.
@@ -855,6 +922,84 @@ mod tests {
 
         assert_eq!(meta_of(&d.path().join("vault/a.safetensors")).1, before);
         assert_eq!(heard, weights("a").len() as u64);
+    }
+
+    fn leftovers_beside(place: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(place.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().contains("comfyvault") || p.extension().is_some_and(|e| e == "part"))
+            .collect()
+    }
+
+    #[test]
+    fn a_file_written_to_the_place_during_a_copy_back_is_left_alone() {
+        // The place is checked before the copy, and the copy takes minutes.
+        // Renaming over it at the end replaced whatever was written there in
+        // the meantime.
+        let d = tmp();
+        let vault_file = d.path().join("vault/v.safetensors");
+        std::fs::create_dir_all(vault_file.parent().unwrap()).unwrap();
+        std::fs::write(&vault_file, weights("a")).unwrap();
+        let original = d.path().join("install/o.safetensors");
+        let place = original.clone();
+        let mut once = false;
+        let err = restore_from_vault(
+            &vault_file,
+            &original,
+            &crate::scan::hash::hash_bytes(&weights("a")),
+            None,
+            &CancelToken::new(),
+            &mut |_| {
+                if !once {
+                    once = true;
+                    std::fs::write(&place, b"written during the copy").unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict);
+        assert_eq!(std::fs::read(&original).unwrap(), b"written during the copy");
+        assert!(leftovers_beside(&original).is_empty(), "the unused copy was left behind");
+        assert_eq!(std::fs::read(&vault_file).unwrap(), weights("a"));
+    }
+
+    #[test]
+    fn a_file_that_replaced_the_link_during_a_move_back_across_drives_is_left_alone() {
+        let d = tmp();
+        let p = FakePlatform::new();
+        two_drives(&p, d.path());
+        let vault_file = d.path().join("vault/v.safetensors");
+        std::fs::create_dir_all(vault_file.parent().unwrap()).unwrap();
+        std::fs::write(&vault_file, weights("a")).unwrap();
+        let place = d.path().join("o.safetensors");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&vault_file, &place).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&vault_file, &place).unwrap();
+
+        let target = place.clone();
+        let mut once = false;
+        let err = move_back(
+            &p,
+            &vault_file,
+            &place,
+            &crate::scan::hash::hash_bytes(&weights("a")),
+            &CancelToken::new(),
+            &mut |_| {
+                if !once {
+                    once = true;
+                    std::fs::remove_file(&target).unwrap();
+                    std::fs::write(&target, b"a new version").unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict);
+        assert_eq!(std::fs::read(&place).unwrap(), b"a new version");
+        assert_eq!(std::fs::read(&vault_file).unwrap(), weights("a"), "the source of the copy went");
+        assert!(leftovers_beside(&place).is_empty());
     }
 
     #[test]

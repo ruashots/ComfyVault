@@ -111,6 +111,13 @@ pub(super) fn verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Renames a file onto a name that must still be free. A hard link fails when
+/// the name is taken, in the same call, and the old name is removed after.
+pub(super) fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    std::fs::remove_file(from)
+}
+
 /// Unix has no sparse or compressed flag to carry over. A file with fewer
 /// blocks than its length has holes, and the copy leaves those unwritten.
 pub(super) fn copy_storage_traits(src: &std::fs::File, _dst: &std::fs::File) -> std::io::Result<bool> {

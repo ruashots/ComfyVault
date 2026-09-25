@@ -368,6 +368,12 @@ pub fn copy_storage_traits(src: &std::fs::File, dst: &std::fs::File) -> std::io:
     sys::copy_storage_traits(src, dst)
 }
 
+/// Renames `from` to `to`, and refuses if anything sits at `to` by then. The
+/// check and the rename are one call to the operating system.
+pub fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    sys::rename_new(from, to)
+}
+
 /// The bytes a file occupies on its drive, or nothing if that cannot be read.
 pub fn size_on_disk(path: &Path) -> Option<u64> {
     sys::size_on_disk(path)

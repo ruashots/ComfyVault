@@ -1038,6 +1038,7 @@ impl<'a> Applier<'a> {
     ) -> Result<ApplyRecord> {
         let (mut record, mut to_undo) = self.revertible_steps(apply_id)?;
         let refilled = paths_filled_later(&to_undo);
+        self.remove_leftovers(&to_undo);
 
         // Read before anything moves: what each step will cost depends on the
         // disk as the run left it.
@@ -1383,6 +1384,24 @@ impl<'a> Applier<'a> {
         }
     }
 
+    /// Removes the half-written copies an earlier run or undo of these steps
+    /// left when its process ended in the middle of a copy. Only beside the
+    /// places the steps name, which were proved before this is called.
+    fn remove_leftovers(&self, entries: &[JournalEntry]) {
+        let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        dirs.insert(self.store.temp_dir());
+        for e in entries {
+            for p in step_paths_touched(&e.step).into_iter().chain(step_path(&e.step)) {
+                if let Some(parent) = p.parent() {
+                    dirs.insert(parent.to_path_buf());
+                }
+            }
+        }
+        for d in dirs {
+            fsops::remove_leftovers(&d);
+        }
+    }
+
     fn forget_link_if_gone(&self, path: &Path) -> Result<()> {
         if self.platform.is_symlink(path) {
             return Ok(());
@@ -1471,6 +1490,12 @@ impl<'a> Applier<'a> {
             refused.dedup();
             return Err(boundary::refusal(&refused));
         }
+        let proved: Vec<JournalEntry> = entries
+            .iter()
+            .filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending))
+            .cloned()
+            .collect();
+        self.remove_leftovers(&proved);
 
         // A group is finished when its last step is done and nothing in it is
         // pending. Everything else is rolled back and applied again.

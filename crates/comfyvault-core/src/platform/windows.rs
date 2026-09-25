@@ -311,6 +311,21 @@ pub(super) fn verbatim(path: &Path) -> PathBuf {
     PathBuf::from(format!(r"\\?\{s}"))
 }
 
+/// Renames a file onto a name that must still be free.
+///
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` refuses when anything
+/// sits at `to`, in the same call that renames, so nothing written there in
+/// the meantime is ever replaced. It works on every file system Windows
+/// renames on, exFAT included.
+pub(super) fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let ok = unsafe { MoveFileExW(wide(from).as_ptr(), wide(to).as_ptr(), 0) };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Gives a new file the storage traits of the one it copies: sparse, and NTFS
 /// compressed. Returns whether the source is sparse, so the copy can leave its
 /// empty ranges unwritten.

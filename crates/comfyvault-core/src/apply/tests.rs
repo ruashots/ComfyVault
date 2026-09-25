@@ -2694,3 +2694,45 @@ fn the_delete_is_on_record_before_the_duplicate_is_read_again() {
         break;
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Half-written copies left by a process that ended
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_half_written_copy_left_by_a_cut_off_undo_is_removed() {
+    let w = TestWorld::new();
+    let (dup, _, _) = two_copy_run(&w);
+    // What a copy back leaves when the window is closed in the middle of it.
+    let leftover = dup.with_extension("comfyvault-restore-0123456789abcdef0123456789abcdef");
+    std::fs::write(&leftover, &weights("m")[..2048]).unwrap();
+    let part = dup.with_file_name("4242-fedcba9876543210fedcba9876543210.part");
+    std::fs::write(&part, b"half").unwrap();
+    // Names that only look close stay.
+    let theirs = dup.with_file_name("notes.comfyvault-restore-mine.txt");
+    std::fs::write(&theirs, b"the person's").unwrap();
+    let vault_part = w.store.temp_dir().join("17-00112233445566778899aabbccddeeff.part");
+    std::fs::create_dir_all(vault_part.parent().unwrap()).unwrap();
+    std::fs::write(&vault_part, b"half").unwrap();
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!leftover.exists() && !part.exists() && !vault_part.exists(), "a half-written copy stayed");
+    assert!(theirs.exists(), "a file that is not a leftover copy was removed");
+}
+
+#[test]
+fn opening_a_vault_removes_the_half_written_copies_in_its_own_folder() {
+    let w = TestWorld::new();
+    let part = w.store.temp_dir().join("17-00112233445566778899aabbccddeeff.part");
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::write(&part, b"half").unwrap();
+    let root = w.vault_root.clone();
+    drop(w.store);
+    let e = crate::engine::Engine::with_platform(
+        w.dir.path().join("config.json"),
+        std::sync::Arc::new(crate::platform::FakePlatform::new()),
+    );
+    e.select_vault(&root, false).unwrap();
+    assert!(!part.exists());
+}

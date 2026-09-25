@@ -265,6 +265,10 @@ impl Engine {
             }
         }
 
+        // A copy into the vault cut off by a crash leaves its half-written file
+        // in the vault's own folder, and nothing else would ever remove it.
+        crate::apply::fsops::remove_leftovers(&store.temp_dir());
+
         let info = self.vault_info_of(&store)?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
