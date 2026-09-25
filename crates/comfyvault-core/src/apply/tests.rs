@@ -3030,3 +3030,24 @@ fn a_recovery_refuses_a_run_that_was_not_cut_off() {
     assert_eq!(err.code, ErrorCode::Conflict);
     assert!(!w.is_link(&dup), "an undone run was applied again");
 }
+
+#[test]
+fn the_plan_promises_the_links_the_run_makes() {
+    // A copy under another name also gets a second name beside the vault
+    // file. The plan counted that as a link to come, and the run, which
+    // counts links in installs, never reported it.
+    let w = TestWorld::new();
+    let (_, _, plan) = copies_of_a_model_already_in_the_vault(&w, &weights("m"));
+    let c = w.add_install("D");
+    let e = w.add_install("E");
+    w.write_model(&c, "models/loras/n.safetensors", &weights("n"));
+    w.write_model(&e, "models/loras/n-copy.safetensors", &weights("n"));
+    let installs = w.store.installs().unwrap();
+    let plan = { let _ = plan; w.plan(&installs) };
+    assert!(plan.groups.iter().any(|g| !g.vault_aliases.is_empty()), "the test needs a second name");
+
+    let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.state, ApplyState::Completed);
+    assert_eq!(plan.totals.links_created, record.links_created);
+    assert_eq!(plan.totals.files_moved, record.files_moved);
+}

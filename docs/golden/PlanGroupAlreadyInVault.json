@@ -1,0 +1,54 @@
+{
+  "alreadyInVault": true,
+  "bytesFreed": 302239744,
+  "category": "loras",
+  "clashesWith": null,
+  "crossVolume": false,
+  "distinctFiles": 2,
+  "groupId": "grp-1",
+  "links": [
+    {
+      "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
+      "installId": "inst-1",
+      "installLabel": "ComfyUI Main",
+      "isSource": true,
+      "linkName": "detail-tweaker.safetensors",
+      "mtimeNanos": "1758240000000000000",
+      "nameDiffersFromVault": false,
+      "relPath": "loras\\detail-tweaker.safetensors",
+      "sharesBytesWithAnother": false,
+      "sizeBytes": 151119872
+    },
+    {
+      "absPath": "C:\\ComfyUI-Testing\\models\\loras\\detail_tweaker_xl.safetensors",
+      "installId": "inst-2",
+      "installLabel": "ComfyUI Testing",
+      "isSource": false,
+      "linkName": "detail_tweaker_xl.safetensors",
+      "mtimeNanos": "1758240000000000000",
+      "nameDiffersFromVault": true,
+      "relPath": "loras\\detail_tweaker_xl.safetensors",
+      "sharesBytesWithAnother": false,
+      "sizeBytes": 151119872
+    }
+  ],
+  "occurrences": 2,
+  "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+  "singleCopy": false,
+  "sizeBytes": 151119872,
+  "source": {
+    "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
+    "chosenBecause": "sameVolume",
+    "installId": "inst-1",
+    "installLabel": "ComfyUI Main",
+    "mtimeNanos": "1758240000000000000",
+    "relPath": "loras\\detail-tweaker.safetensors",
+    "sameVolumeAsVault": true,
+    "sizeBytes": 151119872
+  },
+  "vaultAliases": [
+    "detail_tweaker_xl.safetensors"
+  ],
+  "vaultNameAdjusted": false,
+  "vaultRelPath": "loras\\detail-tweaker.safetensors"
+}

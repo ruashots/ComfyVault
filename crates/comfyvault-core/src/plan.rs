@@ -708,7 +708,10 @@ fn totals_for(groups: &[PlanGroup], blocked: &[BlockedRow], free_now: Option<u64
         bytes_freed,
         bytes_moved: groups.iter().filter(|g| !g.already_in_vault).map(|g| g.size_bytes).sum(),
         files_moved: groups.iter().filter(|g| !g.already_in_vault).count() as u64,
-        links_created: groups.iter().map(|g| g.links.len() as u64 + g.vault_aliases.len() as u64).sum(),
+        // The places in installs that get a link, which is what a run counts.
+        // A second name beside a vault file is a link too, but inside the
+        // vault: counting it here promised links the run never reports.
+        links_created: groups.iter().map(|g| g.links.len() as u64).sum(),
         blocked_rows: blocked.len() as u64,
         blocked_bytes: blocked.iter().map(|b| b.size_bytes).sum(),
         // A same-drive move frees its duplicates and costs nothing; a

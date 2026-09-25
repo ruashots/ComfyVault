@@ -716,6 +716,16 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
         // their own sample so that the interface can build a double for one
         // row without standing up a whole plan.
         s("PlanGroup", plan_group()),
+        // A group for content the vault holds already: nothing moves in, and
+        // every copy, the source included, becomes a link.
+        s("PlanGroupAlreadyInVault", {
+            let mut g = plan_group();
+            g.already_in_vault = true;
+            g.single_copy = false;
+            g.cross_volume = false;
+            g.bytes_freed = g.size_bytes * g.distinct_files;
+            g
+        }),
         s("PlanLink", plan_group().links.into_iter().next().unwrap()),
         s("PlanSource", plan_group().source),
         s("PlanTotals", plan().totals),
