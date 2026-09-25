@@ -1,7 +1,7 @@
 /**
  * Every number the interface prints goes through here, so one size reads the
- * same on every screen. The thresholds and the number of decimals come from
- * design/mock/comfyvault.html and must not drift.
+ * same on every screen. The thresholds and the number of decimals are the
+ * interface's fixed format and must not drift.
  */
 
 const MB = 1024 * 1024;

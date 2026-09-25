@@ -1,9 +1,9 @@
 /**
- * How a size reads on screen, as design/mock/comfyvault.html prints it. These
+ * How a size reads on screen, in the interface's fixed size format. These
  * figures depend on no engine rule.
  *
- * The design file's totals are NOT here. They were produced under its own
- * grouping rules, and docs/IPC-CONTRACT.md settles those rules differently: a
+ * No plan totals are here. Those depend on grouping rules, and
+ * docs/IPC-CONTRACT.md settles those rules: a
  * copy on another drive is copied across rather than left behind, and the copy
  * that becomes the vault file is the one already on the vault's drive. The
  * engine's rules are what happen on disk, so they are what the tests pin.

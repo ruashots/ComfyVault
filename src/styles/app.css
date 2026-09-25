@@ -1,13 +1,9 @@
 /*
- * The design system, ported from design/mock/comfyvault.html.
+ * The design system: colour tokens, type, spacing and every component rule.
  *
- * The rules below are the design file's own. Three things changed, and only these:
- *   1. The font is bundled instead of fetched from Google Fonts, because the
- *      app must start and run with no network at all.
- *   2. .win fills the window instead of being pinned to 1000 x 660. That is the
- *      size the window opens at, which src-tauri/tauri.conf.json sets.
- *   3. The design file's own frame (.frame-note, .mock) is gone. It is not part
- *      of the app.
+ * The font is bundled rather than fetched, because the app must start and run
+ * with no network at all. .win fills the window, which opens at 1000 x 660 as
+ * src-tauri/tauri.conf.json sets.
  */
 
 @font-face {

@@ -2,8 +2,8 @@
  * The icon set, drawn for this interface. Monoline, 24x24, stroke 1.45, taking
  * the colour of the text around it. No icon library.
  *
- * The path data below is copied from design/mock/comfyvault.html. It is a fixed
- * set of constants in this file, never anything a scan produced.
+ * The path data below is a fixed set of constants in this file, never anything
+ * a scan produced.
  */
 
 const ICONS = {

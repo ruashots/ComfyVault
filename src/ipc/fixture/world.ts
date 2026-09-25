@@ -7,8 +7,8 @@
  * rules docs/IPC-CONTRACT.md says the engine uses, so a screen cannot pass
  * against the fixture and fail against the engine.
  *
- * The dataset is copied from design/mock/comfyvault.html, so the figures on
- * screen can be compared against that design file.
+ * The dataset is a fixed sample: two installs on C:, a few copies on D:, and
+ * the figures every screen was designed against.
  *
  * Nothing here reads a disk. It never sees a real ComfyUI install.
  */
