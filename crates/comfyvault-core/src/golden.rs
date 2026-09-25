@@ -1419,17 +1419,35 @@ fn the_window_loads_no_picture_from_anywhere_on_the_network() {
             .map(str::trim)
             .find_map(|d| d.strip_prefix("img-src "))
             .unwrap_or_else(|| panic!("{whose}: the rules do not say where images load from"));
-        // The app's own local protocol, http://asset.localhost, is not a
-        // place on the network.
-        let remote: Vec<&str> = img_src
-            .split_whitespace()
-            .filter(|t| {
-                !t.starts_with('\'')
-                    && *t != "data:"
-                    && *t != "asset:"
-                    && !(t.starts_with("http://") && t.ends_with(".localhost"))
-            })
-            .collect();
+        let remote = remote_sources(img_src);
         assert!(remote.is_empty(), "{whose}: img-src lets images load from {remote:?}");
     }
+}
+
+/// The sources in a content rule that reach the network. Only the app's own
+/// sources are not: the page itself, inline data, and Tauri's local asset
+/// protocol under its exact name. Everything else counts, however it is
+/// written: a host, a host with no scheme, a scheme on its own, a wildcard.
+fn remote_sources(sources: &str) -> Vec<&str> {
+    const LOCAL: [&str; 4] = ["'self'", "data:", "asset:", "http://asset.localhost"];
+    sources.split_whitespace().filter(|t| !LOCAL.contains(t)).collect()
+}
+
+#[test]
+fn every_way_of_naming_a_remote_image_source_is_caught() {
+    for remote in [
+        "https://image.civitai.com",
+        "image.civitai.com",
+        "*",
+        "https://*.civitai.com",
+        "*.civitai.com",
+        "https:",
+        "http:",
+        "blob:",
+        "http://evil.localhost",
+        "http://*.localhost",
+    ] {
+        assert_eq!(remote_sources(&format!("'self' data: {remote}")), vec![remote], "{remote}");
+    }
+    assert!(remote_sources("'self' asset: http://asset.localhost data:").is_empty());
 }
