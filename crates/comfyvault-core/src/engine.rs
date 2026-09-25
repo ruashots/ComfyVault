@@ -264,6 +264,24 @@ impl Engine {
             }
         }
 
+        // A vault is made in an empty folder, or is one already. A folder
+        // that holds other files would have its files counted as vault files:
+        // never offered for consolidation, and, reached through an install's
+        // extra model folders, once taken for copies of themselves. Refused
+        // before anything is created, so nothing in the folder changes.
+        if path.is_dir() && !Store::is_vault(path) {
+            let occupied = std::fs::read_dir(path)
+                .map_err(|e| VaultError::from_io(&e, path, "opening the folder"))?
+                .next()
+                .is_some();
+            if occupied {
+                return Err(VaultError::conflict(
+                    "That folder already holds files, so it cannot become the vault. Choose an empty folder, or make a new one.",
+                )
+                .with_path(path));
+            }
+        }
+
         let store = Arc::new(Store::open(path, create_if_missing)?);
 
         // A vault inside an install would make the engine move files into

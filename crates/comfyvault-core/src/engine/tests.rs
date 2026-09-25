@@ -922,3 +922,33 @@ fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
     assert_eq!(err.code, ErrorCode::PermissionDenied);
     assert!(!err.message.contains("Another program"), "a cause was guessed: {}", err.message);
 }
+
+#[test]
+fn a_vault_is_made_only_in_an_empty_folder_or_opened_where_one_already_is() {
+    let f = Fixture::new();
+
+    // A folder that already holds models: refused, and nothing in it changes.
+    let busy = f.dir.path().join("MyModels");
+    std::fs::create_dir_all(&busy).unwrap();
+    std::fs::write(busy.join("kept.safetensors"), weights("kept")).unwrap();
+    let err = f.engine.select_vault(&busy, true).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(err.message.contains("empty folder"), "{}", err.message);
+    assert!(!busy.join(crate::store::INTERNAL_DIR).exists(), "the refused folder was changed");
+    assert_eq!(std::fs::read(busy.join("kept.safetensors")).unwrap(), weights("kept"));
+    let names: Vec<_> = std::fs::read_dir(&busy).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(names.len(), 1);
+
+    // An empty folder and a folder not made yet both become vaults.
+    let empty = f.dir.path().join("Empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    f.engine.select_vault(&empty, true).unwrap();
+    f.engine.select_vault(&f.dir.path().join("New"), true).unwrap();
+
+    // A vault that holds models opens again.
+    let vault = f.dir.path().join("New");
+    std::fs::create_dir_all(vault.join("loras")).unwrap();
+    std::fs::write(vault.join("loras/m.safetensors"), weights("m")).unwrap();
+    f.engine.select_vault(&empty, false).unwrap();
+    f.engine.select_vault(&vault, false).unwrap();
+}

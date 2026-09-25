@@ -347,7 +347,16 @@ read, which is the same rule as `list_drives`. Never zero for unknown.
 Errors: `ioError`, `permissionDenied`, `storeError`, `invalidArgument`.
 
 The engine refuses a vault path that sits inside a registered install. That
-refusal uses `conflict`.
+refusal uses `conflict`, and nothing is created.
+
+A vault is made only in an empty folder, or in a folder not made yet. A folder
+that is already a ComfyVault vault opens as one. A folder that holds anything
+else is refused with `conflict`, and nothing in it changes: files already in
+the chosen folder would be taken for vault files, never deduplicated, and seen
+twice by an install whose extra model folders reach into the vault. The answer
+is an empty folder, which the folder picker's New folder makes.
+
+Choosing the vault that is already open answers with its `VaultInfo`.
 
 ### 2.5 `get_vault_info`
 

@@ -77,6 +77,12 @@ impl std::fmt::Debug for Store {
 
 impl Store {
     /// Opens the database inside a vault, creating the vault if asked.
+    /// Does this folder hold a ComfyVault vault: its own folder, with the
+    /// database in it?
+    pub fn is_vault(folder: &Path) -> bool {
+        folder.join(INTERNAL_DIR).join(DB_FILE).is_file()
+    }
+
     pub fn open(vault_root: &Path, create_if_missing: bool) -> Result<Self> {
         if !vault_root.exists() {
             if !create_if_missing {
