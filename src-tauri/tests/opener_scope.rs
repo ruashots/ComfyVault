@@ -60,3 +60,11 @@ fn addresses_outside_the_scope_are_refused() {
 fn a_civitai_model_page_opens() {
     open("https://civitai.com/models/4384?modelVersionId=128713").expect("the model page was refused");
 }
+
+/// Opens Windows' developer settings, the page where Developer Mode is turned
+/// on, so it runs only when asked: `--ignored`.
+#[test]
+#[ignore]
+fn the_developer_mode_settings_page_opens() {
+    open("ms-settings:developers").expect("the Developer Mode page was refused");
+}

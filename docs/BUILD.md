@@ -242,8 +242,8 @@ cd /mnt/c/<scratch folder>
 ```
 
 The first run checks that addresses outside the scope are refused. The second
-opens a real Civitai model page in the default browser, so it runs only when
-asked.
+opens a real Civitai model page in the default browser, and Windows' developer
+settings, so it runs only when asked.
 
 The test program gets its own Windows manifest from `src-tauri/build.rs`. The
 shipped program does not use it. Without that manifest Windows refuses to start
