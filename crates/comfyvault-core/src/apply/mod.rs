@@ -132,6 +132,160 @@ pub struct InterruptedApply {
     pub affected_paths: Vec<String>,
 }
 
+/// Which part of an undo is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RevertPhase {
+    Restoring,
+    Finalizing,
+}
+
+/// What an undo is doing to the current path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RevertAction {
+    /// Removing a link the run made.
+    RemovingLink,
+    /// Renaming a file back to where it was. Instant, and takes no room.
+    RenamingBack,
+    /// Copying a file back out of the vault. Takes time and room.
+    CopyingBack,
+    /// Folders and other bookkeeping.
+    Tidying,
+}
+
+/// A progress update for an undo.
+///
+/// Not [`ApplyProgress`]: files moved into the vault, links created and space
+/// returned are the opposite of what an undo does, and reported as zeros they
+/// told the person nothing for minutes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertProgress {
+    pub apply_id: String,
+    pub phase: RevertPhase,
+    pub step_index: u64,
+    pub step_total: u64,
+    pub current_path: Option<String>,
+    pub action: RevertAction,
+    pub files_put_back: u64,
+    pub files_to_put_back: u64,
+    pub links_removed: u64,
+    pub bytes_copied: u64,
+    pub bytes_to_copy: u64,
+    pub elapsed_ms: u64,
+    pub eta_ms: Option<u64>,
+}
+
+/// What undoing a run will cost, read before it starts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertPreview {
+    pub apply_id: String,
+    /// Put back by a rename. Instant, and they take no room.
+    pub files_renamed_back: u64,
+    /// Put back by copying the vault file, because their own bytes were
+    /// deleted when the run freed the room.
+    pub files_copied_back: u64,
+    /// The size of the files the copies write. This is what sets the time.
+    pub bytes_to_copy: u64,
+    pub drives: Vec<RevertDrive>,
+}
+
+/// The room an undo takes on one drive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertDrive {
+    pub volume: String,
+    /// What the copies are expected to occupy on this drive. A sparse or
+    /// compressed file is copied as one, so this can be far below the size of
+    /// the files.
+    pub predicted_room_bytes: u64,
+    /// Read off the drive. Nothing when the drive did not answer.
+    pub free_bytes: Option<u64>,
+}
+
+/// What undoing one journal step does, decided before it runs.
+enum UndoAction {
+    RemoveLink { counted: bool },
+    RenameBack,
+    CopyBack { bytes: u64, room: u64, place: PathBuf },
+    Tidy,
+}
+
+impl UndoAction {
+    fn puts_a_file_back(&self) -> bool {
+        matches!(self, Self::RenameBack | Self::CopyBack { .. })
+    }
+
+    fn bytes_to_copy(&self) -> u64 {
+        match self {
+            Self::CopyBack { bytes, .. } => *bytes,
+            _ => 0,
+        }
+    }
+
+    fn progress_action(&self) -> RevertAction {
+        match self {
+            Self::RemoveLink { .. } => RevertAction::RemovingLink,
+            Self::RenameBack => RevertAction::RenamingBack,
+            Self::CopyBack { .. } => RevertAction::CopyingBack,
+            Self::Tidy => RevertAction::Tidying,
+        }
+    }
+}
+
+/// Running state for one undo.
+struct RevertRun {
+    apply_id: String,
+    clock: std::time::Instant,
+    throttle: Throttle,
+    step_index: u64,
+    step_total: u64,
+    current_path: Option<String>,
+    action: RevertAction,
+    files_put_back: u64,
+    files_to_put_back: u64,
+    links_removed: u64,
+    bytes_copied: u64,
+    bytes_to_copy: u64,
+}
+
+impl RevertRun {
+    fn emit(&self, sink: &dyn ProgressSink<RevertProgress>, phase: RevertPhase, force: bool) {
+        if force {
+            self.throttle.force_next();
+        }
+        if !self.throttle.ready() {
+            return;
+        }
+        let elapsed_ms = self.clock.elapsed().as_millis() as u64;
+        // The copies are nearly all of an undo's time when there are any.
+        let eta_ms = match phase {
+            RevertPhase::Finalizing => None,
+            RevertPhase::Restoring if self.bytes_to_copy > 0 => {
+                estimate_remaining_ms(elapsed_ms, self.bytes_copied, self.bytes_to_copy)
+            }
+            RevertPhase::Restoring => estimate_remaining_ms(elapsed_ms, self.step_index, self.step_total),
+        };
+        sink.emit(&RevertProgress {
+            apply_id: self.apply_id.clone(),
+            phase,
+            step_index: self.step_index,
+            step_total: self.step_total,
+            current_path: self.current_path.clone(),
+            action: self.action,
+            files_put_back: self.files_put_back,
+            files_to_put_back: self.files_to_put_back,
+            links_removed: self.links_removed,
+            bytes_copied: self.bytes_copied,
+            bytes_to_copy: self.bytes_to_copy,
+            elapsed_ms,
+            eta_ms,
+        });
+    }
+}
+
 /// Applies plans, undoes them, and recovers from a crash.
 pub struct Applier<'a> {
     store: &'a Store,
@@ -412,6 +566,7 @@ impl<'a> Applier<'a> {
             })?;
             let kind = fsops::move_file(
                 self.platform, &group.source.abs_path, &vault_path, &group.sha256, &temp_dir, cancel,
+                &mut |_| {},
             )?;
             let entry = JournalEntry {
                 step: JournalStep::MoveToVault {
@@ -487,6 +642,7 @@ impl<'a> Applier<'a> {
                     vault_path: vault_path.clone(),
                     sha256: group.sha256.clone(),
                     size_bytes: link.size_bytes,
+                    mtime_nanos: Some(link.mtime_nanos),
                 })?;
                 std::fs::remove_file(&stash_path).map_err(|e| {
                     VaultError::from_io(&e, &stash_path, "removing the duplicate")
@@ -660,7 +816,7 @@ impl<'a> Applier<'a> {
     /// Undoes a list of steps, newest first.
     fn undo_entries(&self, entries: &mut Vec<JournalEntry>, cancel: &CancelToken) -> Result<()> {
         while let Some(entry) = entries.pop() {
-            self.undo_step(&entry, cancel)?;
+            self.undo_step(&entry, cancel, &mut |_| {})?;
             let reverted = JournalEntry { state: JournalState::Reverted, ..entry };
             self.store.update_journal(&reverted)?;
         }
@@ -673,7 +829,14 @@ impl<'a> Applier<'a> {
     /// finished and a step that was interrupted halfway. That is what makes
     /// recovery after a crash possible: the journal says what was attempted,
     /// and the disk says how far it got.
-    fn undo_step(&self, entry: &JournalEntry, cancel: &CancelToken) -> Result<()> {
+    ///
+    /// `copied` hears every byte a step copies, so a long copy can be shown.
+    fn undo_step(
+        &self,
+        entry: &JournalEntry,
+        cancel: &CancelToken,
+        copied: &mut dyn FnMut(u64),
+    ) -> Result<()> {
         match &entry.step {
             JournalStep::CreateDir { path } => {
                 // Only if still empty. A folder the person put something in
@@ -698,10 +861,15 @@ impl<'a> Applier<'a> {
 
                 match (source_there, vault_there) {
                     // The move happened. Put it back.
+                    //
+                    // The temporary file of a copy goes beside the place it is
+                    // going back to. In the vault's own folder it sat on the
+                    // vault's drive, and a file cannot be renamed from one
+                    // drive onto another, so every undo of a run onto another
+                    // drive copied the file and then failed.
                     (false, true) => {
-                        fsops::move_file(
-                            self.platform, to, from, sha256, &self.store.temp_dir(), cancel,
-                        )?;
+                        let temp_dir = from.parent().unwrap_or(from);
+                        fsops::move_file(self.platform, to, from, sha256, temp_dir, cancel, copied)?;
                         Ok(())
                     }
                     // The move never happened, or a copy was interrupted before
@@ -741,7 +909,7 @@ impl<'a> Applier<'a> {
                 }
                 Ok(())
             }
-            JournalStep::DeleteStash { stash, original, vault_path, sha256, .. } => {
+            JournalStep::DeleteStash { stash, original, vault_path, sha256, mtime_nanos, .. } => {
                 // The delete may not have happened.
                 if stash.exists() {
                     return Ok(());
@@ -754,7 +922,7 @@ impl<'a> Applier<'a> {
                 if std::fs::symlink_metadata(original).is_ok() {
                     return Ok(());
                 }
-                fsops::restore_from_vault(vault_path, original, sha256, cancel)
+                fsops::restore_from_vault(vault_path, original, sha256, *mtime_nanos, cancel, copied)
             }
             JournalStep::RemoveLink { link, target } => {
                 if std::fs::symlink_metadata(link).is_ok() {
@@ -772,9 +940,103 @@ impl<'a> Applier<'a> {
         &self,
         apply_id: &str,
         cancel: &CancelToken,
-        sink: &dyn ProgressSink<ApplyProgress>,
+        sink: &dyn ProgressSink<RevertProgress>,
     ) -> Result<ApplyRecord> {
-        let mut record = self
+        let (mut record, mut to_undo) = self.revertible_steps(apply_id)?;
+
+        // Read before anything moves: what each step will cost depends on the
+        // disk as the run left it.
+        let mut actions: Vec<UndoAction> = to_undo.iter().map(|e| self.undo_action(e)).collect();
+
+        // Undoing needs room on the install's drive for every duplicate that
+        // has to be copied back out of the vault. Checked first, so a revert
+        // does not stop halfway for lack of space.
+        self.check_revert_space(&actions)?;
+
+        let mut run = RevertRun {
+            apply_id: apply_id.to_string(),
+            clock: std::time::Instant::now(),
+            throttle: Throttle::per_second(4),
+            step_index: 0,
+            step_total: to_undo.len() as u64,
+            current_path: None,
+            action: RevertAction::Tidying,
+            files_put_back: 0,
+            files_to_put_back: actions.iter().filter(|a| a.puts_a_file_back()).count() as u64,
+            links_removed: 0,
+            bytes_copied: 0,
+            bytes_to_copy: actions.iter().map(UndoAction::bytes_to_copy).sum(),
+        };
+
+        while let (Some(entry), Some(action)) = (to_undo.pop(), actions.pop()) {
+            cancel.check()?;
+            run.action = action.progress_action();
+            run.current_path = step_path(&entry.step).map(|p| crate::paths::display_path(&p));
+            // Not forced: a run of small steps would break the four a second
+            // the contract promises. A long copy reports within a quarter of
+            // a second anyway, from inside the copy.
+            run.emit(sink, RevertPhase::Restoring, false);
+
+            self.undo_step(&entry, cancel, &mut |n| {
+                run.bytes_copied += n;
+                run.emit(sink, RevertPhase::Restoring, false);
+            })?;
+            let reverted = JournalEntry { state: JournalState::Reverted, ..entry.clone() };
+            self.store.update_journal(&reverted)?;
+            self.forget_group_records(&entry)?;
+
+            run.step_index += 1;
+            if action.puts_a_file_back() {
+                run.files_put_back += 1;
+            }
+            if let UndoAction::RemoveLink { counted: true } = action {
+                run.links_removed += 1;
+            }
+            run.emit(sink, RevertPhase::Restoring, false);
+        }
+
+        record.state = ApplyState::Reverted;
+        record.finished_at = Some(Timestamp::now());
+        record.revertible = false;
+        self.store.put_apply(&record)?;
+
+        run.current_path = None;
+        run.action = RevertAction::Tidying;
+        run.emit(sink, RevertPhase::Finalizing, true);
+        Ok(record)
+    }
+
+    /// What undoing a run would cost, without doing it.
+    ///
+    /// Refuses exactly when [`Applier::revert`] would refuse before starting,
+    /// so the question can be answered before the person commits to it.
+    pub fn preview_revert(&self, apply_id: &str) -> Result<RevertPreview> {
+        let (_, to_undo) = self.revertible_steps(apply_id)?;
+        let actions: Vec<UndoAction> = to_undo.iter().map(|e| self.undo_action(e)).collect();
+
+        let mut drives: Vec<RevertDrive> = Vec::new();
+        for (volume, room, place) in self.room_needed(&actions) {
+            drives.push(RevertDrive {
+                volume: volume.0,
+                predicted_room_bytes: room,
+                free_bytes: self.platform.disk_space(&place).ok().map(|s| s.free_bytes),
+            });
+        }
+        drives.sort_by(|a, b| a.volume.cmp(&b.volume));
+
+        Ok(RevertPreview {
+            apply_id: apply_id.to_string(),
+            files_renamed_back: actions.iter().filter(|a| matches!(a, UndoAction::RenameBack)).count() as u64,
+            files_copied_back: actions.iter().filter(|a| matches!(a, UndoAction::CopyBack { .. })).count() as u64,
+            bytes_to_copy: actions.iter().map(UndoAction::bytes_to_copy).sum(),
+            drives,
+        })
+    }
+
+    /// The steps a revert undoes, after the refusals that apply before any
+    /// file is touched.
+    fn revertible_steps(&self, apply_id: &str) -> Result<(ApplyRecord, Vec<JournalEntry>)> {
+        let record = self
             .store
             .apply(apply_id)?
             .ok_or_else(|| VaultError::not_found("That run is not in this vault's history."))?;
@@ -783,8 +1045,9 @@ impl<'a> Applier<'a> {
             return Err(VaultError::conflict("That run was already undone."));
         }
 
-        let entries = self.store.journal(apply_id)?;
-        let mut to_undo: Vec<JournalEntry> = entries
+        let to_undo: Vec<JournalEntry> = self
+            .store
+            .journal(apply_id)?
             .into_iter()
             .filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending))
             .collect();
@@ -795,69 +1058,75 @@ impl<'a> Applier<'a> {
         // them anyway reported success while leaving the tree consolidated,
         // and left a live link the database knew nothing about.
         self.check_nothing_later_depends_on(apply_id, &to_undo)?;
+        Ok((record, to_undo))
+    }
 
-        // Undoing needs room on the install's drive for every duplicate that
-        // has to be copied back out of the vault. Checked first, so a revert
-        // does not stop halfway for lack of space.
-        self.check_revert_space(&to_undo)?;
-
-        let total = to_undo.len() as u64;
-        let clock = std::time::Instant::now();
-        let throttle = Throttle::per_second(4);
-        let mut undone = 0u64;
-
-        while let Some(entry) = to_undo.pop() {
-            cancel.check()?;
-            self.undo_step(&entry, cancel)?;
-            let reverted = JournalEntry { state: JournalState::Reverted, ..entry.clone() };
-            self.store.update_journal(&reverted)?;
-            self.forget_group_records(&entry)?;
-            undone += 1;
-
-            if throttle.ready() {
-                sink.emit(&ApplyProgress {
-                    apply_id: apply_id.to_string(),
-                    phase: ApplyPhase::Applying,
-                    group_index: undone,
-                    group_total: total,
-                    current_group_id: Some(entry.group_id.clone()),
-                    current_path: None,
-                    step: ApplyStep::Cleaning,
-                    bytes_moved: 0,
-                    bytes_to_move: 0,
-                    bytes_freed: 0,
-                    files_moved: 0,
-                    links_created: 0,
-                    failures: 0,
-                    elapsed_ms: clock.elapsed().as_millis() as u64,
-                    eta_ms: estimate_remaining_ms(clock.elapsed().as_millis() as u64, undone, total),
-                });
+    /// What undoing one step will do, read off the disk as it is now.
+    ///
+    /// A file can only come back by rename when its own bytes still exist
+    /// somewhere. The kept copy's bytes are the vault file, so it is renamed
+    /// back. A duplicate's bytes were deleted, which is what freed the room,
+    /// so it can only come back as a copy of the vault file. One file cannot
+    /// be renamed into two places.
+    fn undo_action(&self, entry: &JournalEntry) -> UndoAction {
+        let is_real_file = |p: &Path| {
+            std::fs::symlink_metadata(p).map(|m| m.file_type().is_file()).unwrap_or(false)
+        };
+        let copy_of = |vault_file: &Path, size_bytes: u64, place: &Path| UndoAction::CopyBack {
+            bytes: size_bytes,
+            // A sparse or compressed vault file is copied as one, so the copy
+            // takes what the vault file takes, not what its size says.
+            room: crate::platform::size_on_disk(vault_file).unwrap_or(size_bytes),
+            place: place.to_path_buf(),
+        };
+        match &entry.step {
+            JournalStep::CreateDir { .. } | JournalStep::RemoveLink { .. } => UndoAction::Tidy,
+            JournalStep::MoveToVault { from, to, copied, size_bytes, .. } => {
+                if is_real_file(from) {
+                    // The move never happened. Undoing it only drops a copy.
+                    UndoAction::Tidy
+                } else if *copied {
+                    copy_of(to, *size_bytes, from)
+                } else {
+                    UndoAction::RenameBack
+                }
+            }
+            JournalStep::StashOriginal { stash, .. } => {
+                if !stash.as_os_str().is_empty() && stash.exists() {
+                    UndoAction::RenameBack
+                } else {
+                    UndoAction::Tidy
+                }
+            }
+            JournalStep::CreateLink { link, .. } => UndoAction::RemoveLink {
+                // The names a vault file carries are links too, but they sit
+                // inside the vault. The person counts the links in their
+                // installs, which is what apply counted as it made them.
+                counted: !link.starts_with(self.store.vault_root()),
+            },
+            JournalStep::DeleteStash { stash, original, vault_path, size_bytes, .. } => {
+                if stash.exists() {
+                    UndoAction::Tidy
+                } else {
+                    copy_of(vault_path, *size_bytes, original)
+                }
             }
         }
+    }
 
-        record.state = ApplyState::Reverted;
-        record.finished_at = Some(Timestamp::now());
-        record.revertible = false;
-        self.store.put_apply(&record)?;
-
-        sink.emit(&ApplyProgress {
-            apply_id: apply_id.to_string(),
-            phase: ApplyPhase::Finalizing,
-            group_index: total,
-            group_total: total,
-            current_group_id: None,
-            current_path: None,
-            step: ApplyStep::Cleaning,
-            bytes_moved: 0,
-            bytes_to_move: 0,
-            bytes_freed: 0,
-            files_moved: 0,
-            links_created: 0,
-            failures: 0,
-            elapsed_ms: clock.elapsed().as_millis() as u64,
-            eta_ms: None,
-        });
-        Ok(record)
+    /// The room the copies take on each drive, with one path on that drive to
+    /// read its free space from.
+    fn room_needed(&self, actions: &[UndoAction]) -> Vec<(crate::platform::VolumeId, u64, PathBuf)> {
+        let mut needed: Vec<(crate::platform::VolumeId, u64, PathBuf)> = Vec::new();
+        for a in actions {
+            let UndoAction::CopyBack { room, place, .. } = a else { continue };
+            let Ok(volume) = self.platform.volume_id(place) else { continue };
+            match needed.iter_mut().find(|(v, _, _)| *v == volume) {
+                Some((_, total, _)) => *total += room,
+                None => needed.push((volume, *room, place.clone())),
+            }
+        }
+        needed
     }
 
     /// Refuses a revert when a later operation touched the paths this run
@@ -938,47 +1207,16 @@ impl<'a> Applier<'a> {
 
     /// A revert copies removed duplicates back out of the vault, so it needs
     /// room. Better to refuse than to stop halfway.
-    fn check_revert_space(&self, entries: &[JournalEntry]) -> Result<()> {
-        let mut needed: std::collections::HashMap<crate::platform::VolumeId, u64> =
-            std::collections::HashMap::new();
-
-        for e in entries {
-            if let JournalStep::DeleteStash { original, size_bytes, stash, .. } = &e.step {
-                if stash.exists() {
-                    continue;
-                }
-                if let Ok(v) = self.platform.volume_id(original) {
-                    *needed.entry(v).or_insert(0) += size_bytes;
-                }
-            }
-        }
-        for e in entries {
-            if let JournalStep::MoveToVault { from, size_bytes, copied, .. } = &e.step {
-                if !copied {
-                    continue;
-                }
-                if let Ok(v) = self.platform.volume_id(from) {
-                    *needed.entry(v).or_insert(0) += size_bytes;
-                }
-            }
-        }
-
-        for e in entries {
-            let path = match &e.step {
-                JournalStep::DeleteStash { original, .. } => original,
-                JournalStep::MoveToVault { from, .. } => from,
-                _ => continue,
-            };
-            let Ok(volume) = self.platform.volume_id(path) else { continue };
-            let Some(want) = needed.remove(&volume) else { continue };
-            let free = self.platform.disk_space(path).map(|s| s.free_bytes).unwrap_or(u64::MAX);
+    fn check_revert_space(&self, actions: &[UndoAction]) -> Result<()> {
+        for (_, want, place) in self.room_needed(actions) {
+            let free = self.platform.disk_space(&place).map(|s| s.free_bytes).unwrap_or(u64::MAX);
             if want > free {
                 return Err(VaultError::new(
                     ErrorCode::IoError,
                     "There is not enough room on that drive to put the files back. Free some space and try again.",
                 )
                 .with_detail(format!("needs {want} bytes, {free} free"))
-                .with_path(path));
+                .with_path(&place));
             }
         }
         Ok(())

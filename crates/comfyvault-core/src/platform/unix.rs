@@ -111,6 +111,19 @@ pub(super) fn verbatim(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Unix has no sparse or compressed flag to carry over. A file with fewer
+/// blocks than its length has holes, and the copy leaves those unwritten.
+pub(super) fn copy_storage_traits(src: &std::fs::File, _dst: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let m = src.metadata()?;
+    Ok(m.blocks() * 512 < m.len())
+}
+
+pub(super) fn size_on_disk(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| m.blocks() * 512)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

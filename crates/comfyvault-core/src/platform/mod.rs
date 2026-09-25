@@ -362,6 +362,17 @@ impl Platform for NativePlatform {
     }
 }
 
+/// Marks `dst` sparse and compressed when `src` is, before any byte is
+/// written. Returns whether `src` is sparse.
+pub fn copy_storage_traits(src: &std::fs::File, dst: &std::fs::File) -> std::io::Result<bool> {
+    sys::copy_storage_traits(src, dst)
+}
+
+/// The bytes a file occupies on its drive, or nothing if that cannot be read.
+pub fn size_on_disk(path: &Path) -> Option<u64> {
+    sys::size_on_disk(path)
+}
+
 /// Creates a link in a temporary folder, reads it back, and deletes it.
 ///
 /// This is the only honest way to answer the question. Developer Mode can be on
@@ -588,8 +599,6 @@ struct FakeState {
     capability_override: Option<SymlinkCapability>,
     /// Paths whose volume is reported as this identifier.
     volume_overrides: Vec<(PathBuf, VolumeId)>,
-    /// Every rename reports a cross-volume refusal.
-    force_cross_volume: bool,
     processes: Option<Vec<ProcessInfo>>,
     free_bytes_override: Option<u64>,
     disk_space_fails: bool,
@@ -649,9 +658,14 @@ impl FakePlatform {
         self
     }
 
-    pub fn force_cross_volume(&self, yes: bool) -> &Self {
-        self.state.lock().unwrap().force_cross_volume = yes;
-        self
+    /// The volume override covering this path, longest prefix first.
+    fn volume_override(&self, path: &Path) -> Option<VolumeId> {
+        let s = self.state.lock().unwrap();
+        s.volume_overrides
+            .iter()
+            .filter(|(p, _)| path.starts_with(p))
+            .max_by_key(|(p, _)| p.as_os_str().len())
+            .map(|(_, id)| id.clone())
     }
 
     pub fn fail_rename_at(&self, path: impl Into<PathBuf>, kind: std::io::ErrorKind) -> &Self {
@@ -791,12 +805,18 @@ impl Platform for FakePlatform {
         self.inner.drive_roots()
     }
 
+    /// Refuses a rename between two paths set on different volumes, exactly
+    /// as Windows refuses one between two drives. Every rename is judged, the
+    /// last one of a checked copy included, so a copy staged on the wrong
+    /// drive fails here the way it does on a real one.
     fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), RenameError> {
-        {
-            let s = self.state.lock().unwrap();
-            if s.force_cross_volume {
+        if let (Some(a), Some(b)) = (self.volume_override(from), self.volume_override(to)) {
+            if a != b {
                 return Err(RenameError::CrossVolume);
             }
+        }
+        {
+            let s = self.state.lock().unwrap();
             if let Some(kind) = s.rename_failures.get(from) {
                 return Err(RenameError::Io(std::io::Error::new(*kind, "injected by a test")));
             }
@@ -915,20 +935,23 @@ mod tests {
     }
 
     #[test]
-    fn forced_cross_volume_makes_rename_report_the_recoverable_error() {
+    fn a_rename_between_two_fake_drives_reports_the_recoverable_error() {
         let f = FakePlatform::new();
         let d = tempfile::tempdir().unwrap();
-        let a = d.path().join("a");
-        let b = d.path().join("b");
+        let a = d.path().join("c/a");
+        let b = d.path().join("d/b");
+        let same = d.path().join("c/same");
+        std::fs::create_dir_all(a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(b.parent().unwrap()).unwrap();
         std::fs::write(&a, b"x").unwrap();
+        f.set_volume(d.path().join("c"), "C:\\");
+        f.set_volume(d.path().join("d"), "D:\\");
 
-        f.force_cross_volume(true);
         assert!(matches!(f.rename(&a, &b), Err(RenameError::CrossVolume)));
         assert!(a.exists(), "a refused rename must not move anything");
 
-        f.force_cross_volume(false);
-        f.rename(&a, &b).unwrap();
-        assert!(b.exists() && !a.exists());
+        f.rename(&a, &same).unwrap();
+        assert!(same.exists() && !a.exists(), "a rename on one drive goes through");
     }
 
     #[test]

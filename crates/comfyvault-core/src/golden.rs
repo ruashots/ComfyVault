@@ -36,7 +36,10 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::apply::{ApplyPhase, ApplyProgress, ApplyStep, InterruptedApply};
+use crate::apply::{
+    ApplyPhase, ApplyProgress, ApplyStep, InterruptedApply, RevertAction, RevertDrive, RevertPhase,
+    RevertPreview, RevertProgress,
+};
 use crate::engine::{AppState, BusyKind, BusyOp, ScanEntryPage, ScanEntryWithCount, VaultInfo};
 use crate::error::{ErrorCode, VaultError};
 use crate::install::detect::{InstallCandidate, OutputModelDir, RootOrigin, VersionSource};
@@ -389,6 +392,20 @@ fn apply_record() -> ApplyRecord {
 }
 
 /// Every payload the interface receives, with the name of its file.
+fn revert_preview() -> RevertPreview {
+    RevertPreview {
+        apply_id: "apply-1".into(),
+        files_renamed_back: 2,
+        files_copied_back: 3,
+        bytes_to_copy: 13_876_297_728,
+        drives: vec![RevertDrive {
+            volume: r"C:\".into(),
+            predicted_room_bytes: 196_608,
+            free_bytes: Some(91_204_567_040),
+        }],
+    }
+}
+
 fn samples() -> Vec<(&'static str, serde_json::Value)> {
     fn s<T: Serialize>(name: &'static str, v: T) -> (&'static str, serde_json::Value) {
         (name, serde_json::to_value(v).expect("serialise sample"))
@@ -670,6 +687,28 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 eta_ms: Some(12_000),
             },
         ),
+        s(
+            "RevertProgress",
+            RevertProgress {
+                apply_id: "apply-1".into(),
+                phase: RevertPhase::Restoring,
+                step_index: 3,
+                step_total: 9,
+                current_path: Some(
+                    r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
+                ),
+                action: RevertAction::CopyingBack,
+                files_put_back: 1,
+                files_to_put_back: 3,
+                links_removed: 1,
+                bytes_copied: 2_147_483_648,
+                bytes_to_copy: 13_876_297_728,
+                elapsed_ms: 19_000,
+                eta_ms: Some(104_000),
+            },
+        ),
+        s("RevertPreview", revert_preview()),
+        s("RevertDrive", revert_preview().drives.into_iter().next().unwrap()),
         // Pieces that only ever arrive inside a larger payload. They get
         // their own sample so that the interface can build a double for one
         // row without standing up a whole plan.
@@ -1161,6 +1200,27 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("SourceChoice", wire(&s), expected));
     }
 
+    for p in [RevertPhase::Restoring, RevertPhase::Finalizing] {
+        let expected = match p {
+            RevertPhase::Restoring => "restoring",
+            RevertPhase::Finalizing => "finalizing",
+        };
+        out.push(("RevertPhase", wire(&p), expected));
+    }
+
+    for a in [
+        RevertAction::RemovingLink, RevertAction::RenamingBack, RevertAction::CopyingBack,
+        RevertAction::Tidying,
+    ] {
+        let expected = match a {
+            RevertAction::RemovingLink => "removingLink",
+            RevertAction::RenamingBack => "renamingBack",
+            RevertAction::CopyingBack => "copyingBack",
+            RevertAction::Tidying => "tidying",
+        };
+        out.push(("RevertAction", wire(&a), expected));
+    }
+
     for e in crate::error::ErrorCode::every() {
         let text = serde_json::to_value(e).unwrap();
         out.push(("ErrorCode", text.as_str().unwrap().to_string(), ""));
@@ -1193,7 +1253,7 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
 
     let mut checked = 0;
     let mut wrong = Vec::new();
-    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode"] {
+    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode", "RevertAction"] {
         let engine: Vec<&str> = values
             .iter()
             .filter(|(k, _, _)| *k == kind)

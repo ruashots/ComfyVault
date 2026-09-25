@@ -198,6 +198,30 @@ impl Default for TestWorld {
     }
 }
 
+/// Writes a sparse file: a short header naming `tag`, then `len` bytes in all,
+/// the rest a hole that occupies nothing on the drive.
+///
+/// On Windows the file is marked sparse by `fsutil`, the tool a person would
+/// use, not by the engine's own code, so a test built on it cannot agree with
+/// the engine by sharing a mistake.
+pub fn write_sparse(path: &Path, tag: &str, len: u64) {
+    use std::io::Write;
+    std::fs::create_dir_all(path.parent().unwrap()).expect("create folder");
+    let mut f = std::fs::File::create(path).expect("create sparse file");
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("fsutil")
+            .args(["sparse", "setflag"])
+            .arg(path)
+            .output()
+            .expect("run fsutil");
+        assert!(out.status.success(), "fsutil could not mark the file sparse: {out:?}");
+    }
+    f.write_all(format!("SPARSE:{tag}:").as_bytes()).expect("write header");
+    f.set_len(len).expect("extend with a hole");
+    f.sync_all().expect("flush");
+}
+
 /// Bytes that stand in for model weights.
 ///
 /// Distinct tags give distinct content, and therefore distinct hashes. The

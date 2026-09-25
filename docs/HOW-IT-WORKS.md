@@ -255,10 +255,18 @@ renamed-aside name or its original name, its bytes are never in neither place.
 
 Undo walks the journal backwards and reverses every step.
 
-When the original bytes were deleted, they are copied back out of the vault,
-because the content is identical by hash. That means an undo needs free space on
-the install's drive. ComfyVault checks that first and refuses rather than half
-doing it.
+The copy that was kept comes back by a rename. Its bytes are the vault file, so
+on one drive this is instant and takes no room.
+
+Each duplicate comes back as a copy of the vault file. Its own bytes were
+deleted, which is what freed the room, and one file cannot be renamed into two
+places. The copies take time, and they take room on the drive the files go back
+to. ComfyVault checks that room first and refuses rather than half doing it.
+
+A copy keeps what the drive knew about the file. A sparse file stays sparse, an
+NTFS compressed file stays compressed, and each file gets back the modification
+time it had before the run. The room an undo takes is therefore what the files
+really occupied, which for a sparse file can be almost nothing.
 
 A run that was interrupted and then finished is undone as one run. Resuming
 continues the same journal rather than starting a new one, so the whole of it

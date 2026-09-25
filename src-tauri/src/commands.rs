@@ -14,7 +14,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use comfyvault_core::apply::{ApplyProgress, ApplyRequest, InterruptedApply};
+use comfyvault_core::apply::{
+    ApplyProgress, ApplyRequest, InterruptedApply, RevertPreview, RevertProgress,
+};
 use comfyvault_core::engine::{AppState, Engine, ScanEntryFilter, ScanEntryPage, VaultInfo};
 use comfyvault_core::install::{Install, InstallCandidate};
 use comfyvault_core::links::{CreateLinkRequest, LinkWithState, ModelDirNode};
@@ -405,13 +407,22 @@ pub async fn resume_apply(
 }
 
 #[tauri::command]
+pub async fn preview_revert(
+    state: State<'_, AppEngine>,
+    args: ApplyIdArgs,
+) -> Reply<RevertPreview> {
+    let e = engine(&state);
+    blocking(move || e.preview_revert(&args.apply_id)).await
+}
+
+#[tauri::command]
 pub async fn revert_apply(
     app: AppHandle,
     state: State<'_, AppEngine>,
     args: ApplyIdArgs,
 ) -> Reply<StartedApply> {
     let e = engine(&state);
-    let sink = Arc::new(events::EventSink::<ApplyProgress>::new(
+    let sink = Arc::new(events::EventSink::<RevertProgress>::new(
         app.clone(),
         events::REVERT_PROGRESS,
     ));

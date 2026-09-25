@@ -82,6 +82,7 @@ pub fn run() {
             commands::list_applies,
             commands::get_interrupted_applies,
             commands::resume_apply,
+            commands::preview_revert,
             commands::revert_apply,
             commands::create_link,
             commands::remove_link,

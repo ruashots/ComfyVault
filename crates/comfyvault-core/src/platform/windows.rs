@@ -311,6 +311,63 @@ pub(super) fn verbatim(path: &Path) -> PathBuf {
     PathBuf::from(format!(r"\\?\{s}"))
 }
 
+/// Gives a new file the storage traits of the one it copies: sparse, and NTFS
+/// compressed. Returns whether the source is sparse, so the copy can leave its
+/// empty ranges unwritten.
+///
+/// Neither trait survives a plain copy. Measured on NTFS: `CopyFileExW` turned
+/// a sparse file occupying 64 KB into one occupying its full gigabyte, and a
+/// compressed file into an uncompressed one.
+pub(super) fn copy_storage_traits(src: &std::fs::File, dst: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::windows::fs::MetadataExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        COMPRESSION_FORMAT_DEFAULT, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_SPARSE_FILE,
+    };
+    use windows_sys::Win32::System::Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE};
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    let attributes = src.metadata()?.file_attributes();
+    let handle = dst.as_raw_handle() as HANDLE;
+    let control = |code: u32, input: *const core::ffi::c_void, len: u32| -> std::io::Result<()> {
+        let mut returned = 0u32;
+        let ok = unsafe {
+            DeviceIoControl(handle, code, input, len, std::ptr::null_mut(), 0, &mut returned, std::ptr::null_mut())
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    };
+
+    let sparse = attributes & FILE_ATTRIBUTE_SPARSE_FILE != 0;
+    if sparse {
+        control(FSCTL_SET_SPARSE, std::ptr::null(), 0)?;
+    }
+    if attributes & FILE_ATTRIBUTE_COMPRESSED != 0 {
+        let format: u16 = COMPRESSION_FORMAT_DEFAULT;
+        control(FSCTL_SET_COMPRESSION, &format as *const u16 as *const _, 2)?;
+    }
+    Ok(sparse)
+}
+
+/// What the file occupies on the drive, which for a sparse or compressed file
+/// is less than its size.
+pub(super) fn size_on_disk(path: &Path) -> Option<u64> {
+    use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
+    use windows_sys::Win32::Storage::FileSystem::{GetCompressedFileSizeW, INVALID_FILE_SIZE};
+
+    let w = wide(path);
+    let mut high = 0u32;
+    let low = unsafe { GetCompressedFileSizeW(w.as_ptr(), &mut high) };
+    // INVALID_FILE_SIZE is also a legitimate low half, so only the error code
+    // tells the two apart.
+    if low == INVALID_FILE_SIZE && unsafe { GetLastError() } != NO_ERROR {
+        return None;
+    }
+    Some(((high as u64) << 32) | low as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

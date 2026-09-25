@@ -331,6 +331,10 @@ pub enum JournalStep {
         vault_path: PathBuf,
         sha256: String,
         size_bytes: u64,
+        /// The duplicate's own modification time, so the copy put back carries
+        /// it. A journal written by an older build has none.
+        #[serde(default, with = "crate::time_util::optional_nanos_as_string")]
+        mtime_nanos: Option<i128>,
     },
     /// A link removed. Undone by creating it again.
     RemoveLink { link: PathBuf, target: PathBuf },
@@ -430,6 +434,7 @@ mod tests {
                 vault_path: "/v/loras/a.safetensors".into(),
                 sha256: "AA".into(),
                 size_bytes: 10,
+                mtime_nanos: Some(1_758_240_000_123_456_789),
             },
             JournalStep::RemoveLink {
                 link: "/i/c.safetensors".into(),

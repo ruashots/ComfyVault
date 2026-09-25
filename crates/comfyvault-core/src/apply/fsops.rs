@@ -52,6 +52,10 @@ pub fn ensure_dir(path: &Path) -> Result<bool> {
 /// `expected_sha256` is compared against the copy before the source is removed.
 /// A copy that does not match is deleted and the source is left exactly where
 /// it was.
+///
+/// `temp_dir` must be on the same drive as `to`, because the checked copy is
+/// renamed from there into place. `copied` hears every byte a copy advances.
+#[allow(clippy::too_many_arguments)]
 pub fn move_file(
     platform: &dyn Platform,
     from: &Path,
@@ -59,6 +63,7 @@ pub fn move_file(
     expected_sha256: &str,
     temp_dir: &Path,
     cancel: &CancelToken,
+    copied: &mut dyn FnMut(u64),
 ) -> Result<MoveKind> {
     if to.exists() || platform.is_symlink(to) {
         return Err(VaultError::new(
@@ -74,7 +79,7 @@ pub fn move_file(
     match platform.rename(from, to) {
         Ok(()) => Ok(MoveKind::Renamed),
         Err(RenameError::CrossVolume) => {
-            copy_verify_then_remove(from, to, expected_sha256, temp_dir, cancel)?;
+            copy_verify_then_remove(platform, from, to, expected_sha256, temp_dir, cancel, copied)?;
             Ok(MoveKind::Copied)
         }
         Err(RenameError::Io(e)) => Err(VaultError::from_io(&e, from, "moving the file into the vault")),
@@ -84,14 +89,16 @@ pub fn move_file(
 /// Copies to a temporary file, checks it, puts it in place, then removes the
 /// source.
 ///
-/// The temporary file lives inside the vault, so the final step is a rename on
-/// one drive and cannot half succeed.
+/// The temporary file lives on the destination's drive, so the final step is a
+/// rename on one drive and cannot half succeed.
 pub fn copy_verify_then_remove(
+    platform: &dyn Platform,
     from: &Path,
     to: &Path,
     expected_sha256: &str,
     temp_dir: &Path,
     cancel: &CancelToken,
+    copied: &mut dyn FnMut(u64),
 ) -> Result<()> {
     ensure_dir(temp_dir)?;
     let temp = temp_dir.join(format!(
@@ -101,7 +108,7 @@ pub fn copy_verify_then_remove(
     ));
 
     let result = (|| -> Result<()> {
-        copy_with_cancel(from, &temp, cancel)?;
+        copy_with_cancel(from, &temp, cancel, copied)?;
 
         // Read the copy back off the disk. Comparing what was written, rather
         // than what was meant to be written, is the whole point of the check.
@@ -114,7 +121,11 @@ pub fn copy_verify_then_remove(
             .with_detail(format!("expected {expected_sha256}, the copy is {actual}"))
             .with_path(from));
         }
-        std::fs::rename(&temp, to).ctx(to, "putting the copy in place")?;
+        // Through the platform, so a temporary file on the wrong drive fails
+        // here in a test the way it fails on Windows.
+        platform
+            .rename(&temp, to)
+            .map_err(|e| e.into_vault_error(to, "putting the copy in place"))?;
         Ok(())
     })();
 
@@ -130,10 +141,39 @@ pub fn copy_verify_then_remove(
     Ok(())
 }
 
+/// The granularity at which a sparse copy leaves zeros unwritten. It is the
+/// unit NTFS allocates a sparse file in on a drive with 4 KB clusters.
+const SPARSE_BLOCK: usize = 64 * 1024;
+
 /// Copies bytes and flushes them to the disk.
-fn copy_with_cancel(from: &Path, to: &Path, cancel: &CancelToken) -> Result<u64> {
+///
+/// The copy keeps what the file system knew about the file, not only its
+/// bytes: a sparse file stays sparse, a compressed one stays compressed, and
+/// the modification time stays. A copy that lost them took the full size on
+/// the drive for a file that had occupied almost nothing, and gave the scan a
+/// new time, so the next scan read the whole file again.
+fn copy_with_cancel(
+    from: &Path,
+    to: &Path,
+    cancel: &CancelToken,
+    copied: &mut dyn FnMut(u64),
+) -> Result<u64> {
+    use std::io::{Seek, SeekFrom};
+
     let mut src = std::fs::File::open(from).ctx(from, "opening the file to copy it")?;
-    let mut dst = std::fs::File::create(to).ctx(to, "creating the copy")?;
+    let modified = src.metadata().and_then(|m| m.modified()).ctx(from, "reading the file's time")?;
+    // Read access too: Windows refuses to compress a file through a handle that
+    // can only write.
+    let mut dst = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(to)
+        .ctx(to, "creating the copy")?;
+    let sparse = crate::platform::copy_storage_traits(&src, &dst)
+        .ctx(to, "marking the copy sparse or compressed like the original")?;
+
     let mut buf = vec![0u8; 1024 * 1024];
     let mut total = 0u64;
 
@@ -143,9 +183,27 @@ fn copy_with_cancel(from: &Path, to: &Path, cancel: &CancelToken) -> Result<u64>
         if n == 0 {
             break;
         }
-        dst.write_all(&buf[..n]).ctx(to, "writing the copy")?;
+        if sparse {
+            // A range of zeros in a sparse file is skipped, not written, so it
+            // stays a hole. A file that was not sparse is written in full: a
+            // hole there would be a change the person did not ask for.
+            for block in buf[..n].chunks(SPARSE_BLOCK) {
+                if block.iter().all(|&b| b == 0) {
+                    dst.seek(SeekFrom::Current(block.len() as i64)).ctx(to, "writing the copy")?;
+                } else {
+                    dst.write_all(block).ctx(to, "writing the copy")?;
+                }
+            }
+        } else {
+            dst.write_all(&buf[..n]).ctx(to, "writing the copy")?;
+        }
         total += n as u64;
+        copied(n as u64);
     }
+    // A file ending in a hole is shorter than it should be until its length is
+    // set.
+    dst.set_len(total).ctx(to, "writing the copy")?;
+    dst.set_modified(modified).ctx(to, "setting the copy's time")?;
     // Without this the bytes can still be in the operating system's cache when
     // the original is removed, and a power cut then loses the file.
     dst.sync_all().ctx(to, "flushing the copy to the disk")?;
@@ -199,11 +257,17 @@ pub fn unstash(stash: &Path, original: &Path) -> Result<()> {
 ///
 /// This is safe because the vault file and the original are the same content by
 /// hash, which is exactly why the original was allowed to be removed.
+///
+/// `mtime_nanos` is the time the original carried, when the journal recorded
+/// it. Without it the copy keeps the vault file's time, which is the time of
+/// the copy that was kept.
 pub fn restore_from_vault(
     vault_file: &Path,
     original: &Path,
     expected_sha256: &str,
+    mtime_nanos: Option<i128>,
     cancel: &CancelToken,
+    copied: &mut dyn FnMut(u64),
 ) -> Result<()> {
     if std::fs::symlink_metadata(original).is_ok() {
         return Err(VaultError::new(
@@ -221,7 +285,14 @@ pub fn restore_from_vault(
     ));
 
     let result = (|| -> Result<()> {
-        copy_with_cancel(vault_file, &temp, cancel)?;
+        copy_with_cancel(vault_file, &temp, cancel, copied)?;
+        if let Some(time) = mtime_nanos.and_then(time_from_nanos) {
+            std::fs::File::options()
+                .write(true)
+                .open(&temp)
+                .and_then(|f| f.set_modified(time))
+                .ctx(&temp, "setting the file's time")?;
+        }
         let actual = hash::hash_file_cancellable(&temp, cancel)?;
         if !actual.eq_ignore_ascii_case(expected_sha256) {
             return Err(VaultError::new(
@@ -239,6 +310,16 @@ pub fn restore_from_vault(
         let _ = std::fs::remove_file(&temp);
     }
     result
+}
+
+/// The inverse of [`crate::time_util::Timestamp::mtime_nanos`].
+fn time_from_nanos(nanos: i128) -> Option<std::time::SystemTime> {
+    let magnitude = std::time::Duration::from_nanos(u64::try_from(nanos.unsigned_abs()).ok()?);
+    if nanos >= 0 {
+        std::time::UNIX_EPOCH.checked_add(magnitude)
+    } else {
+        std::time::UNIX_EPOCH.checked_sub(magnitude)
+    }
 }
 
 /// Removes a folder only when it is empty.
@@ -341,6 +422,13 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// The folder is drive C:, and its `vault` and `tmp` folders are drive D:.
+    fn two_drives(p: &FakePlatform, root: &Path) {
+        p.set_volume(root, "C:\\");
+        p.set_volume(root.join("vault"), "D:\\");
+        p.set_volume(root.join("tmp"), "D:\\");
+    }
+
     fn meta_of(p: &Path) -> (u64, i128) {
         let m = std::fs::metadata(p).unwrap();
         (m.len(), crate::time_util::Timestamp::mtime_nanos(&m))
@@ -360,6 +448,7 @@ mod tests {
             &crate::scan::hash::hash_bytes(&weights("a")),
             &d.path().join("tmp"),
             &CancelToken::new(),
+            &mut |_| {},
         )
         .unwrap();
 
@@ -372,7 +461,7 @@ mod tests {
     fn a_cross_drive_move_copies_checks_and_only_then_removes_the_source() {
         let d = tmp();
         let p = FakePlatform::new();
-        p.force_cross_volume(true);
+        two_drives(&p, d.path());
 
         let from = d.path().join("a.safetensors");
         let to = d.path().join("vault/loras/a.safetensors");
@@ -385,6 +474,7 @@ mod tests {
             &crate::scan::hash::hash_bytes(&weights("a")),
             &d.path().join("tmp"),
             &CancelToken::new(),
+            &mut |_| {},
         )
         .unwrap();
 
@@ -399,14 +489,14 @@ mod tests {
         // than what it was given must never cost the person the original.
         let d = tmp();
         let p = FakePlatform::new();
-        p.force_cross_volume(true);
+        two_drives(&p, d.path());
 
         let from = d.path().join("a.safetensors");
         let to = d.path().join("vault/loras/a.safetensors");
         std::fs::write(&from, weights("a")).unwrap();
 
         let wrong_hash = crate::scan::hash::hash_bytes(b"something else entirely");
-        let err = move_file(&p, &from, &to, &wrong_hash, &d.path().join("tmp"), &CancelToken::new())
+        let err = move_file(&p, &from, &to, &wrong_hash, &d.path().join("tmp"), &CancelToken::new(), &mut |_| {})
             .unwrap_err();
 
         assert_eq!(err.code, ErrorCode::IoError);
@@ -419,7 +509,7 @@ mod tests {
     fn a_failed_copy_leaves_no_partial_file_behind() {
         let d = tmp();
         let p = FakePlatform::new();
-        p.force_cross_volume(true);
+        two_drives(&p, d.path());
         let temp_dir = d.path().join("tmp");
 
         let from = d.path().join("a.safetensors");
@@ -431,6 +521,7 @@ mod tests {
             &crate::scan::hash::hash_bytes(b"wrong"),
             &temp_dir,
             &CancelToken::new(),
+            &mut |_| {},
         );
 
         let leftovers: Vec<_> = std::fs::read_dir(&temp_dir).unwrap().filter_map(|e| e.ok()).collect();
@@ -452,6 +543,7 @@ mod tests {
             "irrelevant",
             &d.path().join("tmp"),
             &CancelToken::new(),
+            &mut |_| {},
         )
         .unwrap_err();
 
@@ -519,7 +611,9 @@ mod tests {
             &vault_file,
             &original,
             &crate::scan::hash::hash_bytes(&weights("a")),
+            None,
             &CancelToken::new(),
+            &mut |_| {},
         )
         .unwrap();
 
@@ -535,7 +629,7 @@ mod tests {
         std::fs::write(&vault_file, weights("a")).unwrap();
         std::fs::write(&original, b"already here").unwrap();
 
-        let err = restore_from_vault(&vault_file, &original, "x", &CancelToken::new()).unwrap_err();
+        let err = restore_from_vault(&vault_file, &original, "x", None, &CancelToken::new(), &mut |_| {}).unwrap_err();
         assert_eq!(err.code, ErrorCode::Conflict);
         assert_eq!(std::fs::read(&original).unwrap(), b"already here");
     }
@@ -547,10 +641,137 @@ mod tests {
         let original = d.path().join("o.safetensors");
         std::fs::write(&vault_file, weights("a")).unwrap();
 
-        let err = restore_from_vault(&vault_file, &original, &"0".repeat(64), &CancelToken::new())
+        let err = restore_from_vault(&vault_file, &original, &"0".repeat(64), None, &CancelToken::new(), &mut |_| {})
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::IoError);
         assert!(!original.exists(), "a file that failed its check must not be left behind");
+    }
+
+    /// Sixteen megabytes, of which only the header is ever written.
+    const SPARSE_LEN: u64 = 16 * 1024 * 1024;
+
+    #[test]
+    fn a_sparse_file_put_back_stays_sparse() {
+        // Measured on Windows before this: a model occupying 64 KB came back
+        // occupying its full size, and an undo filled the drive with zeros.
+        let d = tmp();
+        let vault_file = d.path().join("vault/loras/a.safetensors");
+        crate::testkit::write_sparse(&vault_file, "a", SPARSE_LEN);
+        let vault_on_disk = crate::platform::size_on_disk(&vault_file).unwrap();
+        assert!(vault_on_disk < SPARSE_LEN / 4, "the test file is not sparse: {vault_on_disk}");
+
+        let original = d.path().join("install/models/loras/a.safetensors");
+        let sha = crate::scan::hash::hash_file(&vault_file).unwrap();
+        restore_from_vault(&vault_file, &original, &sha, None, &CancelToken::new(), &mut |_| {})
+            .unwrap();
+
+        assert_eq!(std::fs::metadata(&original).unwrap().len(), SPARSE_LEN, "the length must survive");
+        let on_disk = crate::platform::size_on_disk(&original).unwrap();
+        assert!(
+            on_disk <= vault_on_disk + SPARSE_BLOCK as u64,
+            "the copy takes {on_disk} bytes on the drive, the vault file takes {vault_on_disk}"
+        );
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            let attributes = std::fs::metadata(&original).unwrap().file_attributes();
+            assert!(attributes & 0x200 != 0, "Windows no longer marks the copy sparse");
+        }
+    }
+
+    #[test]
+    fn a_file_that_was_not_sparse_is_not_made_sparse() {
+        // Zeros in an ordinary file are written. A hole would change how the
+        // file sits on the drive, which nobody asked for.
+        let d = tmp();
+        let vault_file = d.path().join("v.safetensors");
+        std::fs::write(&vault_file, vec![0u8; 4 * 1024 * 1024]).unwrap();
+        let original = d.path().join("o.safetensors");
+        let sha = crate::scan::hash::hash_file(&vault_file).unwrap();
+        restore_from_vault(&vault_file, &original, &sha, None, &CancelToken::new(), &mut |_| {})
+            .unwrap();
+        assert_eq!(
+            crate::platform::size_on_disk(&original).unwrap(),
+            crate::platform::size_on_disk(&vault_file).unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_compressed_file_put_back_stays_compressed() {
+        use std::os::windows::fs::MetadataExt;
+        let d = tmp();
+        let vault_file = d.path().join("v.safetensors");
+        std::fs::File::create(&vault_file).unwrap();
+        let out = std::process::Command::new("compact")
+            .args(["/c", "/q"])
+            .arg(&vault_file)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "compact could not compress the file: {out:?}");
+        std::fs::write(&vault_file, vec![7u8; 4 * 1024 * 1024]).unwrap();
+        assert!(std::fs::metadata(&vault_file).unwrap().file_attributes() & 0x800 != 0);
+
+        let original = d.path().join("o.safetensors");
+        let sha = crate::scan::hash::hash_file(&vault_file).unwrap();
+        restore_from_vault(&vault_file, &original, &sha, None, &CancelToken::new(), &mut |_| {})
+            .unwrap();
+        assert!(
+            std::fs::metadata(&original).unwrap().file_attributes() & 0x800 != 0,
+            "the copy lost NTFS compression"
+        );
+    }
+
+    #[test]
+    fn a_file_put_back_carries_its_own_time_or_else_the_vault_files() {
+        // A new time makes the next scan read the whole file again, because
+        // size and time are what the scan cache trusts.
+        let d = tmp();
+        let vault_file = d.path().join("v.safetensors");
+        std::fs::write(&vault_file, weights("a")).unwrap();
+        let vault_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options().write(true).open(&vault_file).unwrap().set_modified(vault_time).unwrap();
+        let sha = crate::scan::hash::hash_bytes(&weights("a"));
+
+        let recorded = 1_600_000_000_123_456_700i128;
+        let own = d.path().join("own.safetensors");
+        restore_from_vault(&vault_file, &own, &sha, Some(recorded), &CancelToken::new(), &mut |_| {})
+            .unwrap();
+        assert_eq!(meta_of(&own).1, recorded, "the time the journal recorded was not put back");
+
+        let unrecorded = d.path().join("unrecorded.safetensors");
+        restore_from_vault(&vault_file, &unrecorded, &sha, None, &CancelToken::new(), &mut |_| {})
+            .unwrap();
+        assert_eq!(meta_of(&unrecorded).1, meta_of(&vault_file).1);
+    }
+
+    #[test]
+    fn a_cross_drive_move_keeps_the_time_and_reports_every_byte() {
+        let d = tmp();
+        let p = FakePlatform::new();
+        two_drives(&p, d.path());
+        let from = d.path().join("a.safetensors");
+        std::fs::write(&from, weights("a")).unwrap();
+        // Far from now, because a copy made in the same clock tick as the
+        // source would share its time without anything having kept it.
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+        std::fs::File::options().write(true).open(&from).unwrap().set_modified(old).unwrap();
+        let before = meta_of(&from).1;
+
+        let mut heard = 0u64;
+        move_file(
+            &p,
+            &from,
+            &d.path().join("vault/a.safetensors"),
+            &crate::scan::hash::hash_bytes(&weights("a")),
+            &d.path().join("tmp"),
+            &CancelToken::new(),
+            &mut |n| heard += n,
+        )
+        .unwrap();
+
+        assert_eq!(meta_of(&d.path().join("vault/a.safetensors")).1, before);
+        assert_eq!(heard, weights("a").len() as u64);
     }
 
     #[test]
@@ -674,7 +895,7 @@ mod tests {
     fn a_cancelled_copy_leaves_the_source_alone() {
         let d = tmp();
         let p = FakePlatform::new();
-        p.force_cross_volume(true);
+        two_drives(&p, d.path());
         let from = d.path().join("a.safetensors");
         std::fs::write(&from, weights("a")).unwrap();
 
@@ -687,6 +908,7 @@ mod tests {
             &crate::scan::hash::hash_bytes(&weights("a")),
             &d.path().join("tmp"),
             &cancel,
+            &mut |_| {},
         )
         .unwrap_err();
 

@@ -850,7 +850,7 @@ pub fn place_file(
     fsops::ensure_dir(&dir)?;
     let dest = dir.join(name);
     let size = std::fs::metadata(source).map(|m| m.len()).unwrap_or(0);
-    fsops::move_file(platform, source, &dest, sha256, &store.temp_dir(), cancel)?;
+    fsops::move_file(platform, source, &dest, sha256, &store.temp_dir(), cancel, &mut |_| {})?;
 
     let record = VaultFileRecord {
         sha256: sha256.to_string(),

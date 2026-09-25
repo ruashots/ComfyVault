@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::apply::{ApplyProgress, ApplyRequest, Applier, InterruptedApply};
+use crate::apply::{
+    ApplyProgress, ApplyRequest, Applier, InterruptedApply, RevertPreview, RevertProgress,
+};
 use crate::error::{ErrorCode, Result, VaultError};
 use crate::install::{detect, Install, InstallCandidate};
 use crate::links::{CreateLinkRequest, Links, ModelDirNode};
@@ -634,11 +636,17 @@ impl Engine {
         Ok(apply_id)
     }
 
+    /// What undoing a run would cost. Reads only.
+    pub fn preview_revert(&self, apply_id: &str) -> Result<RevertPreview> {
+        let store = self.store()?;
+        Applier::new(&store, self.platform.as_ref()).preview_revert(apply_id)
+    }
+
     /// Undoes a run, on its own thread.
     pub fn start_revert(
         self: &Arc<Self>,
         apply_id: String,
-        sink: Arc<dyn ProgressSink<ApplyProgress>>,
+        sink: Arc<dyn ProgressSink<RevertProgress>>,
         on_done: Arc<dyn Fn(Result<ApplyRecord>) + Send + Sync>,
     ) -> Result<String> {
         let store = self.store()?;

@@ -26,6 +26,13 @@ fn request(plan: &ConsolidationPlan) -> ApplyRequest {
     }
 }
 
+/// The installs on drive C:, the vault on drive D:. A rename between the two
+/// is refused, as Windows refuses one.
+fn vault_on_another_drive(w: &TestWorld) {
+    w.platform.set_volume(w.path(), "C:\\");
+    w.platform.set_volume(&w.vault_root, "D:\\");
+}
+
 fn run_apply(w: &TestWorld, plan: &ConsolidationPlan) -> ApplyRecord {
     applier(w)
         .apply("ap-1", plan, &request(plan), &CancelToken::new(), &NullSink)
@@ -548,7 +555,7 @@ fn a_vault_on_another_drive_copies_checks_then_removes_the_original() {
     let plan = w.plan(&[a, b]);
     // Every rename across the boundary is refused, exactly as Windows does
     // between two drives.
-    w.platform.force_cross_volume(true);
+    vault_on_another_drive(&w);
 
     let result = run_apply(&w, &plan);
     assert_eq!(result.state, ApplyState::Completed);
@@ -772,7 +779,7 @@ fn reverting_a_cross_drive_apply_also_puts_everything_back() {
     let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
 
     let plan = w.plan(&[a, b]);
-    w.platform.force_cross_volume(true);
+    vault_on_another_drive(&w);
     run_apply(&w, &plan);
 
     applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
@@ -836,6 +843,181 @@ fn a_revert_refuses_when_the_drive_has_no_room_to_put_the_files_back() {
     let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
     assert_eq!(err.code, ErrorCode::IoError);
     assert!(err.message.contains("not enough room"));
+}
+
+fn set_time(p: &Path, secs: u64) -> i128 {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+    crate::time_util::Timestamp::mtime_nanos(&std::fs::metadata(p).unwrap())
+}
+
+fn time_of(p: &Path) -> i128 {
+    crate::time_util::Timestamp::mtime_nanos(&std::fs::metadata(p).unwrap())
+}
+
+#[test]
+fn every_file_put_back_carries_the_time_it_had() {
+    // The kept copy comes back by rename and keeps its time. The duplicates
+    // come back as copies, and each must carry its own time, not the kept
+    // copy's and not the time of the undo. The scan cache trusts size and
+    // time, so a new time costs a full read of the file on the next scan.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let paths: Vec<_> = [&a, &b, &c]
+        .iter()
+        .map(|i| w.write_model(i, "models/loras/m.safetensors", &weights("m")))
+        .collect();
+    let times: Vec<i128> = paths
+        .iter()
+        .enumerate()
+        .map(|(n, p)| set_time(p, 1_600_000_000 + n as u64 * 86_400))
+        .collect();
+
+    let plan = w.plan(&[a, b, c]);
+    run_apply(&w, &plan);
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+
+    let after: Vec<i128> = paths.iter().map(|p| time_of(p)).collect();
+    assert_eq!(after, times);
+}
+
+#[test]
+fn a_journal_from_before_times_were_recorded_still_reads() {
+    // Written by an older build: the delete step has no time in it.
+    let json = r#"{"kind":"deleteStash","stash":"/i/b.old","original":"/i/b","vault_path":"/v/a","sha256":"AA","size_bytes":10}"#;
+    let step: JournalStep = serde_json::from_str(json).unwrap();
+    assert!(matches!(step, JournalStep::DeleteStash { mtime_nanos: None, .. }));
+}
+
+#[test]
+fn an_undo_reports_what_it_puts_back_while_it_runs() {
+    // Measured before this: an undo sent the apply payload with every counter
+    // at zero, and nothing at all while a file was being copied.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let paths: Vec<_> = [&a, &b, &c]
+        .iter()
+        .map(|i| w.write_model(i, "models/loras/m.safetensors", &weights("m")))
+        .collect();
+    let plan = w.plan(&[a, b, c]);
+    run_apply(&w, &plan);
+
+    let sink: RecordingSink<RevertProgress> = RecordingSink::new();
+    applier(&w).revert("ap-1", &CancelToken::new(), &sink).unwrap();
+    let updates = sink.snapshot();
+
+    let size = weights("m").len() as u64;
+    let first = updates.first().expect("an update");
+    assert_eq!(first.files_to_put_back, 3, "the kept copy and two duplicates");
+    assert_eq!(first.bytes_to_copy, 2 * size, "only the duplicates are copied");
+    // The first step undone is the last duplicate's delete, so the first
+    // thing the person sees is that file being copied back.
+    assert_eq!(first.action, RevertAction::CopyingBack);
+    // Compared as paths, which on Windows treat / and \ as one separator.
+    assert_eq!(first.current_path.as_deref().map(PathBuf::from), Some(paths[2].clone()));
+
+    let last = updates.last().unwrap();
+    assert_eq!(last.phase, RevertPhase::Finalizing);
+    assert_eq!(last.files_put_back, 3);
+    assert_eq!(last.links_removed, 3, "one link in each install");
+    assert_eq!(last.bytes_copied, 2 * size);
+    assert_eq!(last.step_index, last.step_total);
+
+    let copied: Vec<u64> = updates.iter().map(|u| u.bytes_copied).collect();
+    assert!(copied.windows(2).all(|p| p[0] <= p[1]), "bytes copied went backwards: {copied:?}");
+}
+
+#[test]
+fn the_cost_of_an_undo_is_known_before_it_starts() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    for i in [&a, &b, &c] {
+        w.write_model(i, "models/loras/m.safetensors", &weights("m"));
+    }
+    let plan = w.plan(&[a, b, c]);
+    run_apply(&w, &plan);
+    w.platform.set_free_bytes(5_000_000);
+
+    let preview = applier(&w).preview_revert("ap-1").unwrap();
+    let size = weights("m").len() as u64;
+    assert_eq!(preview.files_renamed_back, 1, "the kept copy comes back by rename");
+    assert_eq!(preview.files_copied_back, 2, "each duplicate is a copy of the vault file");
+    assert_eq!(preview.bytes_to_copy, 2 * size);
+    assert_eq!(preview.drives.len(), 1);
+    let vault_on_disk =
+        crate::platform::size_on_disk(&w.vault_root.join("loras/m.safetensors")).unwrap();
+    assert_eq!(preview.drives[0].predicted_room_bytes, 2 * vault_on_disk);
+    assert_eq!(preview.drives[0].free_bytes, Some(5_000_000));
+
+    // Nothing moved.
+    assert!(w.store.apply("ap-1").unwrap().unwrap().revertible);
+    assert!(w.vault_root.join("loras/m.safetensors").is_file());
+}
+
+#[test]
+fn the_preview_refuses_whatever_the_undo_would_refuse() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+
+    let err = applier(&w).preview_revert("ap-1").unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(applier(&w).preview_revert("nope").unwrap_err().code, ErrorCode::NotFound);
+}
+
+#[test]
+fn an_unreadable_drive_is_previewed_as_unknown_not_as_empty() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+
+    w.platform.fail_disk_space(true);
+    let preview = applier(&w).preview_revert("ap-1").unwrap();
+    assert_eq!(preview.drives[0].free_bytes, None);
+}
+
+#[test]
+fn sparse_models_need_only_the_room_they_really_take() {
+    // A sparse model's size is not what it occupies. Checking the size would
+    // refuse an undo that fits, and state a cost the drive never pays.
+    const LEN: u64 = 16 * 1024 * 1024;
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = a.root.join("models/checkpoints/m.safetensors");
+    let pb = b.root.join("models/checkpoints/m.safetensors");
+    crate::testkit::write_sparse(&pa, "m", LEN);
+    crate::testkit::write_sparse(&pb, "m", LEN);
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+
+    let preview = applier(&w).preview_revert("ap-1").unwrap();
+    assert_eq!(preview.bytes_to_copy, LEN);
+    assert!(
+        preview.drives[0].predicted_room_bytes < LEN / 4,
+        "predicted {} bytes for a file that occupies almost nothing",
+        preview.drives[0].predicted_room_bytes
+    );
+
+    // Less room than the size, more than the file takes.
+    w.platform.set_free_bytes(LEN / 2);
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(crate::platform::size_on_disk(&pb).unwrap() < LEN / 4, "the duplicate came back solid");
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,6 +1232,7 @@ fn a_crash_after_removing_a_duplicate_is_recovered_from_the_vault() {
                 vault_path: vault_file.clone(),
                 sha256: g.sha256.clone(),
                 size_bytes: g.size_bytes,
+                mtime_nanos: None,
             },
             state: JournalState::Done,
             started_at: crate::time_util::Timestamp::now(),
@@ -1283,7 +1466,7 @@ fn a_move_that_copied_is_recorded_as_a_copy() {
     let a = w.add_install("A");
     w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
     let plan = w.plan(&[a]);
-    w.platform.force_cross_volume(true);
+    vault_on_another_drive(&w);
     run_apply(&w, &plan);
 
     let moved = w

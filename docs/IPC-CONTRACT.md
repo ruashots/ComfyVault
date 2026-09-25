@@ -1217,13 +1217,106 @@ resolve it before it allows a new scan or a new apply.
 re-checks every file it has not yet touched. It emits the apply events.
 
 `revert_apply` takes `{ applyId: string }` and undoes a run, in reverse order.
-It emits `revert:progress` and `revert:done`, which carry the same payloads as
-the apply events.
+It emits `revert:progress`, `revert:done` and `revert:error`. `revert:done`
+carries the `ApplyRecord`. `revert:progress` carries its own payload, described
+below.
 
-A revert restores every original file. When the original bytes were deleted,
-the engine copies them back from the vault, because the content is identical by
-hash. A revert therefore needs free space on the install volume. The engine
-checks that space first, and rejects with `notEnoughSpace` if it is short.
+#### What an undo copies, and why
+
+An undo puts every file back at its original path. The files come back in two
+different ways:
+
+- **The kept copy comes back by a rename.** Its bytes are the vault file. On
+  one drive the rename is instant and takes no room.
+- **Each duplicate comes back as a copy of the vault file.** Apply deleted the
+  duplicate's bytes, which is what freed the room. One vault file cannot become
+  several separate files by renames, so each duplicate is written again.
+
+A copy therefore costs time, and it takes room on the drive the file goes back
+to. Before the undo starts, the engine checks that room on each drive. If a
+drive is short, the undo stops before it touches a file, with `revert:error`,
+code `ioError`, and `detail` giving the bytes needed and the bytes free.
+
+A copy keeps what the file system knew about the file:
+
+- A sparse file stays sparse. Ranges of zeros are left unwritten.
+- An NTFS compressed file stays compressed.
+- The modification time is the one the duplicate had before the run. A run
+  recorded by an older build did not record it, and then the copy takes the
+  vault file's time.
+
+A file that was not sparse is written in full, zeros included.
+
+A run whose vault is on another drive copies the kept copy back as well. The
+copy is staged beside the place it goes back to, checked, and then renamed into
+place.
+
+`cancel_apply` with the same `applyId` stops an undo. The steps already undone
+stay undone, and the rest stay applied.
+
+#### `preview_revert`
+
+`preview_revert` takes `{ applyId: string }` and returns what an undo will
+cost, without doing it. Call it before the person confirms an undo.
+
+```ts
+type RevertPreview = {
+  applyId: string
+  filesRenamedBack: number     // instant, and take no room
+  filesCopiedBack: number      // take time and room
+  bytesToCopy: number          // the size of the files the copies write
+  drives: RevertDrive[]
+}
+
+type RevertDrive = {
+  volume: string               // same form as VaultInfo.volume, for example 'C:\\'
+  predictedRoomBytes: number   // what the copies are expected to occupy there
+  freeBytes: number | null     // read off the drive. null when it did not answer
+}
+```
+
+`bytesToCopy` sets the time. `predictedRoomBytes` sets the room. The two are
+different numbers for a sparse or compressed file: a sparse model of 20 GB can
+occupy a few kilobytes, and its copy occupies the same. Show the room from
+`predictedRoomBytes`, never from `bytesToCopy` or `bytesFreed`.
+
+`predictedRoomBytes` is a prediction. It is what the vault file occupies, once
+for each copy. `freeBytes` is a measurement. Null is not zero.
+
+`drives` is empty when nothing is copied.
+
+`preview_revert` rejects exactly where an undo would refuse before it starts:
+`notFound` for an unknown run, and `conflict` for a run already undone or a run
+that something later depends on. It does not check room. It reports it.
+
+#### `revert:progress`
+
+```ts
+type RevertProgress = {
+  applyId: string
+  phase: 'restoring' | 'finalizing'
+  stepIndex: number            // journal steps undone so far
+  stepTotal: number
+  currentPath: string | null   // the path being put back
+  action: 'removingLink' | 'renamingBack' | 'copyingBack' | 'tidying'
+  filesPutBack: number         // files at their original path again
+  filesToPutBack: number
+  linksRemoved: number         // links removed from installs
+  bytesCopied: number
+  bytesToCopy: number          // 0 when nothing is copied
+  elapsedMs: number
+  etaMs: number | null
+}
+```
+
+Updates arrive at most four times a second, and during a copy as well as
+between steps. `bytesCopied` rises while a file is copied. Use it for a bar
+when `bytesToCopy` is above zero, and `stepIndex` of `stepTotal` otherwise.
+
+`linksRemoved` counts the links in installs, as `linksCreated` did for the
+apply. The extra names a vault file carries are also removed, and not counted.
+
+The last update has `phase: 'finalizing'`, and then `revert:done` arrives.
 
 `revert_apply` rejects with `conflict` when anything done later still uses the
 files this run created. Renaming a model in the vault with
@@ -1786,7 +1879,7 @@ consolidated models, and that nothing else changes.
 | `apply:progress` | `ApplyProgress` | `start_apply`, `resume_apply` |
 | `apply:done` | `ApplyRecord` | `start_apply`, `resume_apply` |
 | `apply:error` | `VaultError` | `start_apply`, `resume_apply` |
-| `revert:progress` | `ApplyProgress` | `revert_apply` |
+| `revert:progress` | `RevertProgress` | `revert_apply` |
 | `revert:done` | `ApplyRecord` | `revert_apply` |
 | `revert:error` | `VaultError` | `revert_apply` |
 
@@ -1829,6 +1922,7 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `list_applies` | 6.6 |
 | `get_interrupted_applies` | 6.7 |
 | `resume_apply` | 6.8 |
+| `preview_revert` | 6.8 |
 | `revert_apply` | 6.8 |
 | `create_link` | 7.1 |
 | `remove_link` | 7.2 |

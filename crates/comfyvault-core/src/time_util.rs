@@ -166,3 +166,21 @@ pub mod nanos_as_string {
         }
     }
 }
+
+/// [`nanos_as_string`] for a time that may be absent.
+pub mod optional_nanos_as_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<i128>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(v) => super::nanos_as_string::serialize(v, s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i128>, D::Error> {
+        #[derive(Deserialize)]
+        struct Present(#[serde(with = "super::nanos_as_string")] i128);
+        Ok(Option::<Present>::deserialize(d)?.map(|p| p.0))
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "applyId": "apply-1",
+  "bytesToCopy": 13876297728,
+  "drives": [
+    {
+      "freeBytes": 91204567040,
+      "predictedRoomBytes": 196608,
+      "volume": "C:\\"
+    }
+  ],
+  "filesCopiedBack": 3,
+  "filesRenamedBack": 2
+}
