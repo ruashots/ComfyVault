@@ -1,3 +1,5 @@
+import { Show } from "solid-js";
+
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import { useApp } from "~/state/store";
@@ -32,7 +34,12 @@ export function DownloadScreen() {
           </div>
           <div class="foot">
             Destination &nbsp;
-            <span class="emph">{app.vault()?.root ?? "C:\\ComfyVault"}</span>
+            <Show
+              when={app.vault()?.root}
+              fallback={<span>the vault folder, once one is chosen</span>}
+            >
+              {(root) => <span class="emph">{root()}</span>}
+            </Show>
             <br />
             Until then, download where you always do and run a scan.
           </div>

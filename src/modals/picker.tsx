@@ -44,12 +44,6 @@ async function openPicker(
   });
 }
 
-/**
- * Where the vault goes when nobody chooses somewhere else. The setup screen
- * and Settings both say this, and the engine has no default of its own.
- */
-export const DEFAULT_VAULT = "C:\\ComfyVault";
-
 export const openInstallPicker = (app: AppStore) => openPicker(app, "install");
 export const openVaultPicker = (app: AppStore) => openPicker(app, "vault");
 export const openLinkPicker = (app: AppStore, sha256: string) =>
