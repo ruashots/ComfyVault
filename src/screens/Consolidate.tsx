@@ -25,6 +25,7 @@ import {
   labelsOf,
   listeningFact,
   matchText,
+  noModelFileKnown,
   onlyPort,
   openTaskManager,
   startedFact,
@@ -776,8 +777,21 @@ function RunningRow(props: { process: RunningComfy }) {
             </Show>
           </Fact>
           <Fact label="Model files">
-            <Show when={holdsFact(p())} fallback={<Unknown />}>
-              {(h) => h()}
+            <Show
+              when={holdsFact(
+                p(),
+                noModelFileKnown(app.scan(), app.vault()?.fileCount ?? null),
+              )}
+              fallback={<Unknown />}
+            >
+              {(h) => (
+                <>
+                  {h().value}
+                  <Show when={h().note}>
+                    {(note) => <span class="dim"> &middot; {note()}</span>}
+                  </Show>
+                </>
+              )}
             </Show>
           </Fact>
           <Show when={p().exePath}>

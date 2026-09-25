@@ -119,10 +119,36 @@ export function listeningFact(p: RunningComfy): { value: string; note: string } 
   };
 }
 
-/** Null when Windows did not say. */
-export function holdsFact(p: RunningComfy): string | null {
-  if (p.holdsModelFiles === null) return null;
-  return p.holdsModelFiles ? "holds some open" : "holds none open right now";
+/**
+ * Whether it holds a model file open. Null when Windows did not say.
+ *
+ * With no model file known, the engine asks Windows nothing and the answer is
+ * null for that reason alone. Saying Windows did not answer would then be
+ * false, so the words say what is true: there is nothing to ask about yet.
+ */
+export function holdsFact(
+  p: RunningComfy,
+  noModelFileKnown: boolean,
+): { value: string; note?: string } | null {
+  if (p.holdsModelFiles === null) {
+    return noModelFileKnown
+      ? { value: "nothing to check yet", note: "ComfyVault knows no model file until a scan finds one" }
+      : null;
+  }
+  return { value: p.holdsModelFiles ? "holds some open" : "holds none open right now" };
+}
+
+/**
+ * The engine knows no model file: no scan has found one and the vault holds
+ * none. A cancelled scan is left out, because it may have listed files before
+ * it stopped.
+ */
+export function noModelFileKnown(
+  scan: { cancelled: boolean; totals: { filesSeen: number } } | null,
+  vaultFiles: number | null,
+): boolean {
+  if (vaultFiles !== 0) return false;
+  return scan === null || (!scan.cancelled && scan.totals.filesSeen === 0);
 }
 
 /**
