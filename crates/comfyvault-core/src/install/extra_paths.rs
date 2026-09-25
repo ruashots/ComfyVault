@@ -273,7 +273,7 @@ mod tests {
         ResolveContext {
             style,
             yaml_dir: yaml_dir.to_string(),
-            home: Some(if style == Windows { r"C:\Users\alex".into() } else { "/home/alex".into() }),
+            home: Some(if style == Windows { r"C:\Users\sam".into() } else { "/home/sam".into() }),
             env: [("MODELS".to_string(), if style == Windows { r"D:\weights".to_string() } else { "/weights".to_string() })]
                 .into_iter()
                 .collect(),
@@ -345,7 +345,7 @@ nobase:
     embeddings: ~/tildetest/y
 ";
         let f = parse(yaml, &ctx(Posix, "/etc/comfy")).unwrap();
-        assert_eq!(paths_for(&f, "checkpoints"), vec!["/home/alex/comfy/models/checkpoints"]);
+        assert_eq!(paths_for(&f, "checkpoints"), vec!["/home/sam/comfy/models/checkpoints"]);
         assert_eq!(
             paths_for(&f, "embeddings"),
             vec!["/etc/comfy/~/tildetest/y"],
@@ -568,7 +568,7 @@ comfyui:
     loras: models\\loras
 ";
         let f = parse(yaml, &ctx(Windows, r"C:\etc")).unwrap();
-        assert_eq!(paths_for(&f, "loras"), vec![r"C:\Users\alex\ComfyUI\models\loras"]);
+        assert_eq!(paths_for(&f, "loras"), vec![r"C:\Users\sam\ComfyUI\models\loras"]);
     }
 
     #[test]

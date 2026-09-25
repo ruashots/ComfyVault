@@ -40,7 +40,7 @@ fn a_scan_finds_a_model_and_identifies_it() {
 
 #[test]
 fn the_same_content_in_two_installs_is_one_unique_content() {
-    // The product's central case, stated by the person: the same weights sit in
+    // The product's central case: the same weights sit in
     // two installs under different folder names.
     let w = TestWorld::new();
     let a = w.add_install("Production");
@@ -803,8 +803,8 @@ fn a_file_that_changes_while_it_is_being_read_is_not_remembered() {
 
 /// A Windows junction, which `mklink /J` creates and which is what people
 /// really make when they move a model folder to a second drive. Rust has no
-/// API for one, and the audits could only reach this finding through POSIX
-/// symbolic links, so it is checked here with the real thing.
+/// API for one, and a POSIX symbolic link only stands in for it, so it is
+/// checked here with the real thing.
 #[cfg(windows)]
 #[test]
 fn a_file_behind_a_windows_junction_that_leaves_the_install_is_never_movable() {

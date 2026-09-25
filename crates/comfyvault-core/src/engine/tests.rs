@@ -673,8 +673,8 @@ fn asking_for_vault_facts_before_a_vault_is_chosen_says_so() {
 
 #[test]
 fn a_folder_picker_starts_at_every_drive_not_inside_one() {
-    // On Windows the person's models can be on D:. A picker that starts inside
-    // C: can never reach them, and they could not register anything there.
+    // On Windows a person's models can be on D:. A picker that starts inside
+    // C: can never reach them, and nothing there could be registered.
     let platform = FakePlatform::new();
     platform.set_drive_roots(vec![PathBuf::from("C:\\"), PathBuf::from("D:\\")]);
     let dir = tempfile::tempdir().unwrap();

@@ -484,42 +484,42 @@ mod tests {
 
     #[test]
     fn expanduser_replaces_a_leading_tilde_only() {
-        assert_eq!(expanduser(Posix, "~/models", Some("/home/alex")), "/home/alex/models");
+        assert_eq!(expanduser(Posix, "~/models", Some("/home/sam")), "/home/sam/models");
         assert_eq!(
-            expanduser(Windows, r"~\models", Some(r"C:\Users\alex")),
-            r"C:\Users\alex\models"
+            expanduser(Windows, r"~\models", Some(r"C:\Users\sam")),
+            r"C:\Users\sam\models"
         );
-        assert_eq!(expanduser(Posix, "~", Some("/home/alex")), "/home/alex");
+        assert_eq!(expanduser(Posix, "~", Some("/home/sam")), "/home/sam");
     }
 
     #[test]
     fn expanduser_leaves_a_tilde_in_the_middle_alone() {
-        assert_eq!(expanduser(Posix, "/a/~/b", Some("/home/alex")), "/a/~/b");
+        assert_eq!(expanduser(Posix, "/a/~/b", Some("/home/sam")), "/a/~/b");
     }
 
     #[test]
     fn expanduser_leaves_a_named_user_alone() {
         // Guessing another person's home folder would point the scan at the
         // wrong place, so it is left exactly as written.
-        assert_eq!(expanduser(Posix, "~other/models", Some("/home/alex")), "~other/models");
+        assert_eq!(expanduser(Posix, "~other/models", Some("/home/sam")), "~other/models");
     }
 
     // --- expandvars -------------------------------------------------------
 
     #[test]
     fn expandvars_handles_percent_form_on_windows() {
-        let e = env(&[("USERPROFILE", r"C:\Users\alex")]);
+        let e = env(&[("USERPROFILE", r"C:\Users\sam")]);
         assert_eq!(
             expandvars(Windows, r"%USERPROFILE%\models", &e),
-            r"C:\Users\alex\models"
+            r"C:\Users\sam\models"
         );
     }
 
     #[test]
     fn expandvars_handles_dollar_forms() {
-        let e = env(&[("HOME", "/home/alex")]);
-        assert_eq!(expandvars(Posix, "$HOME/models", &e), "/home/alex/models");
-        assert_eq!(expandvars(Posix, "${HOME}/models", &e), "/home/alex/models");
+        let e = env(&[("HOME", "/home/sam")]);
+        assert_eq!(expandvars(Posix, "$HOME/models", &e), "/home/sam/models");
+        assert_eq!(expandvars(Posix, "${HOME}/models", &e), "/home/sam/models");
     }
 
     #[test]

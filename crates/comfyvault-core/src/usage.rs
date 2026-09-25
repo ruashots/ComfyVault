@@ -325,7 +325,7 @@ mod tests {
         write_workflow(&i.root, "user/default/workflows/a.json", &workflow_naming("m.safetensors"));
         write_workflow(
             &i.root,
-            "user/alex-1234/workflows/b.json",
+            "user/sam-1234/workflows/b.json",
             &workflow_naming("m.safetensors"),
         );
 

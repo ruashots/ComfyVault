@@ -42,7 +42,7 @@ fn a_plan_changes_nothing_on_disk() {
 
 #[test]
 fn two_copies_become_one_vault_file_and_one_link() {
-    // The person's own example: lora1 sits in loras\awesomeloras\ in one install
+    // The case the product is for: lora1 sits in loras\awesomeloras\ in one install
     // and in loras\newloras\ in the other, and it ends up clean in vault\loras\.
     let w = TestWorld::new();
     let a = w.add_install("Production");
