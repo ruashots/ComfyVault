@@ -1139,6 +1139,7 @@ type ApplyRecord = {
   vaultFreeBytesAfter: number | null    // read off the drive, after the run
   failures: ApplyFailure[]
   revertible: boolean
+  lastUndoStepAt: string | null         // when an undo last began a step
 }
 
 type ApplyFailure = {
@@ -1271,6 +1272,15 @@ says when the run itself finished.
 
 `preview_revert` on such a run gives `filesAlreadyBack`, and the cost of the
 rest.
+
+`lastUndoStepAt` is when an undo last began a step on the disk, in the same
+form as `finishedAt`. It is null on a run no undo has touched. It is written
+before each step, so a step cut off by a crash is never missed. It stays null
+when an undo is refused or stopped before its first step. A stopped copy can
+move it without any file coming back, which errs on the safe side. Treat any
+scan that finished before `lastUndoStepAt` as out of date, for a
+`partlyReverted` run and a `reverted` one alike. A record from an older build
+has no such field. Read it as null.
 
 #### `preview_revert`
 

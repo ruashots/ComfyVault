@@ -1071,8 +1071,23 @@ fn an_undo_stopped_at_any_point_leaves_every_model_loadable() {
             );
             let when = format!("vault elsewhere {vault_elsewhere}, stopped at check {n}");
 
+            let undo_began = crate::time_util::Timestamp::now();
             let result = applier(&w).revert("ap-1", &CancelToken::stopping_at_check(n), &NullSink);
             every_place_loads(&paths, &content, &when);
+
+            // The time of the last undo step moves exactly when a step began.
+            let stamp = w.store.apply("ap-1").unwrap().unwrap().last_undo_step_at;
+            let stepped = w.store.journal("ap-1").unwrap().iter().any(|e| e.state == JournalState::Undone);
+            match stamp {
+                None => {
+                    assert!(!stepped, "{when}: a step was undone and no time was recorded");
+                    assert!(paths.iter().all(|p| w.is_link(p)), "{when}: a file came back with no time recorded");
+                }
+                Some(t) => assert!(
+                    t >= undo_began && t <= crate::time_util::Timestamp::now(),
+                    "{when}: the recorded time is not the undo's"
+                ),
+            }
 
             let err = match result {
                 Ok(_) => break,
@@ -1105,8 +1120,11 @@ fn an_undo_stopped_at_any_point_leaves_every_model_loadable() {
                 "{when}: already back and still to come must add up to every place"
             );
 
-            // Undoing again finishes the job.
+            // Undoing again finishes the job, and moves the time on.
+            let again = crate::time_util::Timestamp::now();
             applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+            let last = w.store.apply("ap-1").unwrap().unwrap().last_undo_step_at.expect("a time");
+            assert!(last >= again, "{when}: finishing the undo did not move the time");
             every_place_loads(&paths, &content, &format!("{when}, then undone again"));
             for p in &paths {
                 assert!(!w.is_link(p), "{when}: {} is still a link after the second undo", p.display());
@@ -1195,6 +1213,7 @@ fn a_crash_between_moving_the_file_and_linking_it_is_recoverable() {
             vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
+            last_undo_step_at: None,
         })
         .unwrap();
     let g = &plan.groups[0];
@@ -1279,6 +1298,7 @@ fn a_crash_after_setting_a_duplicate_aside_is_recoverable() {
             vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
+            last_undo_step_at: None,
         })
         .unwrap();
     w.store
@@ -1338,6 +1358,7 @@ fn a_crash_after_removing_a_duplicate_is_recovered_from_the_vault() {
             vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
+            last_undo_step_at: None,
         })
         .unwrap();
     w.store
@@ -1515,6 +1536,7 @@ fn a_record_with_no_stored_selection_resumes_nothing() {
             vault_free_bytes_after: None,
             failures: vec![],
             revertible: true,
+            last_undo_step_at: None,
         })
         .unwrap();
 
@@ -2153,4 +2175,34 @@ fn a_run_resumed_after_a_crash_is_recorded_as_the_whole_run() {
     }
     assert_eq!(w.store.links().unwrap().len(), 9, "a link was recorded twice");
     assert_eq!(w.store.vault_files().unwrap().len(), 3);
+}
+
+#[test]
+fn the_time_of_the_last_undo_step_stays_empty_until_a_step_begins() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+    let stamp = || w.store.apply("ap-1").unwrap().unwrap().last_undo_step_at;
+    assert_eq!(stamp(), None, "a run nobody undid");
+
+    // Refused for lack of room: nothing touched.
+    w.platform.set_free_bytes(1);
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(stamp(), None, "a refused undo recorded a step");
+    w.platform.set_free_bytes(u64::MAX / 2);
+
+    // Stopped before its first step: partly undone in name, nothing touched.
+    applier(&w).revert("ap-1", &CancelToken::stopping_at_check(1), &NullSink).unwrap_err();
+    assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::PartlyReverted);
+    assert_eq!(stamp(), None, "an undo stopped before any step recorded one");
+
+    // An older build wrote records without the field.
+    let mut old = serde_json::to_value(w.store.apply("ap-1").unwrap().unwrap()).unwrap();
+    old.as_object_mut().unwrap().remove("lastUndoStepAt");
+    let read: ApplyRecord = serde_json::from_value(old).unwrap();
+    assert_eq!(read.last_undo_step_at, None);
 }

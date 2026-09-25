@@ -388,6 +388,7 @@ fn apply_record() -> ApplyRecord {
             detail: "ComfyUI is running and has this file open.".into(),
         }],
         revertible: true,
+        last_undo_step_at: None,
     }
 }
 

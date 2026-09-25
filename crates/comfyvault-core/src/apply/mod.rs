@@ -416,6 +416,7 @@ impl<'a> Applier<'a> {
                 vault_free_bytes_after: None,
                 failures: Vec::new(),
                 revertible: true,
+                last_undo_step_at: None,
             },
         };
         // Written before any work, so a crash leaves a record to recover from.
@@ -1002,6 +1003,10 @@ impl<'a> Applier<'a> {
             // the contract promises. A long copy reports within a quarter of
             // a second anyway, from inside the copy.
             run.emit(sink, RevertPhase::Restoring, false);
+
+            // Before the step, so no step reaches the disk unrecorded.
+            record.last_undo_step_at = Some(Timestamp::now());
+            self.store.put_apply(&record)?;
 
             self.undo_step(&entry, &refilled, cancel, &mut |n| {
                 run.bytes_copied += n;

@@ -288,6 +288,14 @@ pub struct ApplyRecord {
     pub vault_free_bytes_after: Option<u64>,
     pub failures: Vec<ApplyFailure>,
     pub revertible: bool,
+    /// When an undo last began a step on the disk. Null if no undo ever did.
+    ///
+    /// Written before each step, in the database, so a step cut off by a crash
+    /// is never missed. A scan that finished before this time saw files an
+    /// undo has since put back, whether that undo finished, was stopped,
+    /// failed, or was cut off.
+    #[serde(default)]
+    pub last_undo_step_at: Option<Timestamp>,
 }
 
 /// Where one journal entry stands.

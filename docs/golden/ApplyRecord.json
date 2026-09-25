@@ -18,6 +18,7 @@
   "groupsApplied": 1,
   "groupsFailed": 1,
   "groupsRequested": 2,
+  "lastUndoStepAt": null,
   "linksCreated": 2,
   "planId": "plan-1",
   "revertible": true,
