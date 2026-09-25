@@ -1257,7 +1257,9 @@ fn a_crash_between_moving_the_file_and_linking_it_is_recoverable() {
     assert_eq!(found[0].apply_id, ap);
     assert_eq!(found[0].steps_done, 1);
     assert_eq!(found[0].steps_pending, 1);
-    assert!(found[0].description.contains("Nothing was lost"));
+    // Only what the journal says: whether anything was lost is not known yet.
+    assert!(!found[0].description.contains("Nothing was lost"));
+    assert!(!found[0].blocked && found[0].blocked_paths.is_empty());
 
     applier(&w).revert(ap, &CancelToken::new(), &NullSink).unwrap();
 
@@ -3050,4 +3052,51 @@ fn the_plan_promises_the_links_the_run_makes() {
     assert_eq!(record.state, ApplyState::Completed);
     assert_eq!(plan.totals.links_created, record.links_created);
     assert_eq!(plan.totals.files_moved, record.files_moved);
+}
+
+#[test]
+fn a_cut_off_run_the_engine_will_not_touch_can_be_set_aside_and_nothing_moves() {
+    // A real vault opened on another computer: the run names places that are
+    // not installs here. It must not block the app for good.
+    let w = TestWorld::new();
+    let (dup, stash, journal) = two_copy_run(&w);
+    simulate_crash_after(&w, "ap-1", journal.len() - 1);
+    // The install the run touched is gone from this computer's point of view.
+    let a = w.store.installs().unwrap().into_iter().find(|i| dup.starts_with(&i.root)).unwrap();
+    std::fs::remove_file(a.root.join("main.py")).unwrap();
+    std::fs::remove_file(a.root.join("nodes.py")).unwrap();
+    std::fs::remove_file(a.root.join("server.py")).unwrap();
+
+    let listed = applier(&w).interrupted().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].blocked);
+    assert!(listed[0].blocked_paths.iter().any(|p| PathBuf::from(p) == dup), "{:?}", listed[0].blocked_paths);
+    assert!(!listed[0].description.contains("Nothing was lost"));
+    for result in [
+        applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).map(|_| ()),
+        applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).map(|_| ()),
+    ] {
+        assert_eq!(result.unwrap_err().code, ErrorCode::PathOutsideBoundary);
+    }
+
+    let before = real_bytes(&w);
+    let links_before: Vec<bool> = [&dup].iter().map(|p| w.is_link(p)).collect();
+    let record = applier(&w).set_aside("ap-1").unwrap();
+    assert_eq!(record.state, ApplyState::SetAside);
+    assert!(!record.revertible);
+    assert_eq!(real_bytes(&w), before, "setting a run aside moved a file");
+    assert_eq!(vec![w.is_link(&dup)], links_before);
+    assert_eq!(stash.exists(), false);
+    assert!(applier(&w).interrupted().unwrap().is_empty(), "the run still blocks the app");
+    assert_eq!(applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err().code, ErrorCode::Conflict);
+}
+
+#[test]
+fn a_run_the_engine_can_finish_or_undo_is_not_set_aside() {
+    let w = TestWorld::new();
+    let (_, _, journal) = two_copy_run(&w);
+    assert_eq!(applier(&w).set_aside("ap-1").unwrap_err().code, ErrorCode::Conflict, "a finished run");
+    simulate_crash_after(&w, "ap-1", journal.len() - 1);
+    assert_eq!(applier(&w).set_aside("ap-1").unwrap_err().code, ErrorCode::Conflict, "a run that can be finished");
+    assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::Running);
 }

@@ -3,6 +3,8 @@
     "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors"
   ],
   "applyId": "apply-0",
+  "blocked": false,
+  "blockedPaths": [],
   "description": "A consolidation of 4 groups stopped part way through.",
   "planId": "plan-0",
   "startedAt": "2025-09-21T00:00:00Z",

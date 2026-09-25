@@ -714,6 +714,16 @@ impl Engine {
         Ok(apply_id)
     }
 
+    /// Sets aside a cut-off run the engine will not touch. Changes only the
+    /// run's record.
+    pub fn set_aside_run(&self, apply_id: &str) -> Result<ApplyRecord> {
+        if let Some(op) = self.busy() {
+            return Err(VaultError::busy(op.kind.word()));
+        }
+        let store = self.store()?;
+        Applier::new(&store, self.platform.as_ref()).set_aside(apply_id)
+    }
+
     /// What undoing a run would cost. Reads only.
     pub fn preview_revert(&self, apply_id: &str) -> Result<RevertPreview> {
         let store = self.store()?;

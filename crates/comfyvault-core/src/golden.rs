@@ -563,6 +563,8 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 affected_paths: vec![
                     r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors".into(),
                 ],
+                blocked: false,
+                blocked_paths: vec![],
             },
         ),
         s("LinkRecord", link_record()),
@@ -1199,7 +1201,7 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
 
     for a in [
         A::Running, A::Completed, A::CompletedWithErrors, A::Cancelled, A::Interrupted,
-        A::PartlyReverted, A::Reverted,
+        A::PartlyReverted, A::Reverted, A::SetAside,
     ] {
         let expected = match a {
             A::Running => "running",
@@ -1209,6 +1211,7 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
             A::Interrupted => "interrupted",
             A::PartlyReverted => "partlyReverted",
             A::Reverted => "reverted",
+            A::SetAside => "setAside",
         };
         out.push(("ApplyState", wire(&a), expected));
     }

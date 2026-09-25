@@ -236,6 +236,11 @@ pub enum ApplyState {
     /// undoing again finishes the rest.
     PartlyReverted,
     Reverted,
+    /// A cut-off run the engine would not touch, because it names places
+    /// outside the vault and the registered installs, which the person set
+    /// aside. Nothing on the disk was changed by that, and it can no longer be
+    /// finished or undone from the app.
+    SetAside,
 }
 
 /// One group that did not go through.

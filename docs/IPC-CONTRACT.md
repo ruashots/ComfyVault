@@ -1141,7 +1141,7 @@ type ApplyRecord = {
   applyId: string
   planId: string
   state: 'running' | 'completed' | 'completedWithErrors' | 'cancelled'
-       | 'interrupted' | 'partlyReverted' | 'reverted'
+       | 'interrupted' | 'partlyReverted' | 'reverted' | 'setAside'
   startedAt: string
   finishedAt: string | null
   groupsRequested: number
@@ -1222,11 +1222,41 @@ type InterruptedApply = {
   stepsPending: number
   description: string        // one sentence for the person
   affectedPaths: string[]
+  blocked: boolean           // names places outside the vault and the installs
+  blockedPaths: string[]     // those places
 }
 ```
 
 Returns `InterruptedApply[]`. If the list is not empty, the user interface must
 resolve it before it allows a new scan or a new apply.
+
+`description` states only what the journal records: how many steps were done
+and how many were left. It does not say whether anything was lost, because
+that is not known about a run nobody has checked yet.
+
+`blocked` is true when the run names places that are neither in the vault nor
+in a folder of a registered install that is a ComfyUI install on this computer
+now. `blockedPaths` lists them. Such a run is neither finished nor undone:
+`resume_apply` and `revert_apply` reject it with `pathOutsideBoundary`. The
+honest causes a person meets are the vault being opened on a different
+computer, or an install moved or removed after the run. A vault someone else
+prepared can cause it too, so the screen must not present it as always
+harmless. The one way out is `set_aside_run`.
+
+#### `set_aside_run`
+
+Arguments: `{ applyId: string }`. Returns the `ApplyRecord`, with `state`
+`setAside` and `revertible` false.
+
+It changes only the run's record. Nothing on the disk moves: every link the run
+made keeps pointing into the vault, so every model keeps loading, and any file
+the run set aside or had not reached stays where it is. The run can no longer
+be finished or undone from ComfyVault, and it stops being listed by
+`get_interrupted_applies`. Setting a run aside is final, so the person confirms
+it knowing that, with `blockedPaths` in front of them.
+
+It rejects with `conflict` for a run whose `state` is not `running`, and for a
+cut-off run that is not `blocked`, which can be finished or undone instead.
 
 ### 6.8 `resume_apply` and `revert_apply`
 
@@ -2017,6 +2047,7 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `resume_apply` | 6.8 |
 | `preview_revert` | 6.8 |
 | `revert_apply` | 6.8 |
+| `set_aside_run` | 6.7 |
 | `create_link` | 7.1 |
 | `remove_link` | 7.2 |
 | `create_model_folder` | 7.3 |

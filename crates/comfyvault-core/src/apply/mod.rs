@@ -139,6 +139,11 @@ pub struct InterruptedApply {
     /// One sentence for the person.
     pub description: String,
     pub affected_paths: Vec<String>,
+    /// The run names places outside the vault and the registered installs,
+    /// so it will be neither finished nor undone. It can only be set aside.
+    pub blocked: bool,
+    /// Those places.
+    pub blocked_paths: Vec<String>,
 }
 
 /// Which part of an undo is running.
@@ -1198,6 +1203,9 @@ impl<'a> Applier<'a> {
         if record.state == ApplyState::Reverted {
             return Err(VaultError::conflict("That run was already undone."));
         }
+        if record.state == ApplyState::SetAside {
+            return Err(VaultError::conflict("That run was set aside, so it cannot be undone from ComfyVault."));
+        }
 
         let to_undo: Vec<JournalEntry> = self
             .store
@@ -1462,6 +1470,53 @@ impl<'a> Applier<'a> {
         Ok(())
     }
 
+    /// The places a run names, in its journal and in the part of its plan it
+    /// was asked to do, that are neither in the vault nor in a registered
+    /// install.
+    fn refused_paths_of_run(&self, record: &ApplyRecord, entries: &[JournalEntry]) -> Result<Vec<PathBuf>> {
+        let places = boundary::Places::read(self.store)?;
+        let mut refused = places.refused_in_steps(
+            entries.iter().filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending)),
+        );
+        if let Some(plan) = self.store.plan(&record.plan_id)? {
+            for gid in &record.group_ids {
+                if let Some(g) = plan.group(gid) {
+                    refused.extend(places.refused_in_group(g));
+                }
+            }
+        }
+        refused.sort();
+        refused.dedup();
+        Ok(refused)
+    }
+
+    /// Sets aside a cut-off run the engine will not touch.
+    ///
+    /// Only the record changes. Nothing on the disk moves: every link the run
+    /// made keeps leading into the vault, so every model keeps loading, and
+    /// the files it set aside or had not reached stay where they are. The run
+    /// can no longer be finished or undone from the app. Refused for a run
+    /// that was not cut off, and for one the engine can finish or undo.
+    pub fn set_aside(&self, apply_id: &str) -> Result<ApplyRecord> {
+        let mut record = self
+            .store
+            .apply(apply_id)?
+            .ok_or_else(|| VaultError::not_found("That run is not in this vault's history."))?;
+        if record.state != ApplyState::Running {
+            return Err(VaultError::conflict("Only a run that was cut off part way can be set aside."));
+        }
+        let entries = self.store.journal(apply_id)?;
+        if self.refused_paths_of_run(&record, &entries)?.is_empty() {
+            return Err(VaultError::conflict(
+                "This run can be finished or undone, so it is not set aside. Finish it or undo it.",
+            ));
+        }
+        record.state = ApplyState::SetAside;
+        record.revertible = false;
+        self.store.put_apply(&record)?;
+        Ok(record)
+    }
+
     /// Apply runs that stopped in the middle.
     pub fn interrupted(&self) -> Result<Vec<InterruptedApply>> {
         let mut out = Vec::new();
@@ -1479,10 +1534,15 @@ impl<'a> Applier<'a> {
                 .map(|p| crate::paths::display_path(&p))
                 .collect();
 
+            let refused = self.refused_paths_of_run(&record, &entries)?;
+            // Only what the journal says. Whether anything was lost is not
+            // something a cut-off run can promise before it is checked.
             out.push(InterruptedApply {
                 description: format!(
-                    "An earlier run stopped before it finished. It completed {done} steps and left {pending} unfinished. Nothing was lost: every file is either in its old place or in the vault."
+                    "An earlier run stopped before it finished. It completed {done} steps and left {pending} unfinished."
                 ),
+                blocked: !refused.is_empty(),
+                blocked_paths: refused.iter().map(|p| crate::paths::display_path(p)).collect(),
                 apply_id: record.apply_id.clone(),
                 plan_id: record.plan_id.clone(),
                 started_at: record.started_at,
@@ -1531,18 +1591,8 @@ impl<'a> Applier<'a> {
 
         // The journal and the plan are read from the vault's database. Every
         // place they name is proved before a file is touched.
-        let places = boundary::Places::read(self.store)?;
-        let mut refused = places.refused_in_steps(
-            entries.iter().filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending)),
-        );
-        for gid in &record.group_ids {
-            if let Some(g) = plan.group(gid) {
-                refused.extend(places.refused_in_group(g));
-            }
-        }
+        let refused = self.refused_paths_of_run(&record, &entries)?;
         if !refused.is_empty() {
-            refused.sort();
-            refused.dedup();
             return Err(boundary::refusal(&refused));
         }
         let proved: Vec<JournalEntry> = entries

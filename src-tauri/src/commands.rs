@@ -407,6 +407,15 @@ pub async fn resume_apply(
 }
 
 #[tauri::command]
+pub async fn set_aside_run(
+    state: State<'_, AppEngine>,
+    args: ApplyIdArgs,
+) -> Reply<ApplyRecord> {
+    let e = engine(&state);
+    blocking(move || e.set_aside_run(&args.apply_id)).await
+}
+
+#[tauri::command]
 pub async fn preview_revert(
     state: State<'_, AppEngine>,
     args: ApplyIdArgs,
