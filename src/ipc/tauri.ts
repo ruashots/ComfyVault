@@ -127,6 +127,7 @@ export function createTauriEngine(): Engine {
     getInterruptedApplies: () =>
       callNoArgs<InterruptedApply[]>("get_interrupted_applies"),
     resumeApply: (applyId) => call<{ applyId: string }>("resume_apply", { applyId }),
+    setAsideRun: (applyId) => call<ApplyRecord>("set_aside_run", { applyId }),
     revertApply: (applyId) => call<{ applyId: string }>("revert_apply", { applyId }),
     previewRevert: (applyId) => call<RevertPreview>("preview_revert", { applyId }),
     onApplyProgress: (fn) => subscribe<ApplyProgress>("apply:progress", fn),

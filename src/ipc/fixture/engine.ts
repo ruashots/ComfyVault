@@ -234,6 +234,8 @@ export class FixtureEngine implements Engine {
    * compressed model occupies far less than its size, and so does its copy.
    */
   private revertRoomBytes: number | null = null;
+  /** Cut-off runs that name places outside the vault and the installs. */
+  private blockedRuns = new Map<string, string[]>();
   /** The engine's metadata cache. It lives in the vault, so an undo keeps it. */
   private metadataCache = new Map<string, ModelMetadata>();
   private civitaiReachable = true;
@@ -977,15 +979,18 @@ export class FixtureEngine implements Engine {
         startedAt: a.startedAt,
         stepsDone: a.groupsApplied,
         stepsPending: a.groupsRequested - a.groupsApplied,
-        description:
-          "ComfyVault stopped part way through a run. Finishing it puts every remaining file where the plan said.",
+        // The engine states only what its journal records.
+        description: `An earlier run stopped before it finished. It completed ${a.groupsApplied} steps and left ${a.groupsRequested - a.groupsApplied} unfinished.`,
         affectedPaths: [],
+        blocked: this.blockedRuns.has(a.applyId),
+        blockedPaths: this.blockedRuns.get(a.applyId) ?? [],
       }));
   }
 
   async resumeApply(applyId: string): Promise<{ applyId: string }> {
     this.requireVault();
     if (this.busy) throw error("vaultBusy", "Something is already running.");
+    this.refuseBlocked(applyId);
     const cut = this.cutOffRuns.get(applyId);
     if (!cut) throw error("notFound", "That run is not waiting to be finished.");
     this.busy = { kind: "apply", id: applyId };
@@ -1091,6 +1096,7 @@ export class FixtureEngine implements Engine {
 
   async previewRevert(applyId: string): Promise<RevertPreview> {
     this.requireVault();
+    this.refuseBlocked(applyId);
     const refusal = this.revertRefusal();
     if (refusal) throw refusal;
     const all = this.revertSteps(applyId);
@@ -1128,6 +1134,7 @@ export class FixtureEngine implements Engine {
   async revertApply(applyId: string): Promise<{ applyId: string }> {
     this.requireVault();
     if (this.busy) throw error("vaultBusy", "Something is already running.");
+    this.refuseBlocked(applyId);
     const refusal = this.revertRefusal();
     if (refusal) throw refusal;
     const before = this.worldBeforeApply!;
@@ -1554,6 +1561,47 @@ export class FixtureEngine implements Engine {
       out.push(answer);
     }
     return out;
+  }
+
+  /**
+   * Measured against the real engine: a cut-off run that names places outside
+   * the vault and the installs is refused by finish, undo and the undo's cost
+   * check with pathOutsideBoundary. Setting it aside changes only the record:
+   * state setAside, not revertible, finishedAt still null, and it leaves the
+   * list of runs to settle. A second set-aside is refused with conflict.
+   */
+  async setAsideRun(applyId: string): Promise<ApplyRecord> {
+    this.requireVault();
+    const run = this.applies.find((a) => a.applyId === applyId);
+    if (!run || run.state !== "running" || this.busy?.id === applyId) {
+      throw error("conflict", "Only a run that was cut off part way can be set aside.");
+    }
+    if (!this.blockedRuns.has(applyId)) {
+      throw error("conflict", "This run can be finished or undone, so it is not set aside.");
+    }
+    this.blockedRuns.delete(applyId);
+    this.cutOffRuns.delete(applyId);
+    const record = { ...run, state: "setAside" as const, revertible: false };
+    this.applies = this.applies.map((a) => (a.applyId === applyId ? record : a));
+    return record;
+  }
+
+  private refuseBlocked(applyId: string): void {
+    const paths = this.blockedRuns.get(applyId);
+    if (paths) {
+      throw error(
+        "pathOutsideBoundary",
+        "This run names files outside the vault and the registered installs, so nothing was touched.",
+        paths.join("\n"),
+      );
+    }
+  }
+
+  /** The cut-off run names these places, which are no longer in any install. */
+  devBlockCutOffRun(paths: string[]): void {
+    const run = this.applies.find((a) => a.state === "running");
+    if (!run) throw new Error("devBlockCutOffRun: no run was cut off");
+    this.blockedRuns.set(run.applyId, paths);
   }
 
   /** How many requests have gone out to Civitai. */

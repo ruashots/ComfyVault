@@ -577,7 +577,12 @@ export type ApplyState =
    * undoing again finishes the rest.
    */
   | "partlyReverted"
-  | "reverted";
+  | "reverted"
+  /**
+   * A cut-off run the engine would not touch, taken off the list of runs to
+   * settle. Nothing on disk moved, and it can no longer be finished or undone.
+   */
+  | "setAside";
 
 export interface ApplyRecord {
   applyId: string;
@@ -623,6 +628,13 @@ export interface InterruptedApply {
   /** One sentence for the person. */
   description: string;
   affectedPaths: string[];
+  /**
+   * The run names places outside the vault and the registered installs, so it
+   * can be neither finished nor undone. Setting it aside is the one way out.
+   */
+  blocked: boolean;
+  /** Those places. */
+  blockedPaths: string[];
 }
 
 // ── links ───────────────────────────────────────────────────────────────────
@@ -928,6 +940,8 @@ export interface Engine {
   listApplies(): Promise<ApplyRecord[]>;
   getInterruptedApplies(): Promise<InterruptedApply[]>;
   resumeApply(applyId: string): Promise<{ applyId: string }>;
+  /** Only for a cut-off run that is `blocked`. Changes the record alone. */
+  setAsideRun(applyId: string): Promise<ApplyRecord>;
   revertApply(applyId: string): Promise<{ applyId: string }>;
   /** Refuses exactly where `revertApply` would refuse before it starts. */
   previewRevert(applyId: string): Promise<RevertPreview>;

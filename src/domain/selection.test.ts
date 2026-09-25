@@ -126,6 +126,8 @@ const stopped: InterruptedApply = {
   stepsPending: 9,
   description: "A run stopped part way through.",
   affectedPaths: [],
+  blocked: false,
+  blockedPaths: [],
 };
 
 const machine = (over: Partial<MachineFacts> = {}): MachineFacts => ({

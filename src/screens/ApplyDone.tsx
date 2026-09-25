@@ -16,6 +16,7 @@ const HOW_IT_ENDED: Record<ApplyState, string> = {
   cancelled: "stopped when you asked",
   interrupted: "stopped part way",
   partlyReverted: "undo stopped part way",
+  setAside: "set aside",
   reverted: "undone",
 };
 
