@@ -122,8 +122,10 @@ The scan follows symbolic links while it walks, because ComfyUI does, and the
 two must agree about which files exist. One physical file reached by two routes
 is counted once.
 
-A file that is already a link into the vault is recorded as already done. A link
-that points anywhere else is left alone: ComfyVault does not replace a link
+A file that is already a link into the vault is recorded as already done. So is
+a file whose real place is inside the vault, however the scan reached it, for
+example through an `extra_model_paths.yaml` entry that names a vault folder. A
+vault file is never taken for a copy of itself. A link that points anywhere else is left alone: ComfyVault does not replace a link
 somebody else made.
 
 A file that is reached through a linked **folder**, and that really lives
@@ -159,6 +161,14 @@ four paths creates four links.
 places keeps the plain name. The other takes its name plus the first eight
 characters of its hash, for example `lora1__3F9A2C17.safetensors`. Ties are
 broken by hash, so a plan built twice from one scan is identical.
+
+**A model the vault already holds moves nothing in.** This happens on a later
+run, when a new copy of a model turns up after an earlier run put that model in
+the vault. Every copy, the one listed as the source included, becomes a link to
+the existing vault file, and its bytes are deleted. Before any copy is touched,
+ComfyVault reads the vault file and proves it is the same model, because it
+becomes the only copy. If the vault file is missing, or is not a real file of
+the right size, the copies move in as for a new model.
 
 **A model that exists only once still moves into the vault.** It frees nothing,
 and the plan counts it separately, because the space number has to match the row
@@ -266,6 +276,31 @@ you to resolve it before anything else. You can:
 
 Because an interrupted duplicate is always under one name or the other, the
 renamed-aside name or its original name, its bytes are never in neither place.
+The model's path is a different matter. A crash between moving a model into the
+vault and making its link leaves that path empty, so that one model does not
+load until the run is finished or undone.
+
+### A run ComfyVault will not touch
+
+Before it finishes or undoes a cut-off run, ComfyVault checks every place the
+run names. Each one must be inside the vault, or inside a registered install
+that is a ComfyUI install on this computer now. Each file must also have a
+model file's name. If any place fails, ComfyVault refuses both Finish and Undo,
+and names the places.
+
+This happens when the vault was opened on a different computer, or an install
+was moved or removed after the run. A vault someone else prepared can cause it
+too, so look at the places before you go on.
+
+The one way forward is **Set it aside**. It changes only the run's record, and
+nothing on the disk moves. The links the run made keep pointing into the vault.
+A model the run was in the middle of can stay without a file or a link at its
+path. The run stops blocking the app, and a new scan is needed before the next
+plan.
+
+Setting a run aside is not final. When its places pass the check again, for
+example when an unplugged drive is back, the run comes back as a cut-off run,
+and you can finish it or undo it.
 
 ---
 
@@ -309,13 +344,17 @@ and the rest stay in the vault behind their links. Consolidate then shows where
 the undo stopped, with **Undo the rest** to finish it. An undo cut off by a
 crash is finished the same way.
 
+A run that linked copies to a vault file from an earlier run puts those copies
+back, and leaves the vault file, because the earlier run owns it.
+
 A run that was interrupted and then finished is undone as one run. Resuming
 continues the same journal rather than starting a new one, so the whole of it
 comes back.
 
 An undo is refused when something you did later still depends on the run. The
-common case is renaming a model inside the vault. ComfyVault names what is in
-the way, so you can undo the later change first.
+common cases are renaming a model inside the vault, and a later run that linked
+new copies to a vault file this run put there. ComfyVault names what is in the
+way, so you can undo the later change first.
 
 ---
 
@@ -451,3 +490,26 @@ This will not be reverted, and it is the price of per-file links. ComfyVault
 reads each install's version and tells you which of your installs it affects. An
 install that does not record its version is reported as unknown, never as
 unaffected, because the app cannot check what the install does not say.
+
+---
+
+## 12. What Civitai tells you about a model
+
+After each scan, ComfyVault asks Civitai about the model files it has not asked
+about before, in the background, a hundred at a time. It sends each file's
+SHA-256 hash. It sends no file name and no path. Civitai answers with the
+model's name, version, base model, trigger words, page link and pictures, and
+the Library shows them when you open a model.
+
+The lookup is on by default. The **Civitai lookup** switch in Settings turns it
+off, and then ComfyVault uses no network at all.
+
+- A file Civitai does not know stays without a label. That is normal. The
+  answer is remembered, so the file is not asked about again.
+- If Civitai cannot be reached, Settings says so, and ComfyVault asks again
+  after the next scan. A scan, a plan and a run never wait for a lookup.
+- A picture is loaded only when you open a model in the Library. ComfyVault
+  shows the first picture that Civitai rates PG or PG-13, and skips videos and
+  pictures with any other rating. If there is no such picture, the Library says
+  so. If the picture does not load, the Library says so, and the picture is on
+  the model's Civitai page.

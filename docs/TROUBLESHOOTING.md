@@ -33,8 +33,39 @@ start until you choose one of the two buttons:
 - **Undo it** puts back what the run already moved. It first shows what the
   undo costs.
 
-Every step went into the journal before it happened, so each model is either
-done or untouched, and every path holds its own file or a working link.
+Every step went into the journal before it happened, so no bytes are lost. One
+model can be the exception to "it still loads": if the crash came between
+moving a model into the vault and making its link, that model's path is empty
+until you finish or undo the run.
+
+---
+
+## "ComfyVault cannot finish or undo it"
+
+A cut-off run names places that are not in the vault and not in any registered
+install on this computer. ComfyVault refuses to touch them, so **Finish it** and
+**Undo it** are not offered. The screen lists the places.
+
+The usual causes:
+
+- The vault was opened on a different computer from the one that made the run.
+- An install was moved, or removed from ComfyVault, after the run.
+- The drive that holds an install is not plugged in.
+- Someone else prepared the vault. Look at the listed places before you go on.
+
+What to do:
+
+1. If the places are real and only unreachable, make them reachable again. For
+   example, plug the drive back in, or put the install back at its old path
+   and register it again if you removed it. Then restart ComfyVault. The run
+   comes back with **Finish it** and **Undo it**.
+2. If you cannot do that, press **Set it aside**. Nothing on the disk moves.
+   The links the run made keep pointing into the vault. A model the run was in
+   the middle of can stay without a file at its path.
+3. Scan again before you plan anything new.
+
+A run set aside is not lost. When its places pass the check again, it comes
+back as a cut-off run, and you can finish it or undo it then.
 
 ---
 
@@ -200,6 +231,20 @@ stop it.
 
 Cancelling a scan changes nothing on disk, and the hashes already computed stay
 in the cache, so starting again is not starting over.
+
+---
+
+## Model details from Civitai do not appear
+
+- **The Civitai lookup is off.** Turn it on in Settings.
+- **Civitai could not be reached.** Settings says "Could not reach Civitai".
+  ComfyVault asks again after the next scan. Everything else works without it.
+- **Civitai does not know the file.** Many files are not on Civitai, for
+  example official releases. That is normal, and the model stays without a
+  label.
+- **There is no picture.** The Library shows only a picture that Civitai rates
+  PG or PG-13. If a model has none, the Library says so. If a picture fails to
+  load, the Library says so, and the picture is on the model's Civitai page.
 
 ---
 

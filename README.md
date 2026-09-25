@@ -128,6 +128,11 @@ the check that tells you the build is good, are in
    completely or not at all, and each path always holds its own file or a
    working link, so every model keeps loading in ComfyUI during the run.
 
+**Later runs.** Scan again whenever you add models or installs, and
+Consolidate shows a new plan. A new copy of a model the vault already holds
+moves nothing in: the copy is checked against the vault file, deleted, and
+replaced by a link to that file.
+
 ---
 
 ## Undo, and what it costs
@@ -143,6 +148,8 @@ cost, drive by drive, and it refuses to start if a drive does not have the room.
 - **The copies keep what the drive knew about the file.** A sparse file stays
   sparse, an NTFS compressed file stays compressed, and each file gets back its
   original modification time.
+- **A copy that a run linked to a vault file from an earlier run** is copied
+  back, and the vault file stays, because the earlier run still owns it.
 
 An undo can be stopped at any point too, and every model still loads while it is
 stopped. **Undo the rest** finishes it later.
@@ -222,7 +229,8 @@ models, how much is on disk, and how much can come back.
 
 **Library** has one row per unique model, whether it is already in the vault or
 still in four installs. Search it, sort it by how many places hold a file, and
-see every name a model has.
+see every name a model has. Open a model to see what Civitai knows about it:
+its name, base model, trigger words, a link to its page, and a picture.
 
 **Consolidate** shows the dry run and the Apply button, then the finished run
 with its undo.
@@ -234,8 +242,9 @@ still open. Vault files that nothing points at come last.
 
 **Download** is empty in this version, and says so.
 
-**Settings** holds your installs, the vault folder and the scan rules. It also
-checks Developer Mode again, and which ComfyUI programs are running.
+**Settings** holds your installs, the vault folder, the scan rules and the
+Civitai switch. It also checks Developer Mode again, and which ComfyUI programs
+are running.
 
 ---
 
@@ -256,10 +265,17 @@ The record lives inside the vault, so it moves with the drive. The only thing
 kept outside is which vault folder to open, in
 `%APPDATA%\app.comfyvault.desktop\config.json`.
 
-**Nothing goes over the network in this version.** There is no account, no API
-key and no telemetry. The engine can look a model up on Civitai by its hash, and
-Settings has a switch for that, but no screen uses the lookup, so nothing is
-sent.
+**ComfyVault sends each model's fingerprint to Civitai, and you can turn that
+off.** After a scan, ComfyVault sends the SHA-256 hash of each model file
+it has not asked about before to Civitai, to find the model's name, base model,
+trigger words, page and pictures. No file name and no path is sent. The lookup
+is on by default. **Turn it off with the Civitai lookup switch in Settings**,
+and ComfyVault uses no network at all. Everything else works the same without
+it.
+
+A picture is loaded from Civitai only when you open a model in the Library, and
+only the first picture that Civitai rates PG or PG-13. There is no account, no
+API key and no telemetry.
 
 ---
 
