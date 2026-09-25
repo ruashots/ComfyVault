@@ -58,7 +58,8 @@ describe("the Civitai lookup", () => {
       /^https?:/i.test(img.getAttribute("src") ?? ""),
     );
     expect(remote).toEqual([]);
-    expect(document.querySelectorAll("img").length).toBe(0);
+    // The only picture is the app's own logo, bundled with it.
+    expect(document.querySelectorAll("img:not(.logo)").length).toBe(0);
   });
 
   it("says a file Civitai does not know is normal, not an error", async () => {

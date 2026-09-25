@@ -61,25 +61,3 @@ export function Icon(props: { name: IconName; size?: number; class?: string }) {
     />
   );
 }
-
-/** The wordmark's vault, the one place the amber is part of the drawing. */
-export function Mark(props: { size?: number }) {
-  return (
-    <svg
-      width={props.size ?? 18}
-      height={props.size ?? 18}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="#EADDC5"
-      stroke-width="1.5"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-      innerHTML={
-        '<path d="M9 4.2h11v15.6H9z"/><path d="M2.4 6.6 6.4 12"/><path d="M2.4 12h4"/>' +
-        '<path d="M2.4 17.4 6.4 12"/><path d="M6.4 12H9"/>' +
-        '<path d="M12.6 9.2h4.2v5.6h-4.2z" fill="#f5901e" stroke="none"/>'
-      }
-    />
-  );
-}

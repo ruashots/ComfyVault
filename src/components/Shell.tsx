@@ -1,6 +1,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 
-import { Icon, Mark, type IconName } from "~/components/Icon";
+import { Icon, type IconName } from "~/components/Icon";
+import { Logo } from "~/components/Logo";
 import { driveKindShort, isReadable, volumeLabel } from "~/domain/drives";
 import { fmt, usedPercent } from "~/domain/format";
 import { warnbarRunning } from "~/domain/running";
@@ -12,10 +13,7 @@ export function Titlebar() {
   const app = useApp();
   return (
     <div class="titlebar" data-tauri-drag-region>
-      <Mark size={17} />
-      <span class="wordmark" data-tauri-drag-region>
-        Comfy<i>Vault</i>
-      </span>
+      <Logo height={18} />
       <span class="tb-sep" data-tauri-drag-region />
       <span class="tb-path">
         {app.vault()?.root ?? "no vault folder yet"}

@@ -429,3 +429,17 @@ describe("Settings before the first scan", () => {
     expect(card).not.toContain("0 MB");
   });
 });
+
+describe("the brand", () => {
+  it("is the logo, in the title bar and on setup", async () => {
+    await setup();
+    const logos = [...document.querySelectorAll("img.logo")] as HTMLImageElement[];
+    expect(logos.map((img) => img.closest(".titlebar") !== null)).toEqual([true, false]);
+    for (const img of logos) {
+      expect(img.getAttribute("alt")).toBe("ComfyVault");
+      // Bundled with the app, never fetched.
+      expect(img.getAttribute("src")).not.toMatch(/^https?:/);
+    }
+    expect(logos.map((img) => img.getAttribute("height"))).toEqual(["18", "48"]);
+  });
+});

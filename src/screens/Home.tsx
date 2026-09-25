@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 
-import { Icon, Mark, type IconName } from "~/components/Icon";
+import { Icon, type IconName } from "~/components/Icon";
+import { Logo } from "~/components/Logo";
 import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
@@ -126,7 +127,7 @@ function Setup() {
       <div class="screen">
         <div class="scroll">
           <div style={{ "text-align": "center", padding: "6px 0 0" }}>
-            <Mark size={26} />
+            <Logo height={48} />
             <div
               class="lbl"
               style={{ "margin-top": "8px", "letter-spacing": "1.8px" }}
