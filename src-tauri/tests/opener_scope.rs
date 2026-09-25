@@ -46,6 +46,13 @@ fn addresses_outside_the_scope_are_refused() {
         "http://civitai.com/models/4384",
         "file:///C:/Windows/System32/calc.exe",
         "ms-settings:privacy",
+        // A ComfyUI on this computer, and nowhere else.
+        "http://127.0.0.1.evil.example:8188/",
+        "http://127.0.0.1@evil.example/",
+        "http://localhost.evil.example:8188/",
+        "http://192.168.1.20:8188/",
+        "http://10.0.0.1:8188/",
+        "file://127.0.0.1/C$/Windows/System32/calc.exe",
     ] {
         let err = open(url).expect_err(url);
         // Refused by the scope itself, not for some other reason.
@@ -67,4 +74,15 @@ fn a_civitai_model_page_opens() {
 #[ignore]
 fn the_developer_mode_settings_page_opens() {
     open("ms-settings:developers").expect("the Developer Mode page was refused");
+}
+
+/// Opens a ComfyUI on this computer in the default browser, the way the
+/// running warning does, so it runs only when asked: `--ignored`. Nothing
+/// needs to listen on the port: the scope decides before the browser does.
+#[test]
+#[ignore]
+fn a_comfyui_on_this_computer_opens() {
+    // A port nothing on this computer serves, so the browser shows only that
+    // nothing answered there.
+    open("http://127.0.0.1:49151").expect("the local address was refused");
 }

@@ -222,6 +222,14 @@ pub(super) fn processes_holding(
     out
 }
 
+/// Task Manager is a Windows program.
+pub(super) fn open_task_manager() -> Result<()> {
+    Err(VaultError::new(
+        crate::ErrorCode::Conflict,
+        "Task Manager is a Windows program. Use this system's own process monitor.",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

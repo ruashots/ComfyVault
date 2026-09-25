@@ -136,6 +136,7 @@ pub fn run() {
             commands::fetch_metadata_batch,
             commands::clear_metadata_cache,
             commands::get_running_comfy,
+            commands::open_task_manager,
             commands::check_locked_files,
             commands::list_directory,
             commands::create_directory,

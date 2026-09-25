@@ -143,6 +143,7 @@ These are the only calls that answer in that state:
 | `validate_install_path` | so a folder can be checked before there is anywhere to record it |
 | `check_locked_files` | it asks the operating system, not the vault |
 | `list_drives` | every drive on this computer, with its size and its free space |
+| `open_task_manager` | it opens a Windows program, and reads nothing in the vault |
 
 `select_vault` is the way out of the state, and it works.
 
@@ -1977,6 +1978,10 @@ the same process in Task Manager.
 Data from a build before these fields existed reads back with all three set to
 `null`.
 
+To open a ComfyUI that listens, open `http://127.0.0.1:<port>` with the opener
+plugin's `open_url`. The window may open that address on any port, and no other
+address on this computer or the network.
+
 ### 11.2 `check_locked_files`
 
 Arguments: `{ paths: string[] }`.
@@ -2002,6 +2007,19 @@ On Linux and macOS, `checkable` is `false` and `locked` is always `false`,
 because those systems allow a file to be moved while it is open. The user
 interface must not present `locked: false` as a guarantee when `checkable` is
 `false`.
+
+### 11.3 `open_task_manager`
+
+Opens Windows Task Manager, where the person can end a process. The engine
+never ends a process itself.
+
+Arguments: none. Returns `null`.
+
+It rejects with `ioError` when Windows does not open it. The message reads
+"Windows did not open Task Manager. Press Ctrl+Shift+Esc to open it." On Linux
+and macOS it rejects with `conflict`.
+
+It answers before a vault is chosen.
 
 ---
 
@@ -2107,6 +2125,7 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `clear_metadata_cache` | 10.4 |
 | `get_running_comfy` | 11.1 |
 | `check_locked_files` | 11.2 |
+| `open_task_manager` | 11.3 |
 | `close_vault` | 2.3 |
 | `get_vault_info` | 2.4 |
 | `list_contents` | 8.3 |

@@ -539,6 +539,14 @@ fn list_processes_via_sysinfo() -> Vec<ProcessInfo> {
         .collect()
 }
 
+/// Opens Windows Task Manager, where a person can end a process.
+///
+/// The engine never ends a process itself. This only puts the tool that can in
+/// front of the person.
+pub fn open_task_manager() -> Result<()> {
+    sys::open_task_manager()
+}
+
 // ---------------------------------------------------------------------------
 // Matching processes to installs: pure logic, fully tested
 // ---------------------------------------------------------------------------
@@ -1355,6 +1363,23 @@ mod tests {
             started >= before - 2_000 && started <= Timestamp::now().as_millis() + 1_000,
             "started at {started}, the test began at {before}"
         );
+    }
+
+    #[test]
+    fn task_manager_is_asked_for_only_where_it_exists() {
+        if cfg!(windows) {
+            return; // Opening it is the ignored test below.
+        }
+        let err = open_task_manager().unwrap_err();
+        assert!(err.message.contains("Windows"), "{}", err.message);
+    }
+
+    /// Opens the real Task Manager on this desktop, so it runs only when
+    /// asked: `--ignored`.
+    #[test]
+    #[ignore]
+    fn task_manager_opens() {
+        open_task_manager().expect("Windows did not open Task Manager");
     }
 
     #[test]

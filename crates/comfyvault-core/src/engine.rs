@@ -997,6 +997,11 @@ impl Engine {
         Ok(files)
     }
 
+    /// Answers before a vault is chosen: it reads nothing inside one.
+    pub fn open_task_manager(&self) -> Result<()> {
+        crate::platform::open_task_manager()
+    }
+
     pub fn locked_files(&self, paths: &[PathBuf]) -> Vec<LockState> {
         paths.iter().map(|p| self.platform.lock_state(p)).collect()
     }

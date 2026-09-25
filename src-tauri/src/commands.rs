@@ -736,6 +736,13 @@ pub async fn get_running_comfy(state: State<'_, AppEngine>) -> Reply<Vec<Running
     blocking(move || e.running_comfy()).await
 }
 
+/// Opens Windows Task Manager. Answers before a vault exists.
+#[tauri::command]
+pub async fn open_task_manager(state: State<'_, AppEngine>) -> Reply<()> {
+    let e = engine(&state);
+    blocking(move || e.open_task_manager()).await
+}
+
 #[derive(Deserialize)]
 pub struct PathsArgs {
     pub paths: Vec<String>,

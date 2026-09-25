@@ -539,6 +539,38 @@ pub(super) fn processes_holding(
     }
 }
 
+/// Asks the Windows shell to open Task Manager.
+///
+/// Through the shell, not by starting the file directly: Task Manager asks for
+/// the highest rights the person has, and a plain start of it fails for an
+/// administrator with "The requested operation requires elevation".
+pub(super) fn open_task_manager() -> Result<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let verb = wide_str("open");
+    let file = wide_str("taskmgr.exe");
+    let code = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+    // Anything above 32 means the shell started it.
+    if code > 32 {
+        return Ok(());
+    }
+    Err(VaultError::new(
+        ErrorCode::IoError,
+        "Windows did not open Task Manager. Press Ctrl+Shift+Esc to open it.",
+    )
+    .with_detail(format!("ShellExecuteW answered {code}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -60,7 +60,8 @@ Beyond the commands in `docs/IPC-CONTRACT.md`:
 
 - `tauri-plugin-opener`, with `opener:allow-open-url` and
   `opener:allow-reveal-item-in-dir`. Used to open the Windows Developer Mode
-  settings page and to show the vault folder in Explorer.
+  settings page, a Civitai model page, a ComfyUI at `http://127.0.0.1:<port>`,
+  and to show the vault folder in Explorer.
 - Nothing else. The folder picker browses through `list_directory` and
   `create_directory` from section 15 of the contract, so the window needs no
   file system access of its own.
