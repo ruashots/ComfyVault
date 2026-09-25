@@ -3266,3 +3266,62 @@ fn a_stored_plan_that_names_a_vault_file_as_a_copy_is_not_applied() {
     assert_eq!(record.failures[0].reason, BlockReason::UnsafeVaultPath);
     vault_file_is_intact(&vault_file, "a crafted plan");
 }
+
+#[test]
+fn a_crafted_vault_cannot_widen_what_counts_as_a_model_through_its_settings() {
+    // The extension list in the vault's settings is written by whoever made
+    // the vault. Adding ".txt" there let a crafted run add notes.txt to a
+    // model folder again.
+    let w = TestWorld::new();
+    let mut settings = w.store.settings().unwrap();
+    settings.scan_extensions.push(".txt".into());
+    settings.scan_extensions.push("".into());
+    w.store.put_settings(&settings).unwrap();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/x.safetensors", &weights("x"));
+    let plan = w.plan(&[a.clone()]);
+    w.store.put_plan(&plan).unwrap();
+    let content = b"neutral test bytes".to_vec();
+    let in_vault = w.write_file("ComfyVault/loras/y.safetensors", &content);
+    let target = a.root.join("models/loras/notes.txt");
+    w.store
+        .put_apply(&ApplyRecord {
+            apply_id: "ap-x".into(),
+            plan_id: plan.plan_id.clone(),
+            state: ApplyState::Running,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            groups_requested: 1,
+            group_ids: vec![],
+            groups_applied: 0,
+            groups_failed: 0,
+            bytes_freed: 0,
+            files_moved: 0,
+            links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
+            failures: vec![],
+            revertible: true,
+            last_undo_step_at: None,
+        })
+        .unwrap();
+    w.store
+        .append_journal(&crafted(
+            "ap-x",
+            0,
+            JournalStep::DeleteStash {
+                stash: a.root.join("models/loras/notes.txt.comfyvault-old-zz"),
+                original: target.clone(),
+                vault_path: in_vault,
+                sha256: crate::scan::hash::hash_bytes(&content),
+                size_bytes: content.len() as u64,
+                mtime_nanos: None,
+            },
+            JournalState::Pending,
+        ))
+        .unwrap();
+
+    let err = applier(&w).resume("ap-x", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+    assert!(!target.exists());
+}

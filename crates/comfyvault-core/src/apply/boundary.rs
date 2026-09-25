@@ -16,10 +16,11 @@
 //!   install's `custom_nodes`.
 //!
 //! A file a run moves, links, or puts back must also be a model file by its
-//! name: a plain file name with one of the extensions the scan looks for. A
-//! run only ever handles files the scan found, so nothing a real run did is
-//! refused, and a crafted one cannot add, say, `notes.txt` or a script to a
-//! model folder.
+//! name: a plain file name with one of the model extensions built into the
+//! engine. Not the list in the vault's settings, which sit in the same
+//! database a crafted vault writes: adding `.txt` there let `notes.txt`
+//! through again. Nothing in the app changes that list, so nothing a real run
+//! did is refused.
 //!
 //! A run that names any other place is refused whole, before a file is touched.
 
@@ -39,7 +40,6 @@ pub struct Places {
     /// Every folder the scan walks, per proved install, with that install's
     /// `custom_nodes`, which is never touched.
     install_roots: Vec<(PathBuf, PathBuf)>,
-    settings: crate::settings::Settings,
 }
 
 impl Places {
@@ -55,7 +55,6 @@ impl Places {
             vault_root: store.vault_root().to_path_buf(),
             internal: store.internal_dir(),
             install_roots,
-            settings: store.settings()?,
         })
     }
 
@@ -86,13 +85,15 @@ impl Places {
             })
     }
 
-    /// Is the last part of `path` a model file's name: a plain name, with an
-    /// extension the scan looks for?
+    /// Is the last part of `path` a model file's name: a plain name, with one
+    /// of the engine's own model extensions?
     pub fn is_model_name(&self, path: &Path) -> bool {
         let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
             return false;
         };
-        crate::paths::validate_file_name(&name).is_ok() && self.settings.matches_extension(&name)
+        let lower = name.to_lowercase();
+        crate::paths::validate_file_name(&name).is_ok()
+            && crate::settings::DEFAULT_EXTENSIONS.iter().any(|e| lower.ends_with(e))
     }
 
     /// A model file inside a proved install.

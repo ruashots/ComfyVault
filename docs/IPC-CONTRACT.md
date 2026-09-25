@@ -1281,8 +1281,9 @@ reports anything, every path the run names is proved to be one of two places:
   ComfyUI install on this disk now, and not inside its `custom_nodes`.
 
 A file a run moves, links or puts back must also have a model file's name: a
-plain name with one of the extensions in the settings' `scanExtensions`. A run
-only handles files a scan found, so this refuses nothing a real run did.
+plain name with one of the model extensions built into the engine, the default
+`scanExtensions` list. The vault's own `scanExtensions` does not count here,
+because it is stored in the same database the check does not trust.
 
 If any path fails, the whole call rejects with `pathOutsideBoundary`
 before a file is touched. `detail` lists every such path, and `path` is the
