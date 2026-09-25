@@ -89,7 +89,9 @@ function Settle(props: { run: InterruptedApply }) {
  * its installs removed from ComfyVault. The run came back blocked, naming the
  * nine places in that install. Finish, undo and the undo's cost check were
  * refused with pathOutsideBoundary. Setting it aside left it off the list of
- * runs to settle, and all nine links on disk still reached the vault.
+ * runs to settle, and all nine links on disk still reached the vault. With the
+ * install registered again the run came back, no longer blocked, and finishing
+ * it completed all nine groups.
  */
 function Blocked(props: { run: InterruptedApply }) {
   const app = useApp();
@@ -102,13 +104,19 @@ function Blocked(props: { run: InterruptedApply }) {
       cta: "Set it aside",
       body: [
         [
-          { text: "Setting it aside moves nothing on the disk. " },
           {
-            text: "Every link this run made keeps pointing into the vault, so every model keeps loading.",
+            text: "Setting it aside moves nothing on the disk. Every link this run made keeps pointing into the vault. ",
+          },
+          {
+            text: "A model the run was part way through may have neither its file nor a link until the run is finished or undone.",
             emph: true,
           },
         ],
-        [{ text: "After this, the run can no longer be undone from ComfyVault." }],
+        [
+          {
+            text: "The run comes back here, to be finished or undone, once the places it names can be reached again.",
+          },
+        ],
         [
           {
             text: "The usual causes are the vault being opened on a different computer, or an install moved or removed after the run. A vault someone else prepared can cause it too.",

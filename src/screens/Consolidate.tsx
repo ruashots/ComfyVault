@@ -108,7 +108,7 @@ function StaleScan() {
       head="Your installs changed since the last scan"
       body={
         app.scanPredatesSetAside()
-          ? "The run you set aside had already put some models in the vault, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
+          ? "The run you set aside had already put some models in the vault, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk. The run comes back to be finished or undone once the places it names can be reached again."
           : "The undo put every file back where it was, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
       }
     >

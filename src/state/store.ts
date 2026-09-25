@@ -422,9 +422,9 @@ export function createAppStore(engine: Engine): AppStore {
   const runOnScreen = createMemo(() => {
     const run = lastApply();
     if (!run) return null;
-    // Settled and never finished: its record counts nothing the person can use.
-    if (run.state === "setAside") return null;
     if (run.state === "partlyReverted" || cutOffRun()) return run;
+    // Set aside and not back yet: its record counts nothing the person can use.
+    if (run.state === "setAside") return null;
     const last = scan();
     const scannedSince =
       last !== null &&

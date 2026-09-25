@@ -354,7 +354,7 @@ export class FixtureEngine implements Engine {
       lastScanId: this.lastScan?.scanId ?? null,
       lastPlanId: [...this.plans.keys()].at(-1) ?? null,
       interruptedApplies: this.applies
-        .filter((a) => a.state === "running" && this.busy?.id !== a.applyId)
+        .filter((a) => this.waitsToBeSettled(a))
         .map((a) => a.applyId),
       busy: this.busy,
     };
@@ -972,7 +972,7 @@ export class FixtureEngine implements Engine {
     // Measured against the real engine: a run cut off comes back as state
     // "running", and that is what it lists here.
     return this.applies
-      .filter((a) => a.state === "running" && this.busy?.id !== a.applyId)
+      .filter((a) => this.waitsToBeSettled(a))
       .map((a) => ({
         applyId: a.applyId,
         planId: a.planId,
@@ -1579,11 +1579,19 @@ export class FixtureEngine implements Engine {
     if (!this.blockedRuns.has(applyId)) {
       throw error("conflict", "This run can be finished or undone, so it is not set aside.");
     }
-    this.blockedRuns.delete(applyId);
-    this.cutOffRuns.delete(applyId);
     const record = { ...run, state: "setAside" as const, revertible: false };
     this.applies = this.applies.map((a) => (a.applyId === applyId ? record : a));
     return record;
+  }
+
+  /**
+   * A run cut off with nothing running it, or a run set aside whose places can
+   * be reached again, which comes back to be finished or undone.
+   */
+  private waitsToBeSettled(a: ApplyRecord): boolean {
+    if (this.busy?.id === a.applyId) return false;
+    if (a.state === "running") return true;
+    return a.state === "setAside" && !this.blockedRuns.has(a.applyId);
   }
 
   private refuseBlocked(applyId: string): void {
@@ -1595,6 +1603,11 @@ export class FixtureEngine implements Engine {
         paths.join("\n"),
       );
     }
+  }
+
+  /** The places a cut-off or set-aside run names can be reached again. */
+  devUnblockRun(applyId: string): void {
+    this.blockedRuns.delete(applyId);
   }
 
   /** The cut-off run names these places, which are no longer in any install. */

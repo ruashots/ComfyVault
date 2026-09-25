@@ -126,8 +126,13 @@ describe("a cut-off run the engine will not touch", () => {
     await waitFor(() => document.querySelector('[role="dialog"]') !== null);
     const dialog = (document.querySelector('[role="dialog"]')!.textContent ?? "").replace(/\s+/g, " ");
     expect(dialog).toContain("Setting it aside moves nothing on the disk.");
-    expect(dialog).toContain("Every link this run made keeps pointing into the vault, so every model keeps loading.");
-    expect(dialog).toContain("the run can no longer be undone from ComfyVault");
+    expect(dialog).toContain("Every link this run made keeps pointing into the vault.");
+    // A model the run was in the middle of may have no file and no link, so
+    // the box promises neither that every model loads nor that this is final.
+    expect(dialog).toContain("may have neither its file nor a link until the run is finished or undone");
+    expect(dialog).not.toContain("every model keeps loading");
+    expect(dialog).not.toContain("can no longer be undone");
+    expect(dialog).toContain("comes back here, to be finished or undone, once the places it names can be reached again");
     expect(dialog).toContain("the vault being opened on a different computer, or an install moved or removed after the run");
     expect(dialog).toContain("A vault someone else prepared can cause it too.");
     // Every place, not the first three.
@@ -144,5 +149,35 @@ describe("a cut-off run the engine will not touch", () => {
     await waitFor(() => text().includes("Your installs changed since the last scan"));
     expect(text()).toContain("The run you set aside");
     expect(text()).not.toContain("undefined");
+  });
+
+  it("comes back to be finished once its places can be reached again", async () => {
+    const h = await blockedAndReopen();
+    await userEvent.click(screen.getByRole("button", { name: /^Set it aside$/ }));
+    await waitFor(() => document.querySelector('[role="dialog"]') !== null);
+    const inDialog = document.querySelector('[role="dialog"]') as HTMLElement;
+    await userEvent.click(
+      [...inDialog.querySelectorAll("button")].find((b) => b.textContent === "Set it aside")!,
+    );
+    await waitFor(() => h.app.lastApply()?.state === "setAside");
+    await waitFor(() => text().includes("Your installs changed since the last scan"));
+
+    // The drive with its install is plugged back in.
+    const run = h.app.lastApply()!;
+    h.engine.devUnblockRun(run.applyId);
+    await h.app.actions.refresh();
+    await waitFor(() => h.app.cutOffRun() !== null);
+    expect(h.app.cutOffRun()!.blocked).toBe(false);
+    expect(screen.getByRole("button", { name: /Finish it/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Undo it/ })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Finish it/ }));
+    // Finishing has started once nothing is waiting to be settled.
+    await waitFor(() => h.app.cutOffRun() === null);
+    h.engine.devFinish();
+    await waitFor(() => h.app.lastApply()?.state === "completed");
+    const done = h.app.lastApply()!;
+    expect(done.groupsApplied).toBe(done.groupsRequested);
+    expect(text()).toContain("finished ·");
   });
 });
