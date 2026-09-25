@@ -1879,7 +1879,14 @@ that are fine for anyone. A picture Civitai sent without a URL is left out of
 both lists, and so is one whose address is not on `https://image.civitai.com`
 or `https://blobs-b2.civitai.com`, the file host the image host redirects every
 picture to. The window's content rules allow pictures from exactly those two
-places, and a test holds the two lists to each other. An answer cached by an older build has an empty `previewImages`.
+places, and a test holds the two lists to each other.
+
+A cached answer is checked again every time it is read, whoever wrote it.
+Picture addresses are held to the rule above, `downloadUrl` to Civitai over
+HTTPS, and `pageUrl` to exactly the page the engine builds,
+`https://civitai.com/models/<number>` with an optional
+`?modelVersionId=<number>`. An address that fails is dropped, and `pageUrl` or
+`downloadUrl` is then null. An answer cached by an older build has an empty `previewImages`.
 
 ### 10.2 `fetch_metadata_batch`
 

@@ -427,3 +427,36 @@ fn only_pictures_on_civitais_image_host_over_https_are_kept() {
     );
     assert_eq!(m.preview_image_urls, kept);
 }
+
+#[test]
+fn a_cached_answer_is_held_to_the_same_rules_when_it_is_read() {
+    // A row cached before the picture check existed, or written by whoever
+    // made the vault, reached the window as it was stored.
+    let w = crate::testkit::TestWorld::new();
+    let mut m = crate::metadata::ModelMetadata::not_found(SHA_A);
+    m.found = true;
+    m.page_url = Some("https://evil.example/phish".into());
+    m.download_url = Some("https://evil.example/file".into());
+    m.preview_image_urls = vec!["https://evil.example/1.jpeg".into(), "https://image.civitai.com/2.jpeg".into()];
+    m.preview_images = vec![
+        crate::metadata::PreviewImage { url: "https://evil.example/1.jpeg".into(), nsfw_level: 1, kind: "image".into() },
+        crate::metadata::PreviewImage { url: "https://image.civitai.com/2.jpeg".into(), nsfw_level: 1, kind: "image".into() },
+    ];
+    w.store.put_metadata(&m).unwrap();
+
+    let read = w.store.metadata(SHA_A).unwrap().unwrap();
+    assert_eq!(read.page_url, None);
+    assert_eq!(read.download_url, None);
+    assert_eq!(read.preview_image_urls, vec!["https://image.civitai.com/2.jpeg".to_string()]);
+    assert_eq!(read.preview_images.len(), 1);
+
+    // A page the engine builds itself survives.
+    m.page_url = Some("https://civitai.com/models/4384?modelVersionId=128713".into());
+    w.store.put_metadata(&m).unwrap();
+    assert_eq!(w.store.metadata(SHA_A).unwrap().unwrap().page_url, m.page_url);
+    for bad in ["https://civitai.com/models/4384/../../x", "https://civitai.com/models/", "https://civitai.com/models/1?modelVersionId=2&x=3"] {
+        m.page_url = Some(bad.into());
+        w.store.put_metadata(&m).unwrap();
+        assert_eq!(w.store.metadata(SHA_A).unwrap().unwrap().page_url, None, "{bad}");
+    }
+}

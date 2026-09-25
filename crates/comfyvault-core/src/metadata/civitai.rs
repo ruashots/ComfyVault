@@ -256,6 +256,30 @@ fn safe_image_url(url: &str) -> Option<String> {
         .then(|| url.to_string())
 }
 
+/// A Civitai model page, exactly as the engine builds it: the model's number,
+/// and the version's number when there is one. The window's opener allows
+/// exactly these pages.
+fn safe_page_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://civitai.com/models/")?;
+    let (model, version) = match rest.split_once("?modelVersionId=") {
+        Some((m, v)) => (m, Some(v)),
+        None => (rest, None),
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(model) && version.is_none_or(digits)).then(|| url.to_string())
+}
+
+/// The same checks as a fresh answer, applied to an answer read back from the
+/// vault's database. A row cached by an older build, or written by whoever
+/// made the vault, is not trusted to have been checked when it was stored.
+pub fn checked(mut m: super::ModelMetadata) -> super::ModelMetadata {
+    m.preview_image_urls = m.preview_image_urls.iter().filter_map(|u| safe_image_url(u)).collect();
+    m.preview_images.retain(|p| safe_image_url(&p.url).is_some());
+    m.download_url = m.download_url.as_deref().and_then(safe_download_url);
+    m.page_url = m.page_url.as_deref().and_then(safe_page_url);
+    m
+}
+
 /// Splits the trigger words into usable tokens.
 ///
 /// The field is not a clean list. One element often holds several triggers

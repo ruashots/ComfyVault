@@ -604,8 +604,10 @@ impl Store {
 
     // -- metadata cache ---------------------------------------------------
 
+    /// A cached answer, checked again as it is read: its addresses are held
+    /// to the same rules as a fresh answer's, whoever wrote the row.
     pub fn metadata(&self, sha256: &str) -> Result<Option<crate::metadata::ModelMetadata>> {
-        self.get(METADATA, sha256)
+        Ok(self.get(METADATA, sha256)?.map(crate::metadata::civitai::checked))
     }
 
     pub fn put_metadata(&self, m: &crate::metadata::ModelMetadata) -> Result<()> {
