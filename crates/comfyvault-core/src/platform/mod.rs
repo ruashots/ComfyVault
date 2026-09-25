@@ -941,6 +941,27 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_onto_a_taken_name_refuses_and_replaces_nothing() {
+        // The last step of every copy. A name taken since the copy began must
+        // not be replaced, and the refusal and the rename are one call.
+        let d = tempfile::tempdir().unwrap();
+        let from = d.path().join("copy.part");
+        let to = d.path().join("model.safetensors");
+        std::fs::write(&from, b"the copy").unwrap();
+        std::fs::write(&to, b"written meanwhile").unwrap();
+
+        let err = rename_new(&from, &to).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&to).unwrap(), b"written meanwhile");
+        assert_eq!(std::fs::read(&from).unwrap(), b"the copy");
+
+        std::fs::remove_file(&to).unwrap();
+        rename_new(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"the copy");
+        assert!(!from.exists());
+    }
+
+    #[test]
     fn a_rename_between_two_fake_drives_reports_the_recoverable_error() {
         let f = FakePlatform::new();
         let d = tempfile::tempdir().unwrap();

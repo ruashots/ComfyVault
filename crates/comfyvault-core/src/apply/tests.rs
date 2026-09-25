@@ -3016,3 +3016,17 @@ fn a_link_only_group_is_finished_only_when_every_copy_is_deleted() {
     assert!(!stash.exists(), "the source copy's bytes stayed under their set-aside name");
     every_place_loads(&copies, &weights("m"), "after recovery");
 }
+
+#[test]
+fn a_recovery_refuses_a_run_that_was_not_cut_off() {
+    // Resuming a run the person had undone applied the whole of it again.
+    let w = TestWorld::new();
+    let (dup, _, _) = two_copy_run(&w);
+    let err = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict, "a finished run was finished again");
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    let err = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(!w.is_link(&dup), "an undone run was applied again");
+}

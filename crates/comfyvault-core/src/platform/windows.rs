@@ -315,8 +315,8 @@ pub(super) fn verbatim(path: &Path) -> PathBuf {
 ///
 /// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` refuses when anything
 /// sits at `to`, in the same call that renames, so nothing written there in
-/// the meantime is ever replaced. It works on every file system Windows
-/// renames on, exFAT included.
+/// the meantime is ever replaced. Unlike a hard link, it needs nothing from
+/// the file system beyond a rename.
 pub(super) fn rename_new(from: &Path, to: &Path) -> std::io::Result<()> {
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
     let ok = unsafe { MoveFileExW(wide(from).as_ptr(), wide(to).as_ptr(), 0) };
