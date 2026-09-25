@@ -958,13 +958,19 @@ export class FixtureEngine implements Engine {
    * An undo's steps, newest first, the way the engine walks its journal: for
    * each group the links come out and the removed copies are copied back out
    * of the vault, and the file that moved into the vault is renamed back last.
+   * A kept copy from another drive than the vault's cannot be renamed back
+   * across drives, so it is copied back too, as the contract says.
    */
   private revertSteps(
     applyId: string,
   ): Array<{ action: RevertProgress["action"]; path: string; bytes: number }> {
     const steps: Array<{ action: RevertProgress["action"]; path: string; bytes: number }> = [];
     for (const g of this.appliedGroups.get(applyId) ?? []) {
-      steps.push({ action: "renamingBack", path: g.source.absPath, bytes: 0 });
+      steps.push(
+        volumeOfPath(g.source.absPath) === VAULT_VOLUME
+          ? { action: "renamingBack", path: g.source.absPath, bytes: 0 }
+          : { action: "copyingBack", path: g.source.absPath, bytes: g.sizeBytes },
+      );
       for (const link of g.links) {
         steps.push({ action: "removingLink", path: link.absPath, bytes: 0 });
       }
@@ -981,23 +987,29 @@ export class FixtureEngine implements Engine {
     const refusal = this.revertRefusal();
     if (refusal) throw refusal;
     const steps = this.revertSteps(applyId);
-    const bytesToCopy = steps.reduce((sum, st) => sum + st.bytes, 0);
+    // Each copy takes room on the drive it goes back to.
+    const perDrive = new Map<string, number>();
+    for (const st of steps) {
+      if (st.bytes === 0) continue;
+      const volume = volumeOfPath(st.path);
+      perDrive.set(volume, (perDrive.get(volume) ?? 0) + st.bytes);
+    }
+    const drives = await this.listDrives();
     return {
       applyId,
       filesRenamedBack: steps.filter((st) => st.action === "renamingBack").length,
       filesCopiedBack: steps.filter((st) => st.action === "copyingBack").length,
-      bytesToCopy,
-      // Every install sits on the vault's drive here, so one drive takes it.
-      drives:
-        bytesToCopy > 0
-          ? [
-              {
-                volume: `${VAULT_VOLUME}\\`,
-                predictedRoomBytes: this.revertRoomBytes ?? bytesToCopy,
-                freeBytes: this.world.driveReadable ? this.world.freeBytes : null,
-              },
-            ]
-          : [],
+      bytesToCopy: steps.reduce((sum, st) => sum + st.bytes, 0),
+      drives: [...perDrive].map(([volume, bytes]) => ({
+        volume: `${volume}\\`,
+        predictedRoomBytes: this.revertRoomBytes ?? bytes,
+        freeBytes:
+          volume === VAULT_VOLUME
+            ? this.world.driveReadable
+              ? this.world.freeBytes
+              : null
+            : (drives.find((d) => d.root === `${volume}\\`)?.freeBytes ?? null),
+      })),
     };
   }
 
@@ -1577,6 +1589,11 @@ function parentOf(path: string): string | null {
 /** A category name that would put a file outside the vault. */
 function refusedCategory(rawCategory: string): boolean {
   return rawCategory.includes("\\") || rawCategory.includes("/");
+}
+
+/** The drive a path is on, for example "C:". */
+function volumeOfPath(path: string): string {
+  return path.slice(0, 2).toUpperCase();
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {

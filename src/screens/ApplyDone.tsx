@@ -278,7 +278,7 @@ export function ApplyDone() {
 const files = (n: number) => `${n} ${n === 1 ? "file" : "files"}`;
 
 /** How the files come back, and what sets the time. */
-function costLine(preview: RevertPreview): ConfirmLine {
+export function costLine(preview: RevertPreview): ConfirmLine {
   const renamed = preview.filesRenamedBack;
   const copied = preview.filesCopiedBack;
   if (copied === 0) {
@@ -286,8 +286,14 @@ function costLine(preview: RevertPreview): ConfirmLine {
       { text: `${renamed === 1 ? "The file comes" : `All ${renamed} files come`} back at once, by a rename. Nothing has to be copied.` },
     ];
   }
+  // A run onto another drive copies even the kept copies back, so there can
+  // be nothing that comes back by a rename.
+  const instant: ConfirmLine =
+    renamed === 0
+      ? []
+      : [{ text: `${files(renamed)} ${renamed === 1 ? "comes" : "come"} back at once, by a rename. ` }];
   return [
-    { text: `${files(renamed)} ${renamed === 1 ? "comes" : "come"} back at once, by a rename. ` },
+    ...instant,
     { text: files(copied), emph: true },
     { text: ` ${copied === 1 ? "has" : "have"} to be copied back out of the vault, ` },
     { text: fmt(preview.bytesToCopy), emph: true },

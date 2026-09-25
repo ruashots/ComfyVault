@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
+import { costLine } from "~/screens/ApplyDone";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
@@ -205,7 +206,8 @@ describe("the Undo box", () => {
     const text = dialogText();
     expect(text).toContain("That is not enough.");
     expect(text).toContain("There is not enough room to undo this run");
-    expect(text).toContain("Free some space on drive C:");
+    // The run put copies back on two drives, and both are named.
+    expect(text).toContain("Free some space on drive C: and D:");
     expect(screen.queryByRole("button", { name: /Undo the run/ })).toBeNull();
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
     expect(within(dialog).getByRole("button", { name: /^Close$/ })).toBeTruthy();
@@ -217,5 +219,23 @@ describe("the Undo box", () => {
     expect(text).toContain("It did not answer when asked how much room it has.");
     expect(text).not.toContain("0 B free");
     expect(screen.getByRole("button", { name: /Undo the run/ })).toBeTruthy();
+  });
+
+  it("says nothing comes back by a rename when every kept copy is on another drive", () => {
+    // A vault on another drive than the installs: every kept copy is copied
+    // back as well, so nothing is renamed. The double keeps its vault on the
+    // installs' drive, so this is read from the engine's sample shape directly.
+    const line = costLine({
+      applyId: "apply-1",
+      filesRenamedBack: 0,
+      filesCopiedBack: 3,
+      bytesToCopy: 13_876_297_728,
+      drives: [],
+    })
+      .map((part) => part.text)
+      .join("");
+    expect(line).not.toContain("0 files come back at once");
+    expect(line).not.toContain("by a rename");
+    expect(line).toContain("3 files have to be copied back out of the vault");
   });
 });
