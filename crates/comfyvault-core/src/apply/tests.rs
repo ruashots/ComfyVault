@@ -1995,3 +1995,79 @@ fn an_unsafe_vault_path_reaches_the_person_as_what_it_is() {
         BlockReason::UnsafeVaultPath
     );
 }
+
+#[test]
+fn an_apply_stopped_at_any_point_leaves_each_model_whole_or_untouched() {
+    // Measured before this: stopped at the right point, a model of three
+    // copies ended with two links and one real file, and the database held
+    // no record of the two links. The clean-up that should have put the group
+    // back heard the same Stop and stopped at its first copy.
+    let mut big = weights("big");
+    big.resize(3 * 1024 * 1024 + 17, 0x5A);
+    let mut small = weights("small");
+    small.resize(2 * 1024 * 1024 + 5, 0x33);
+
+    for vault_elsewhere in [false, true] {
+        let mut stops = 0;
+        for n in 1.. {
+            let w = TestWorld::new();
+            let installs: Vec<_> = ["A", "B", "C"].iter().map(|l| w.add_install(l)).collect();
+            // One model in three places, one of them under another name, and
+            // a second model in two places.
+            let big_paths: Vec<PathBuf> = installs
+                .iter()
+                .zip(["m", "m", "other"])
+                .map(|(i, name)| w.write_model(i, &format!("models/checkpoints/{name}.safetensors"), &big))
+                .collect();
+            let small_paths: Vec<PathBuf> = installs[..2]
+                .iter()
+                .map(|i| w.write_model(i, "models/loras/s.safetensors", &small))
+                .collect();
+            let plan = w.plan(&installs);
+            assert_eq!(plan.groups.len(), 2);
+            if vault_elsewhere {
+                vault_on_another_drive(&w);
+            }
+            let when = format!("vault elsewhere {vault_elsewhere}, stopped at check {n}");
+
+            let record = applier(&w)
+                .apply("ap-1", &plan, &request(&plan), &CancelToken::stopping_at_check(n), &NullSink)
+                .unwrap_or_else(|e| panic!("{when}: {e:?}"));
+
+            for (paths, content) in [(&big_paths, &big), (&small_paths, &small)] {
+                every_place_loads(paths, content, &when);
+                // Whole or untouched, never between.
+                let linked = paths.iter().filter(|p| w.is_link(p)).count();
+                assert!(
+                    linked == 0 || linked == paths.len(),
+                    "{when}: {linked} of {} places are links, the model is half consolidated",
+                    paths.len()
+                );
+                // The database says what the disk says.
+                for p in paths.iter() {
+                    let recorded = w.store.link_at_path(p).unwrap().is_some();
+                    assert_eq!(recorded, w.is_link(p), "{when}: the record for {} disagrees with the disk", p.display());
+                }
+                let hash = crate::scan::hash::hash_bytes(content);
+                let in_vault = w.store.vault_file(&hash).unwrap().is_some();
+                assert_eq!(in_vault, linked > 0, "{when}: the vault record disagrees with the links");
+            }
+            let health = crate::vault::Vault::new(&w.store, &w.platform).health().unwrap();
+            assert!(
+                health.ok && health.foreign_files.is_empty(),
+                "{when}: the health check reports trouble: {health:?}"
+            );
+            let leftovers: Vec<_> = std::fs::read_dir(w.store.temp_dir())
+                .map(|d| d.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            assert!(leftovers.is_empty(), "{when}: part files left in the vault: {leftovers:?}");
+
+            if record.state == ApplyState::Completed {
+                break;
+            }
+            assert_eq!(record.state, ApplyState::Cancelled, "{when}");
+            stops += 1;
+        }
+        assert!(stops > 10, "the apply was stopped only {stops} times, the test proves little");
+    }
+}

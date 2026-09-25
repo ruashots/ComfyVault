@@ -684,7 +684,7 @@ impl<'a> Applier<'a> {
             // started. If the undo itself fails, the person needs both: what
             // went wrong, and the fact that putting it back also went wrong.
             // Reporting only the second leaves them without the cause.
-            if let Err(undo_failed) = self.undo_entries(&mut done, cancel) {
+            if let Err(undo_failed) = self.undo_entries(&mut done) {
                 return Err(VaultError::new(
                     undo_failed.code,
                     format!("{} {}", e.message, undo_failed.message),
@@ -817,10 +817,16 @@ impl<'a> Applier<'a> {
     // -- undo -------------------------------------------------------------
 
     /// Undoes a list of steps, newest first.
-    fn undo_entries(&self, entries: &mut Vec<JournalEntry>, cancel: &CancelToken) -> Result<()> {
+    ///
+    /// This is clean-up that must finish, so it never hears a Stop. It runs
+    /// because a group went wrong or was stopped, and the Stop that got it here
+    /// is still raised: passing it on stopped the clean-up at its first copy,
+    /// and left a model half consolidated with no record of its links.
+    fn undo_entries(&self, entries: &mut Vec<JournalEntry>) -> Result<()> {
         let refilled = paths_filled_later(entries);
+        let never = CancelToken::new();
         while let Some(entry) = entries.pop() {
-            self.undo_step(&entry, &refilled, cancel, &mut |_| {})?;
+            self.undo_step(&entry, &refilled, &never, &mut |_| {})?;
             let reverted = JournalEntry { state: JournalState::Reverted, ..entry };
             self.store.update_journal(&reverted)?;
         }
@@ -1363,7 +1369,7 @@ impl<'a> Applier<'a> {
             }
         }
 
-        self.undo_entries(&mut incomplete, cancel)?;
+        self.undo_entries(&mut incomplete)?;
 
         // Only what the person originally ticked, and only what is not done.
         //
