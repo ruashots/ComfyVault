@@ -1769,11 +1769,16 @@ export class FixtureEngine implements Engine {
     this.taskManagerStarts = starts;
   }
 
-  async openTaskManager(): Promise<void> {
+  /** It answers before a vault is chosen, and returns null, as the engine does. */
+  async openTaskManager(): Promise<null> {
     if (!this.taskManagerStarts) {
-      throw error("ioError", "Windows did not start taskmgr.exe.");
+      throw error(
+        "ioError",
+        "Windows did not open Task Manager. Press Ctrl+Shift+Esc to open it.",
+      );
     }
     this.taskManagerOpened += 1;
+    return null;
   }
   async revealInFileManager(): Promise<void> {}
   async windowMinimize(): Promise<void> {}
