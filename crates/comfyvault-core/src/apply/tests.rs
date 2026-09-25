@@ -1050,15 +1050,25 @@ fn an_undo_stopped_at_any_point_leaves_every_model_loadable() {
         for n in 1.. {
             let w = TestWorld::new();
             let installs: Vec<_> = ["A", "B", "C"].iter().map(|l| w.add_install(l)).collect();
+            // The third copy has another name, so the vault also carries a
+            // second name for the model, as a link beside the vault file.
             let paths: Vec<PathBuf> = installs
                 .iter()
-                .map(|i| w.write_model(i, "models/checkpoints/m.safetensors", &content))
+                .zip(["m", "m", "other"])
+                .map(|(i, name)| {
+                    w.write_model(i, &format!("models/checkpoints/{name}.safetensors"), &content)
+                })
                 .collect();
             let plan = w.plan(&installs);
             if vault_elsewhere {
                 vault_on_another_drive(&w);
             }
             run_apply(&w, &plan);
+            let finished_at = w.store.apply("ap-1").unwrap().unwrap().finished_at;
+            assert!(
+                !w.store.vault_files().unwrap()[0].aliases.is_empty(),
+                "the vault must carry a second name for this test to mean anything"
+            );
             let when = format!("vault elsewhere {vault_elsewhere}, stopped at check {n}");
 
             let result = applier(&w).revert("ap-1", &CancelToken::stopping_at_check(n), &NullSink);
@@ -1073,6 +1083,15 @@ fn an_undo_stopped_at_any_point_leaves_every_model_loadable() {
             let record = w.store.apply("ap-1").unwrap().unwrap();
             assert_eq!(record.state, ApplyState::PartlyReverted, "{when}");
             assert!(record.revertible, "{when}");
+            assert_eq!(record.finished_at, finished_at, "{when}: a stopped undo rewrote when the run finished");
+
+            // What the vault screen says about a partly undone run must be
+            // true: every model loads, so nothing may be reported broken.
+            let health = crate::vault::Vault::new(&w.store, &w.platform).health().unwrap();
+            assert!(
+                health.ok && health.foreign_files.is_empty(),
+                "{when}: the health check reports trouble on a tree where every model loads: {health:?}"
+            );
 
             let back = paths
                 .iter()
@@ -1976,4 +1995,3 @@ fn an_unsafe_vault_path_reaches_the_person_as_what_it_is() {
         BlockReason::UnsafeVaultPath
     );
 }
-
