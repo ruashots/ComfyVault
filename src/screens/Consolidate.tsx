@@ -16,6 +16,7 @@ import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
 import { ApplyDone } from "~/screens/ApplyDone";
 import { openUndoBox } from "~/modals/undo";
+import { UndoStopped } from "~/screens/UndoStopped";
 import type { BlockedRow, PlanGroup } from "~/ipc/contract";
 
 export function ConsolidateScreen() {
@@ -40,7 +41,17 @@ export function ConsolidateScreen() {
         when={!app.applyProgress() && !app.revertProgress()}
         fallback={<ApplyRunning />}
       >
-        <Show when={!app.lastApply()} fallback={<ApplyDone />}>
+        <Show
+          when={!app.lastApply()}
+          fallback={
+            <Show
+              when={app.lastApply()!.state === "partlyReverted"}
+              fallback={<ApplyDone />}
+            >
+              <UndoStopped />
+            </Show>
+          }
+        >
           <Show when={!app.scanPredatesUndo()} fallback={<StaleAfterUndo />}>
             <Show
               when={app.planView()}

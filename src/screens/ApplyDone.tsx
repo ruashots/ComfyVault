@@ -14,6 +14,7 @@ const HOW_IT_ENDED: Record<ApplyState, string> = {
   completedWithErrors: "finished, with some files left alone",
   cancelled: "stopped when you asked",
   interrupted: "stopped part way",
+  partlyReverted: "undo stopped part way",
   reverted: "undone",
 };
 

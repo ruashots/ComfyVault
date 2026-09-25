@@ -520,6 +520,11 @@ export interface RevertProgress {
 /** What undoing a run will cost, read before it starts. */
 export interface RevertPreview {
   applyId: string;
+  /**
+   * Files of this run that are real files at their original paths again, read
+   * off the disk. Above zero after an undo that stopped part way.
+   */
+  filesAlreadyBack: number;
   /** Put back by a rename. Instant, and they take no room. */
   filesRenamedBack: number;
   /** Put back by copying the vault file. These take the time and the room. */
@@ -554,6 +559,12 @@ export type ApplyState =
   | "completedWithErrors"
   | "cancelled"
   | "interrupted"
+  /**
+   * An undo started and did not finish: it was stopped, it failed, or the app
+   * closed. Every path holds either its real file or a working link, and
+   * undoing again finishes the rest.
+   */
+  | "partlyReverted"
   | "reverted";
 
 export interface ApplyRecord {

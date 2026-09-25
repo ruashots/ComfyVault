@@ -169,6 +169,7 @@ function Applying() {
  * before the first step, so this screen replaces the finished one at once.
  */
 function Undoing(props: { progress: RevertProgress }) {
+  const app = useApp();
   const p = () => props.progress;
   const overall = () => {
     if (p().bytesToCopy > 0) return p().bytesCopied / p().bytesToCopy;
@@ -243,7 +244,24 @@ function Undoing(props: { progress: RevertProgress }) {
             down as it ran. Every file goes back to the path it came from, and
             the vault keeps nothing this run put in it. A copy the run removed is
             copied back out of the vault, and those copies are most of the time
-            an undo takes.
+            an undo takes. Stopping leaves the file it is part way through as it
+            was, behind its link. Everything already put back stays back.
+          </div>
+
+          <div style={{ "margin-top": "14px" }}>
+            <button
+              class="btn dng"
+              onClick={() =>
+                void app.engine.cancelApply(p().applyId).then(() =>
+                  app.actions.showToast(
+                    "Stopping now · everything already put back stays back",
+                  ),
+                )
+              }
+            >
+              <Icon name="stop" size={13} />
+              Stop now
+            </button>
           </div>
         </div>
       </div>

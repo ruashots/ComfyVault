@@ -664,7 +664,9 @@ export function createAppStore(engine: Engine): AppStore {
     }),
     engine.onRevertError((error) => {
       setRevertProgress(null);
-      showToast(error.message, "bad");
+      // A stop the person asked for is not a failure. The Stop button already
+      // said it is stopping, and the screen that follows says where it got to.
+      if (error.code !== "cancelled") showToast(error.message, "bad");
       // Steps already undone stay undone, so what is on disk has changed.
       void refresh();
     }),

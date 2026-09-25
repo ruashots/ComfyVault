@@ -59,9 +59,10 @@ describe("the screen while a run is undone", () => {
     expect(text()).not.toContain("Applying");
     expect(text()).not.toContain("Moving and linking");
     expect(text()).not.toContain("renamed rather than copied");
-    // Stopping an undo half way leaves a tree that is neither the run nor the
-    // world before it, and nothing describes that state, so it is not offered.
-    expect(screen.queryByRole("button", { name: /Stop now/ })).toBeNull();
+    // A person who pressed Undo by mistake can stop it, and is told what a
+    // stop keeps, in the words the run uses for its own stop.
+    expect(screen.getByRole("button", { name: /Stop now/ })).toBeTruthy();
+    expect(text()).toContain("Everything already put back stays back.");
     // The rail beside it says the same thing, not what the run freed.
     expect(text()).toContain("putting files back");
     expect(text()).not.toContain("freed just now");
@@ -227,6 +228,7 @@ describe("the Undo box", () => {
     // installs' drive, so this is read from the engine's sample shape directly.
     const line = costLine({
       applyId: "apply-1",
+      filesAlreadyBack: 0,
       filesRenamedBack: 0,
       filesCopiedBack: 3,
       bytesToCopy: 13_876_297_728,
@@ -237,5 +239,76 @@ describe("the Undo box", () => {
     expect(line).not.toContain("0 files come back at once");
     expect(line).not.toContain("by a rename");
     expect(line).toContain("3 files have to be copied back out of the vault");
+  });
+});
+
+describe("an undo stopped part way", () => {
+  it("says what is back, what is still in the vault, and that both load", async () => {
+    const h = await startUndo();
+    await advance(h, 40);
+    const reached = h.app.revertProgress()!;
+    expect(reached.filesPutBack).toBeGreaterThan(0);
+    expect(reached.filesPutBack).toBeLessThan(reached.filesToPutBack);
+
+    await userEvent.click(screen.getByRole("button", { name: /Stop now/ }));
+    h.engine.devAdvance(1);
+    await waitFor(() => h.app.revertProgress() === null);
+    await waitFor(() => h.app.lastApply()?.state === "partlyReverted");
+    await waitFor(() => text().includes("Where it stopped"));
+
+    const preview = await h.engine.previewRevert(h.app.lastApply()!.applyId);
+    const rest = preview.filesRenamedBack + preview.filesCopiedBack;
+    expect(preview.filesAlreadyBack).toBe(reached.filesPutBack);
+    expect(preview.filesAlreadyBack + rest).toBe(reached.filesToPutBack);
+
+    expect(text()).toContain("undo stopped part way");
+    expect(text()).toContain(`Back in place${preview.filesAlreadyBack} files`);
+    expect(text()).toContain(`Still in the vault${rest} files`);
+    expect(text()).toContain("every model still loads in ComfyUI");
+    // A stop is not a failure, and the finished screen does not claim the run
+    // is intact.
+    expect(text()).not.toContain("The operation was cancelled");
+    expect(text()).not.toContain("copies stopped taking room");
+    expect(text()).toContain("Stopping now · everything already put back stays back");
+    expect(text()).toContain("undo stopped part way");
+  });
+
+  it("undoes the rest through the same box, from where it stopped", async () => {
+    const h = await startUndo();
+    await advance(h, 40);
+    await userEvent.click(screen.getByRole("button", { name: /Stop now/ }));
+    h.engine.devAdvance(1);
+    await waitFor(() => text().includes("Where it stopped"));
+
+    await userEvent.click(screen.getByRole("button", { name: /Undo the rest/ }));
+    await waitFor(() => document.querySelector('[role="dialog"]') !== null);
+    const preview = await h.engine.previewRevert(h.app.lastApply()!.applyId);
+    // The box states what is left, not the whole run again.
+    expect(dialogText()).toContain(`${fmt(preview.bytesToCopy)} in all`);
+    await userEvent.click(screen.getByRole("button", { name: /Undo the run/ }));
+    await waitFor(() => document.querySelector('[role="dialog"]') === null);
+
+    h.engine.devAdvance(1);
+    await waitFor(() => h.app.revertProgress() !== null);
+    expect(h.app.revertProgress()!.filesToPutBack).toBe(
+      preview.filesRenamedBack + preview.filesCopiedBack,
+    );
+    h.engine.devFinish();
+    await waitFor(() => h.app.lastApply() === null && h.app.revertProgress() === null);
+    await waitFor(() => text().includes("Your installs changed since the last scan"));
+  });
+
+  it("tells Home and the rail the undo stopped, not that space was freed", async () => {
+    const h = await startUndo();
+    await advance(h, 40);
+    await userEvent.click(screen.getByRole("button", { name: /Stop now/ }));
+    h.engine.devAdvance(1);
+    await waitFor(() => h.app.lastApply()?.state === "partlyReverted");
+
+    h.app.actions.go("home");
+    await waitFor(() => text().includes("Instances"));
+    expect(text()).toContain("An undo stopped part way.");
+    expect(text()).not.toContain("freed just now");
+    expect(text()).not.toContain("copies are now links");
   });
 });

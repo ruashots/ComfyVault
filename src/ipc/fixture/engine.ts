@@ -234,6 +234,8 @@ export class FixtureEngine implements Engine {
    * compressed model occupies far less than its size, and so does its copy.
    */
   private revertRoomBytes: number | null = null;
+  /** How many of each run's undo steps are done, kept across a stopped undo. */
+  private revertStepsDone = new Map<string, number>();
   /** The groups each run finished, which are what undoing it puts back. */
   private appliedGroups = new Map<string, PlanGroup[]>();
   /** Vault files this run created that were renamed after it finished. */
@@ -986,7 +988,11 @@ export class FixtureEngine implements Engine {
     this.requireVault();
     const refusal = this.revertRefusal();
     if (refusal) throw refusal;
-    const steps = this.revertSteps(applyId);
+    const all = this.revertSteps(applyId);
+    const done = this.revertStepsDone.get(applyId) ?? 0;
+    // What a stopped undo left to do. The files it already put back are read
+    // from the disk by the engine, so they survive a restart.
+    const steps = all.slice(done);
     // Each copy takes room on the drive it goes back to.
     const perDrive = new Map<string, number>();
     for (const st of steps) {
@@ -997,6 +1003,7 @@ export class FixtureEngine implements Engine {
     const drives = await this.listDrives();
     return {
       applyId,
+      filesAlreadyBack: all.slice(0, done).filter((st) => st.action !== "removingLink").length,
       filesRenamedBack: steps.filter((st) => st.action === "renamingBack").length,
       filesCopiedBack: steps.filter((st) => st.action === "copyingBack").length,
       bytesToCopy: steps.reduce((sum, st) => sum + st.bytes, 0),
@@ -1020,10 +1027,17 @@ export class FixtureEngine implements Engine {
     if (refusal) throw refusal;
     const before = this.worldBeforeApply!;
     this.busy = { kind: "revert", id: applyId };
+    this.applyCancelling = false;
+    // The engine writes this as the undo starts, so a stop, a failure or a
+    // closed app leaves the run saying it is part undone.
+    this.applies = this.applies.map((a) =>
+      a.applyId === applyId ? { ...a, state: "partlyReverted" as const } : a,
+    );
 
-    // Only the copies take time, so time here follows their bytes.
+    // Only the copies take time, so time here follows their bytes. A stopped
+    // undo carries on from where it stopped.
     type Step = ReturnType<FixtureEngine["revertSteps"]>[number];
-    const steps = this.revertSteps(applyId);
+    const steps = this.revertSteps(applyId).slice(this.revertStepsDone.get(applyId) ?? 0);
     const bytesToCopy = steps.reduce((sum, st) => sum + st.bytes, 0);
     const filesToPutBack = steps.filter((st) => st.action !== "removingLink").length;
     const ticks = REVERT_MS / TICK_MS;
@@ -1037,12 +1051,21 @@ export class FixtureEngine implements Engine {
 
     const complete = (st: Step) => {
       index += 1;
+      this.revertStepsDone.set(applyId, (this.revertStepsDone.get(applyId) ?? 0) + 1);
       intoStep = 0;
       if (st.action === "removingLink") linksRemoved += 1;
       else filesPutBack += 1;
     };
 
     const step = () => {
+      // A stop leaves the file it is part way through as it was, behind its
+      // link, and everything already put back stays back.
+      if (this.applyCancelling) {
+        this.stopApplyTimer();
+        this.busy = null;
+        this.revertErrorEvent.emit(error("cancelled", "The operation was cancelled."));
+        return;
+      }
       elapsed += TICK_MS;
       let budget = perTick > 0 ? perTick : Infinity;
       let instant = perTick > 0 ? Infinity : Math.ceil(steps.length / ticks);

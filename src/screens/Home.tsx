@@ -320,7 +320,29 @@ function HomeReport() {
                   />
                 </div>
 
-                <Show when={run()} fallback={<PlanHero afterFree={afterFree()} />}>
+                <Show when={run()?.state === "partlyReverted"}>
+                  <div class="hero">
+                    <div class="txt">
+                      <div class="l1">An undo stopped part way.</div>
+                      <div class="l2">
+                        Some files are back where they were and the rest are still in
+                        the vault behind their links. Every model still loads in
+                        ComfyUI.
+                      </div>
+                    </div>
+                    <button class="btn" onClick={() => app.actions.go("consolidate")}>
+                      See where it stopped
+                    </button>
+                  </div>
+                </Show>
+                <Show
+                  when={run()?.state !== "partlyReverted" && run()}
+                  fallback={
+                    <Show when={!run()}>
+                      <PlanHero afterFree={afterFree()} />
+                    </Show>
+                  }
+                >
                   {(finished) => (
                     <div class="hero done">
                       <div class="big">
