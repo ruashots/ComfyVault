@@ -203,18 +203,6 @@ fn convert(v: &ApiVersion, sha256: &str, ambiguous: bool) -> ModelMetadata {
             .and_then(|f| f.download_url.clone())
             .or_else(|| v.download_url.clone())
             .and_then(|u| safe_download_url(&u)),
-        preview_image_urls: v.images.iter().filter_map(|i| i.url.as_deref().and_then(safe_image_url)).collect(),
-        preview_images: v
-            .images
-            .iter()
-            .filter_map(|i| {
-                Some(super::PreviewImage {
-                    url: i.url.as_deref().and_then(safe_image_url)?,
-                    nsfw_level: i.nsfw_level.unwrap_or(0),
-                    kind: i.kind.clone().unwrap_or_default(),
-                })
-            })
-            .collect(),
         ambiguous,
     }
 }
@@ -230,30 +218,6 @@ fn safe_download_url(url: &str) -> Option<String> {
     let host = rest.split(['/', '?', '#']).next()?.split('@').next_back()?;
     let host = host.split(':').next()?.to_lowercase();
     (host == "civitai.com" || host.ends_with(".civitai.com")).then(|| url.to_string())
-}
-
-/// The only places a Civitai picture is loaded from: the image host, and the
-/// file host it redirects every picture to.
-///
-/// The window's content rules (`img-src` in `src-tauri/tauri.conf.json`) allow
-/// exactly these, and a test holds the two lists to each other. Chromium
-/// checks the rules again after a redirect, so the redirect target has to be
-/// allowed too, or no picture loads at all.
-pub const PICTURE_ORIGINS: [&str; 2] = ["https://image.civitai.com", "https://blobs-b2.civitai.com"];
-
-/// Keeps a picture address only when it is on one of [`PICTURE_ORIGINS`].
-///
-/// The answer comes from the network, and the window loads these addresses.
-/// A check that lives only in the window's rules opens the moment those rules
-/// are widened. Anything with a user part, a port, plain http, or another host
-/// is dropped.
-fn safe_image_url(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://")?;
-    let authority = rest.split(['/', '?', '#']).next()?;
-    PICTURE_ORIGINS
-        .iter()
-        .any(|o| o.strip_prefix("https://").is_some_and(|host| authority.eq_ignore_ascii_case(host)))
-        .then(|| url.to_string())
 }
 
 /// A Civitai model page, exactly as the engine builds it: the model's number,
@@ -273,8 +237,6 @@ fn safe_page_url(url: &str) -> Option<String> {
 /// vault's database. A row cached by an older build, or written by whoever
 /// made the vault, is not trusted to have been checked when it was stored.
 pub fn checked(mut m: super::ModelMetadata) -> super::ModelMetadata {
-    m.preview_image_urls = m.preview_image_urls.iter().filter_map(|u| safe_image_url(u)).collect();
-    m.preview_images.retain(|p| safe_image_url(&p.url).is_some());
     m.download_url = m.download_url.as_deref().and_then(safe_download_url);
     m.page_url = m.page_url.as_deref().and_then(safe_page_url);
     m
@@ -316,8 +278,6 @@ pub struct ApiVersion {
     pub model: Option<ApiModel>,
     #[serde(default)]
     pub files: Vec<ApiFile>,
-    #[serde(default)]
-    pub images: Vec<ApiImage>,
     pub download_url: Option<String>,
 }
 
@@ -342,15 +302,6 @@ pub struct ApiFile {
 pub struct ApiHashes {
     #[serde(rename = "SHA256")]
     pub sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiImage {
-    pub url: Option<String>,
-    pub nsfw_level: Option<u32>,
-    #[serde(rename = "type")]
-    pub kind: Option<String>,
 }
 
 #[cfg(test)]

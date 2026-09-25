@@ -1860,33 +1860,21 @@ type ModelMetadata = {
   civitaiVersionId: number | null
   pageUrl: string | null
   downloadUrl: string | null
-  previewImageUrls: string[]
-  previewImages: PreviewImage[]    // the same pictures, each with its own rating
   ambiguous: boolean               // the hash matched more than one model version
-}
-
-type PreviewImage = {
-  url: string
-  nsfwLevel: number                // Civitai's rating of this picture. 0: none sent
-  type: string                     // 'image' or 'video', as Civitai sends it. '': none sent
 }
 ```
 
-`previewImages` holds the pictures of `previewImageUrls`, in Civitai's order,
-each with the rating and kind Civitai gives it. Civitai rates every picture on
-its own, and a version whose own `nsfwLevel` is high can still show pictures
-that are fine for anyone. A picture Civitai sent without a URL is left out of
-both lists, and so is one whose address is not on `https://image.civitai.com`
-or `https://blobs-b2.civitai.com`, the file host the image host redirects every
-picture to. The window's content rules allow pictures from exactly those two
-places, and a test holds the two lists to each other.
+The engine keeps no picture of a model. The app shows none, so nothing that
+could make the window load an image from the network is collected. The
+window's content rules allow no remote image at all, and a test holds both of
+them, the one in `tauri.conf.json` and the one `index.html` carries, to that.
 
 A cached answer is checked again every time it is read, whoever wrote it.
-Picture addresses are held to the rule above, `downloadUrl` to Civitai over
-HTTPS, and `pageUrl` to exactly the page the engine builds,
-`https://civitai.com/models/<number>` with an optional
+`downloadUrl` is held to Civitai over HTTPS, and `pageUrl` to exactly the page
+the engine builds, `https://civitai.com/models/<number>` with an optional
 `?modelVersionId=<number>`. An address that fails is dropped, and `pageUrl` or
-`downloadUrl` is then null. An answer cached by an older build has an empty `previewImages`.
+`downloadUrl` is then null. Picture fields in an answer cached by an older
+build are ignored when it is read.
 
 ### 10.2 `fetch_metadata_batch`
 

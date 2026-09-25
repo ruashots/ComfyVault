@@ -71,7 +71,6 @@ fn a_real_shaped_answer_is_read_into_the_fields_the_ui_shows() {
     assert_eq!(m.civitai_version_id, Some(1558543));
     assert_eq!(m.nsfw_level, 3);
     assert!(!m.nsfw);
-    assert_eq!(m.preview_image_urls.len(), 2);
     assert_eq!(
         m.page_url.as_deref(),
         Some("https://civitai.com/models/264290?modelVersionId=1558543")
@@ -121,7 +120,6 @@ fn an_answer_with_every_optional_field_null_still_parses() {
     assert_eq!(m.base_model, None);
     assert_eq!(m.nsfw_level, 0);
     assert!(m.trigger_words.is_empty());
-    assert!(m.preview_image_urls.is_empty());
     assert_eq!(m.page_url, None, "no model id means no page to link to");
 }
 
@@ -367,68 +365,6 @@ fn an_empty_batch_asks_nothing() {
 }
 
 #[test]
-fn each_picture_keeps_its_own_rating_and_kind_in_civitais_order() {
-    // Civitai rates each picture on its own. Measured on the batch answer for
-    // DreamShaper 8: 2, 1, 1, 1, 1, 1, 8, 1, 1, 1, while the version says 11.
-    // A picture with no rating is kept with 0, which is not a rating.
-    let json = r#"{"id":1,"modelId":2,"files":[],"images":[
-        {"url":"https://image.civitai.com/a/1.jpeg","nsfwLevel":2,"type":"image"},
-        {"url":"https://image.civitai.com/a/2.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://image.civitai.com/a/3.mp4","nsfwLevel":8,"type":"video"},
-        {"url":"https://image.civitai.com/a/4.jpeg"},
-        {"nsfwLevel":1,"type":"image"}
-    ]}"#;
-    let m = convert(&parse_version(json), SHA_A, false);
-    let got: Vec<(&str, u32, &str)> =
-        m.preview_images.iter().map(|p| (p.url.as_str(), p.nsfw_level, p.kind.as_str())).collect();
-    assert_eq!(
-        got,
-        vec![
-            ("https://image.civitai.com/a/1.jpeg", 2, "image"),
-            ("https://image.civitai.com/a/2.jpeg", 1, "image"),
-            ("https://image.civitai.com/a/3.mp4", 8, "video"),
-            ("https://image.civitai.com/a/4.jpeg", 0, ""),
-        ]
-    );
-    assert_eq!(m.preview_image_urls.len(), 4, "the plain list stays as it was");
-}
-
-#[test]
-fn a_cached_answer_from_an_older_build_reads_with_no_pictures_rated() {
-    let mut v = serde_json::to_value(crate::metadata::ModelMetadata::not_found(SHA_A)).unwrap();
-    v.as_object_mut().unwrap().remove("previewImages");
-    let m: crate::metadata::ModelMetadata = serde_json::from_value(v).unwrap();
-    assert!(m.preview_images.is_empty());
-}
-
-#[test]
-fn only_pictures_on_civitais_image_host_over_https_are_kept() {
-    let json = r#"{"id":1,"modelId":2,"files":[],"images":[
-        {"url":"https://image.civitai.com/a/1.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"http://image.civitai.com/a/2.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://evil.example/a/3.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://image.civitai.com.evil.example/4.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://image.civitai.com@evil.example/5.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://image.civitai.com:8443/6.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://civitai.com/7.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://IMAGE.civitai.com/a/8.jpeg","nsfwLevel":2,"type":"image"},
-        {"url":"https://blobs-b2.civitai.com/a/9.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://blobs-b3.civitai.com/a/10.jpeg","nsfwLevel":1,"type":"image"}
-    ]}"#;
-    let m = convert(&parse_version(json), SHA_A, false);
-    let kept: Vec<&str> = m.preview_images.iter().map(|p| p.url.as_str()).collect();
-    assert_eq!(
-        kept,
-        vec![
-            "https://image.civitai.com/a/1.jpeg",
-            "https://IMAGE.civitai.com/a/8.jpeg",
-            "https://blobs-b2.civitai.com/a/9.jpeg",
-        ]
-    );
-    assert_eq!(m.preview_image_urls, kept);
-}
-
-#[test]
 fn a_cached_answer_is_held_to_the_same_rules_when_it_is_read() {
     // A row cached before the picture check existed, or written by whoever
     // made the vault, reached the window as it was stored.
@@ -437,18 +373,11 @@ fn a_cached_answer_is_held_to_the_same_rules_when_it_is_read() {
     m.found = true;
     m.page_url = Some("https://evil.example/phish".into());
     m.download_url = Some("https://evil.example/file".into());
-    m.preview_image_urls = vec!["https://evil.example/1.jpeg".into(), "https://image.civitai.com/2.jpeg".into()];
-    m.preview_images = vec![
-        crate::metadata::PreviewImage { url: "https://evil.example/1.jpeg".into(), nsfw_level: 1, kind: "image".into() },
-        crate::metadata::PreviewImage { url: "https://image.civitai.com/2.jpeg".into(), nsfw_level: 1, kind: "image".into() },
-    ];
     w.store.put_metadata(&m).unwrap();
 
     let read = w.store.metadata(SHA_A).unwrap().unwrap();
     assert_eq!(read.page_url, None);
     assert_eq!(read.download_url, None);
-    assert_eq!(read.preview_image_urls, vec!["https://image.civitai.com/2.jpeg".to_string()]);
-    assert_eq!(read.preview_images.len(), 1);
 
     // A page the engine builds itself survives.
     m.page_url = Some("https://civitai.com/models/4384?modelVersionId=128713".into());
@@ -459,4 +388,23 @@ fn a_cached_answer_is_held_to_the_same_rules_when_it_is_read() {
         w.store.put_metadata(&m).unwrap();
         assert_eq!(w.store.metadata(SHA_A).unwrap().unwrap().page_url, None, "{bad}");
     }
+}
+
+#[test]
+fn no_picture_is_kept_and_an_older_cached_answer_with_pictures_still_reads() {
+    // The app shows no Civitai picture, so the engine keeps none: nothing
+    // that could reach the window is collected in the first place.
+    let json = r#"{"id":1,"modelId":2,"files":[],"images":[
+        {"url":"https://image.civitai.com/a/1.jpeg","nsfwLevel":1,"type":"image"}
+    ]}"#;
+    let m = convert(&parse_version(json), SHA_A, false);
+    let sent = serde_json::to_value(&m).unwrap();
+    assert!(sent.get("previewImageUrls").is_none() && sent.get("previewImages").is_none(), "{sent}");
+
+    // A row cached by a build that kept pictures still reads.
+    let mut old = sent;
+    old["previewImageUrls"] = serde_json::json!(["https://evil.example/1.jpeg"]);
+    old["previewImages"] = serde_json::json!([{"url":"https://evil.example/1.jpeg","nsfwLevel":1,"type":"image"}]);
+    let read: crate::metadata::ModelMetadata = serde_json::from_value(old).unwrap();
+    assert!(serde_json::to_value(&read).unwrap().get("previewImages").is_none());
 }

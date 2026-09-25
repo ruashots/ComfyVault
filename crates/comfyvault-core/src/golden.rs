@@ -178,20 +178,6 @@ fn metadata() -> ModelMetadata {
         civitai_version_id: Some(135_867),
         page_url: Some("https://civitai.com/models/58390".into()),
         download_url: Some("https://civitai.com/api/download/models/135867".into()),
-        preview_image_urls: vec![
-            "https://image.civitai.com/preview/58390-a.jpeg".into(),
-            "https://image.civitai.com/preview/58390-b.jpeg".into(),
-            "https://image.civitai.com/preview/58390-c.jpeg".into(),
-        ],
-        // Rated one by one, as Civitai does: a PG-13, a PG, and one that is not.
-        preview_images: [(2, "a"), (1, "b"), (8, "c")]
-            .into_iter()
-            .map(|(level, n)| crate::metadata::PreviewImage {
-                url: format!("https://image.civitai.com/preview/58390-{n}.jpeg"),
-                nsfw_level: level,
-                kind: "image".into(),
-            })
-            .collect(),
         ambiguous: false,
     }
 }
@@ -1412,27 +1398,38 @@ fn the_sample_values_that_come_from_the_operating_system_have_the_shape_it_gives
 }
 
 #[test]
-fn the_window_loads_pictures_from_exactly_the_places_the_engine_keeps() {
-    // Two lists of the same thing drift. The engine drops a picture address
-    // that is not on one of its origins, and the window's content rules
-    // refuse to load from anywhere else, redirects included. If the window
-    // allows less, no picture loads; if it allows more, the engine's check is
-    // the only one left.
+fn the_window_loads_no_picture_from_anywhere_on_the_network() {
+    // The app shows no remote picture, so neither content rule may name a
+    // place on the network where an image can come from: not the one Tauri
+    // applies, and not the one the page carries itself. A remote host in
+    // either would let an address from a model's details reach a third party.
     let conf: serde_json::Value = serde_json::from_str(&read_repo_file("src-tauri/tauri.conf.json")).unwrap();
-    let csp = conf["app"]["security"]["csp"].as_str().expect("the window has content rules");
-    let img_src = csp
-        .split(';')
-        .map(str::trim)
-        .find_map(|d| d.strip_prefix("img-src "))
-        .expect("the rules name where pictures load from");
-    // The app's own local protocol, http://asset.localhost, is not a place
-    // on the network.
-    let mut remote: Vec<&str> = img_src
-        .split_whitespace()
-        .filter(|t| t.starts_with("https:") || (t.starts_with("http:") && !t.ends_with(".localhost")))
-        .collect();
-    remote.sort_unstable();
-    let mut engine: Vec<&str> = crate::metadata::civitai::PICTURE_ORIGINS.to_vec();
-    engine.sort_unstable();
-    assert_eq!(remote, engine, "img-src: {img_src}");
+    let from_tauri = conf["app"]["security"]["csp"].as_str().expect("the window has content rules").to_string();
+    let page = read_repo_file("index.html");
+    let from_page = page
+        .split("http-equiv=\"Content-Security-Policy\" content=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the page carries its own content rules")
+        .to_string();
+
+    for (whose, csp) in [("tauri.conf.json", from_tauri), ("index.html", from_page)] {
+        let img_src = csp
+            .split(';')
+            .map(str::trim)
+            .find_map(|d| d.strip_prefix("img-src "))
+            .unwrap_or_else(|| panic!("{whose}: the rules do not say where images load from"));
+        // The app's own local protocol, http://asset.localhost, is not a
+        // place on the network.
+        let remote: Vec<&str> = img_src
+            .split_whitespace()
+            .filter(|t| {
+                !t.starts_with('\'')
+                    && *t != "data:"
+                    && *t != "asset:"
+                    && !(t.starts_with("http://") && t.ends_with(".localhost"))
+            })
+            .collect();
+        assert!(remote.is_empty(), "{whose}: img-src lets images load from {remote:?}");
+    }
 }
