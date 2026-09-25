@@ -307,15 +307,26 @@ function HomeReport() {
                     label="Models on disk"
                     note={`${fmt(t().uniqueBytes)} if kept once`}
                   />
+                  {/* Measured against the real engine: with no saved workflow
+                      file there is nothing to search, and every model comes
+                      back as not found and not searched. Counting those as
+                      zero unused says every model is in use, which nobody
+                      knows. */}
                   <Tile
                     value={
-                      app.usage().size > 0 ? String(app.unusedCount()) : "not yet"
+                      app.usage().size === 0
+                        ? "not yet"
+                        : app.nothingSearched()
+                          ? "not known"
+                          : String(app.unusedCount())
                     }
                     label="Not used"
                     note={
-                      app.usage().size > 0
-                        ? "name not found in any workflow"
-                        : "no workflow files were read"
+                      app.usage().size === 0
+                        ? "no workflow files were read"
+                        : app.nothingSearched()
+                          ? "no saved workflow files to search"
+                          : "name not found in any workflow"
                     }
                   />
                 </div>

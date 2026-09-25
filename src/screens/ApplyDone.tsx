@@ -55,8 +55,14 @@ export function ApplyDone() {
             </div>
             <div class="txt">
               <div class="l1">
-                Back on drive {app.vaultVolume()}. {run().linksCreated} copies stopped
-                taking room.
+                {/* Every place gets a link, the one whose file moved into the
+                    vault included, and that file still takes room there. Only
+                    the other copies were removed. Measured against the real
+                    engine: three installs holding three models moved 3 files
+                    and made 9 links, so 6 copies were removed. */}
+                Back on drive {app.vaultVolume()}.{" "}
+                {removedCopies(run())}{" "}
+                {removedCopies(run()) === 1 ? "copy" : "copies"} stopped taking room.
               </div>
               <div class="l2">
                 <Show
@@ -218,3 +224,12 @@ export function ApplyDone() {
   );
 }
 
+/**
+ * The copies a run removed. Each place that held a model now holds a link, so
+ * `linksCreated` counts every place, and `filesMoved` counts the one copy of
+ * each model that became the vault file. A model the vault already held moves
+ * nothing, so all of its copies are counted as removed.
+ */
+export function removedCopies(run: { linksCreated: number; filesMoved: number }): number {
+  return Math.max(0, run.linksCreated - run.filesMoved);
+}

@@ -129,6 +129,37 @@ describe("what the workflow check actually did", () => {
 });
 
 describe("when there was no saved workflow file to search", () => {
+  it("shows no count of unused models on Home, because nothing was searched", async () => {
+    const engine = new FixtureEngine();
+    engine.devSetWorkflowsOnDisk(0);
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => harness!.app.usage().size > 0);
+    await waitFor(() => harness!.app.nothingSearched());
+    harness.app.actions.go("home");
+    await waitFor(() => (document.body.textContent ?? "").includes("Instances"));
+
+    const tile = [...document.querySelectorAll(".tile")].find((t) =>
+      (t.textContent ?? "").includes("Not used"),
+    )!;
+    const text = (tile.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("not known");
+    expect(text).toContain("no saved workflow files to search");
+    expect(text).not.toMatch(/\b0\b/);
+    expect(text).not.toContain("name not found in any workflow");
+  });
+
+  it("counts unused models on Home once workflows were searched", async () => {
+    harness = await renderWithApp(() => <App />, { engine: new FixtureEngine() });
+    await waitFor(() => harness!.app.usage().size > 0);
+    harness.app.actions.go("home");
+    await waitFor(() => (document.body.textContent ?? "").includes("Instances"));
+    const tile = [...document.querySelectorAll(".tile")].find((t) =>
+      (t.textContent ?? "").includes("Not used"),
+    )!;
+    expect(tile.textContent).toContain(String(harness.app.unusedCount()));
+    expect(tile.textContent).toContain("name not found in any workflow");
+  });
+
   it("says so rather than calling every model unused", async () => {
     const engine = new FixtureEngine();
     engine.devSetWorkflowsOnDisk(0);

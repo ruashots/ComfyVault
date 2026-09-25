@@ -172,6 +172,18 @@ describe("the numbers on the finished screen", () => {
     expect(text).not.toContain(fmt(run.vaultFreeBytesAfter! - run.bytesFreed));
   });
 
+  it("counts the copies the run removed, not the links it made", async () => {
+    const h = await runApply();
+    await finish(h);
+    const run = h.app.lastApply()!;
+    // Every place got a link, the one whose file moved into the vault too, and
+    // that file still takes room there.
+    expect(run.linksCreated).toBeGreaterThan(run.filesMoved);
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain(`${run.linksCreated - run.filesMoved} copies stopped taking room`);
+    expect(text).not.toContain(`${run.linksCreated} copies stopped taking room`);
+  });
+
   it("says which number is the run's and which is the drive's", async () => {
     const h = await runApply();
     await finish(h);
