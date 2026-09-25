@@ -60,6 +60,19 @@ fn addresses_outside_the_scope_are_refused() {
         "http://127.0.0.1:9/api/prompt",
         "http://127.0.0.1:9/?x=1",
         "http://127.0.0.1:9/#x",
+        // The scope matches the raw text, and a wildcard there also matches
+        // "/", "@", "?" and "#". Each of these ends in "/", as an allowed page
+        // does, so only the digits-only port rule refuses them.
+        // A browser reads the part before "@" as a user name, so the host is
+        // evil.example, or a machine on the network.
+        "http://127.0.0.1:x@evil.example/",
+        "http://127.0.0.1:@evil.example/",
+        "http://127.0.0.1:1@192.0.2.1/cgi-bin/reboot/",
+        "http://127.0.0.1:9/api/prompt/",
+        "http://127.0.0.1:9/?x=1/",
+        "http://127.0.0.1:9/#/",
+        "http://127.0.0.1:/",
+        "http://127.0.0.1:123456/",
     ] {
         let err = open(url).expect_err(url);
         // Refused by the scope itself, not for some other reason.
