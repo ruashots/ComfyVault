@@ -1125,7 +1125,7 @@ type ApplyRecord = {
   applyId: string
   planId: string
   state: 'running' | 'completed' | 'completedWithErrors' | 'cancelled'
-       | 'interrupted' | 'reverted'
+       | 'interrupted' | 'partlyReverted' | 'reverted'
   startedAt: string
   finishedAt: string | null
   groupsRequested: number
@@ -1251,8 +1251,26 @@ A run whose vault is on another drive copies the kept copy back as well. The
 copy is staged beside the place it goes back to, checked, and then renamed into
 place.
 
-`cancel_apply` with the same `applyId` stops an undo. The steps already undone
-stay undone, and the rest stay applied.
+#### An undo that does not finish
+
+`cancel_apply` with the same `applyId` stops an undo, and `revert:error`
+arrives with code `cancelled`. The files already put back stay back. The rest
+stay in the vault behind their links.
+
+**Every path loads in ComfyUI at every moment of an undo.** A file comes back
+by one rename onto the link that stood in its place. A copy is written to a
+temporary file beside that link, checked, and then renamed over it. So a path
+holds either the link or the file, whether the undo finishes, is stopped,
+fails, or the power goes.
+
+`state` is `partlyReverted` from the moment an undo starts until it finishes,
+when it becomes `reverted`. A run still `partlyReverted` when no undo is
+running was stopped, failed, or was cut off when the app closed. `revertible`
+stays true, and `revert_apply` again puts back the rest. `finishedAt` still
+says when the run itself finished.
+
+`preview_revert` on such a run gives `filesAlreadyBack`, and the cost of the
+rest.
 
 #### `preview_revert`
 
@@ -1262,6 +1280,7 @@ cost, without doing it. Call it before the person confirms an undo.
 ```ts
 type RevertPreview = {
   applyId: string
+  filesAlreadyBack: number     // put back by an earlier undo of this run
   filesRenamedBack: number     // instant, and take no room
   filesCopiedBack: number      // take time and room
   bytesToCopy: number          // the size of the files the copies write

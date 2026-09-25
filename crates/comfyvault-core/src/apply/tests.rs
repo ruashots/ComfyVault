@@ -1020,6 +1020,106 @@ fn sparse_models_need_only_the_room_they_really_take() {
     assert!(crate::platform::size_on_disk(&pb).unwrap() < LEN / 4, "the duplicate came back solid");
 }
 
+/// Every place a model was found must load: a real file, or a link that
+/// resolves, holding the model's bytes. An empty place is a model ComfyUI lists
+/// and then cannot load.
+fn every_place_loads(paths: &[PathBuf], content: &[u8], when: &str) {
+    for p in paths {
+        assert!(
+            std::fs::symlink_metadata(p).is_ok(),
+            "{when}: {} holds neither the file nor a link",
+            p.display()
+        );
+        let bytes = std::fs::read(p)
+            .unwrap_or_else(|e| panic!("{when}: {} does not load: {e}", p.display()));
+        assert!(bytes == content, "{when}: {} loads the wrong bytes", p.display());
+    }
+}
+
+#[test]
+fn an_undo_stopped_at_any_point_leaves_every_model_loadable() {
+    // Measured before this: a Stop during a copy back out of the vault left
+    // that model's place empty, because the link was removed before the copy
+    // began. Here the undo is stopped at every point it can be stopped, one
+    // run after another, on one drive and with the vault on another.
+    let mut content = weights("big");
+    content.resize(3 * 1024 * 1024 + 17, 0x5A);
+
+    for vault_elsewhere in [false, true] {
+        let mut stops = 0;
+        for n in 1.. {
+            let w = TestWorld::new();
+            let installs: Vec<_> = ["A", "B", "C"].iter().map(|l| w.add_install(l)).collect();
+            let paths: Vec<PathBuf> = installs
+                .iter()
+                .map(|i| w.write_model(i, "models/checkpoints/m.safetensors", &content))
+                .collect();
+            let plan = w.plan(&installs);
+            if vault_elsewhere {
+                vault_on_another_drive(&w);
+            }
+            run_apply(&w, &plan);
+            let when = format!("vault elsewhere {vault_elsewhere}, stopped at check {n}");
+
+            let result = applier(&w).revert("ap-1", &CancelToken::stopping_at_check(n), &NullSink);
+            every_place_loads(&paths, &content, &when);
+
+            let err = match result {
+                Ok(_) => break,
+                Err(e) => e,
+            };
+            stops += 1;
+            assert_eq!(err.code, ErrorCode::Cancelled, "{when}");
+            let record = w.store.apply("ap-1").unwrap().unwrap();
+            assert_eq!(record.state, ApplyState::PartlyReverted, "{when}");
+            assert!(record.revertible, "{when}");
+
+            let back = paths
+                .iter()
+                .filter(|p| std::fs::symlink_metadata(p).unwrap().file_type().is_file())
+                .count() as u64;
+            let preview = applier(&w).preview_revert("ap-1").unwrap();
+            assert_eq!(preview.files_already_back, back, "{when}");
+            assert_eq!(
+                preview.files_already_back + preview.files_renamed_back + preview.files_copied_back,
+                3,
+                "{when}: already back and still to come must add up to every place"
+            );
+
+            // Undoing again finishes the job.
+            applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+            every_place_loads(&paths, &content, &format!("{when}, then undone again"));
+            for p in &paths {
+                assert!(!w.is_link(p), "{when}: {} is still a link after the second undo", p.display());
+            }
+            assert!(w.store.links().unwrap().is_empty(), "{when}: link records left behind");
+            assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::Reverted);
+        }
+        assert!(stops > 10, "the undo was stopped only {stops} times, the test proves little");
+    }
+}
+
+#[test]
+fn the_link_left_for_the_kept_copy_is_never_taken_for_the_file() {
+    // The kept copy's link now stays until the vault file is renamed over it.
+    // The step that moves it back used to count anything at that path as the
+    // original still being there, and then deleted the vault file: the only
+    // copy. Stopping right after the link's own step is where that bit.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a]);
+    run_apply(&w, &plan);
+
+    // The undo is: remove the link (kept), then move the file back. Stop in
+    // between, then finish.
+    let _ = applier(&w).revert("ap-1", &CancelToken::stopping_at_check(2), &NullSink);
+    assert!(w.is_link(&pa), "the link must still stand in for the file");
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!w.is_link(&pa));
+    assert_eq!(std::fs::read(&pa).unwrap(), weights("m"));
+}
+
 // ---------------------------------------------------------------------------
 // Crash recovery
 //

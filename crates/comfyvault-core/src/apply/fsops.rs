@@ -242,8 +242,14 @@ pub fn stash(path: &Path, tag: &str) -> Result<PathBuf> {
 }
 
 /// Puts a stashed file back where it came from.
+///
+/// A link standing in its place is replaced by the rename itself, so the path
+/// is never empty, not even for an instant.
 pub fn unstash(stash: &Path, original: &Path) -> Result<()> {
-    if original.exists() || std::fs::symlink_metadata(original).is_ok() {
+    let is_link = std::fs::symlink_metadata(original)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if std::fs::symlink_metadata(original).is_ok() && !is_link {
         return Err(VaultError::new(
             ErrorCode::Conflict,
             "Could not put the old file back, because something is in its place.",
@@ -269,13 +275,7 @@ pub fn restore_from_vault(
     cancel: &CancelToken,
     copied: &mut dyn FnMut(u64),
 ) -> Result<()> {
-    if std::fs::symlink_metadata(original).is_ok() {
-        return Err(VaultError::new(
-            ErrorCode::Conflict,
-            "Could not put the file back, because something is in its place.",
-        )
-        .with_path(original));
-    }
+    replaceable(original, vault_file)?;
     if let Some(parent) = original.parent() {
         ensure_dir(parent)?;
     }
@@ -302,6 +302,9 @@ pub fn restore_from_vault(
             .with_detail(format!("expected {expected_sha256}, got {actual}"))
             .with_path(original));
         }
+        // Replaces the link in one step. Removing the link first left the
+        // path empty for as long as the copy took, and for good when the copy
+        // was stopped or failed: ComfyUI then had neither the file nor a link.
         std::fs::rename(&temp, original).ctx(original, "putting the file back")?;
         Ok(())
     })();
@@ -310,6 +313,52 @@ pub fn restore_from_vault(
         let _ = std::fs::remove_file(&temp);
     }
     result
+}
+
+/// Moves a vault file back to the place it came from, replacing the link that
+/// stands there in one step.
+///
+/// On one drive it is a rename. Across drives it is a checked copy staged
+/// beside `place`, renamed over the link, and only then is the vault file
+/// removed. Either way the path holds the link or the file at every moment.
+pub fn move_back(
+    platform: &dyn Platform,
+    vault_file: &Path,
+    place: &Path,
+    expected_sha256: &str,
+    cancel: &CancelToken,
+    copied: &mut dyn FnMut(u64),
+) -> Result<MoveKind> {
+    replaceable(place, vault_file)?;
+    let parent = place.parent().unwrap_or(place);
+    ensure_dir(parent)?;
+    match platform.rename(vault_file, place) {
+        Ok(()) => Ok(MoveKind::Renamed),
+        Err(RenameError::CrossVolume) => {
+            copy_verify_then_remove(platform, vault_file, place, expected_sha256, parent, cancel, copied)?;
+            Ok(MoveKind::Copied)
+        }
+        Err(RenameError::Io(e)) => Err(VaultError::from_io(&e, vault_file, "putting the file back")),
+    }
+}
+
+/// A place a file may be put back into: empty, or holding a link to this
+/// vault file. Anything else there belongs to somebody, and is refused.
+fn replaceable(place: &Path, vault_file: &Path) -> Result<()> {
+    let Ok(meta) = std::fs::symlink_metadata(place) else { return Ok(()) };
+    let ours = meta.file_type().is_symlink()
+        && matches!(
+            (std::fs::canonicalize(place), std::fs::canonicalize(vault_file)),
+            (Ok(a), Ok(b)) if a == b
+        );
+    if ours {
+        return Ok(());
+    }
+    Err(VaultError::new(
+        ErrorCode::Conflict,
+        "Could not put the file back, because something is in its place.",
+    )
+    .with_path(place))
 }
 
 /// The inverse of [`crate::time_util::Timestamp::mtime_nanos`].

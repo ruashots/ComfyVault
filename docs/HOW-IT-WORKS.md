@@ -268,6 +268,11 @@ NTFS compressed file stays compressed, and each file gets back the modification
 time it had before the run. The room an undo takes is therefore what the files
 really occupied, which for a sparse file can be almost nothing.
 
+An undo can be stopped at any moment, and ComfyUI still loads every model.
+Each file comes back by one rename onto the link that stood in its place, so a
+model's path always holds the link or the file, even if the power goes. A
+stopped undo leaves the run partly undone. Undo it again to put back the rest.
+
 A run that was interrupted and then finished is undone as one run. Resuming
 continues the same journal rather than starting a new one, so the whole of it
 comes back.

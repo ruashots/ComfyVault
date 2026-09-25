@@ -182,6 +182,9 @@ pub struct RevertProgress {
 #[serde(rename_all = "camelCase")]
 pub struct RevertPreview {
     pub apply_id: String,
+    /// Files an earlier undo of this run already put back, which is not zero
+    /// only for a run that is partly undone.
+    pub files_already_back: u64,
     /// Put back by a rename. Instant, and they take no room.
     pub files_renamed_back: u64,
     /// Put back by copying the vault file, because their own bytes were
@@ -815,8 +818,9 @@ impl<'a> Applier<'a> {
 
     /// Undoes a list of steps, newest first.
     fn undo_entries(&self, entries: &mut Vec<JournalEntry>, cancel: &CancelToken) -> Result<()> {
+        let refilled = paths_filled_later(entries);
         while let Some(entry) = entries.pop() {
-            self.undo_step(&entry, cancel, &mut |_| {})?;
+            self.undo_step(&entry, &refilled, cancel, &mut |_| {})?;
             let reverted = JournalEntry { state: JournalState::Reverted, ..entry };
             self.store.update_journal(&reverted)?;
         }
@@ -831,9 +835,17 @@ impl<'a> Applier<'a> {
     /// and the disk says how far it got.
     ///
     /// `copied` hears every byte a step copies, so a long copy can be shown.
+    ///
+    /// **A path the person's installs load from is never left empty.** A file
+    /// comes back by one rename onto the link that stood in for it, so the
+    /// path holds the link or the file at every instant, whether the undo
+    /// finishes, is stopped, fails, or the power goes. `refilled` names the
+    /// links a later step of the same undo replaces that way, and those are
+    /// left in place rather than removed ahead of time.
     fn undo_step(
         &self,
         entry: &JournalEntry,
+        refilled: &std::collections::HashSet<PathBuf>,
         cancel: &CancelToken,
         copied: &mut dyn FnMut(u64),
     ) -> Result<()> {
@@ -845,7 +857,13 @@ impl<'a> Applier<'a> {
                 Ok(())
             }
             JournalStep::MoveToVault { from, to, sha256, .. } => {
-                let source_there = std::fs::symlink_metadata(from).is_ok();
+                // A real file, not merely something. The link that stands in
+                // for the moved file is left there until the file replaces
+                // it, and counting that link as "the source is intact" would
+                // delete the only copy, the one in the vault.
+                let source_there = std::fs::symlink_metadata(from)
+                    .map(|m| m.file_type().is_file())
+                    .unwrap_or(false);
                 let vault_there = to.is_file();
                 // The vault path holding *something* is not the same as it
                 // holding the file this step put there. A later in-vault
@@ -860,16 +878,9 @@ impl<'a> Applier<'a> {
                 }
 
                 match (source_there, vault_there) {
-                    // The move happened. Put it back.
-                    //
-                    // The temporary file of a copy goes beside the place it is
-                    // going back to. In the vault's own folder it sat on the
-                    // vault's drive, and a file cannot be renamed from one
-                    // drive onto another, so every undo of a run onto another
-                    // drive copied the file and then failed.
+                    // The move happened. Put it back, over its link.
                     (false, true) => {
-                        let temp_dir = from.parent().unwrap_or(from);
-                        fsops::move_file(self.platform, to, from, sha256, temp_dir, cancel, copied)?;
+                        fsops::move_back(self.platform, to, from, sha256, cancel, copied)?;
                         Ok(())
                     }
                     // The move never happened, or a copy was interrupted before
@@ -896,14 +907,13 @@ impl<'a> Applier<'a> {
                 if !stash.exists() {
                     return Ok(());
                 }
-                // The link may already sit in the original's place, from a
-                // later step that has been undone or is about to be.
-                if self.platform.is_symlink(path) {
-                    self.platform.remove_symlink(path)?;
-                }
+                // Renamed over the link, if one still stands there.
                 fsops::unstash(stash, path)
             }
             JournalStep::CreateLink { link, .. } => {
+                if refilled.contains(link) {
+                    return Ok(());
+                }
                 if self.platform.is_symlink(link) {
                     self.platform.remove_symlink(link)?;
                 }
@@ -914,14 +924,13 @@ impl<'a> Applier<'a> {
                 if stash.exists() {
                     return Ok(());
                 }
-                // The bytes are gone from this path, but the vault holds the
-                // same content by hash, which is why removing them was safe.
-                if self.platform.is_symlink(original) {
-                    self.platform.remove_symlink(original)?;
-                }
-                if std::fs::symlink_metadata(original).is_ok() {
+                // Already a real file: put back by an earlier attempt.
+                if std::fs::symlink_metadata(original).map(|m| m.file_type().is_file()).unwrap_or(false) {
                     return Ok(());
                 }
+                // The bytes are gone from this path, but the vault holds the
+                // same content by hash, which is why removing them was safe.
+                // The copy replaces the link in one rename.
                 fsops::restore_from_vault(vault_path, original, sha256, *mtime_nanos, cancel, copied)
             }
             JournalStep::RemoveLink { link, target } => {
@@ -943,6 +952,7 @@ impl<'a> Applier<'a> {
         sink: &dyn ProgressSink<RevertProgress>,
     ) -> Result<ApplyRecord> {
         let (mut record, mut to_undo) = self.revertible_steps(apply_id)?;
+        let refilled = paths_filled_later(&to_undo);
 
         // Read before anything moves: what each step will cost depends on the
         // disk as the run left it.
@@ -952,6 +962,11 @@ impl<'a> Applier<'a> {
         // has to be copied back out of the vault. Checked first, so a revert
         // does not stop halfway for lack of space.
         self.check_revert_space(&actions)?;
+
+        // Written before the first file moves, so an undo that is stopped,
+        // fails, or dies with the power is still on record as partly done.
+        record.state = ApplyState::PartlyReverted;
+        self.store.put_apply(&record)?;
 
         let mut run = RevertRun {
             apply_id: apply_id.to_string(),
@@ -977,12 +992,12 @@ impl<'a> Applier<'a> {
             // a second anyway, from inside the copy.
             run.emit(sink, RevertPhase::Restoring, false);
 
-            self.undo_step(&entry, cancel, &mut |n| {
+            self.undo_step(&entry, &refilled, cancel, &mut |n| {
                 run.bytes_copied += n;
                 run.emit(sink, RevertPhase::Restoring, false);
             })?;
-            let reverted = JournalEntry { state: JournalState::Reverted, ..entry.clone() };
-            self.store.update_journal(&reverted)?;
+            let undone = JournalEntry { state: JournalState::Undone, ..entry.clone() };
+            self.store.update_journal(&undone)?;
             self.forget_group_records(&entry)?;
 
             run.step_index += 1;
@@ -1024,8 +1039,26 @@ impl<'a> Applier<'a> {
         }
         drives.sort_by(|a, b| a.volume.cmp(&b.volume));
 
+        // Read from the journal, which an undo marks step by step, so the
+        // count survives the app closing. A place counts once it holds a real
+        // file again, whichever step put it there.
+        let already_back: std::collections::HashSet<PathBuf> = self
+            .store
+            .journal(apply_id)?
+            .into_iter()
+            .filter(|e| e.state == JournalState::Undone)
+            .filter_map(|e| match e.step {
+                JournalStep::MoveToVault { from, .. } => Some(from),
+                JournalStep::DeleteStash { original, .. } => Some(original),
+                JournalStep::StashOriginal { path, .. } => Some(path),
+                _ => None,
+            })
+            .filter(|p| std::fs::symlink_metadata(p).map(|m| m.file_type().is_file()).unwrap_or(false))
+            .collect();
+
         Ok(RevertPreview {
             apply_id: apply_id.to_string(),
+            files_already_back: already_back.len() as u64,
             files_renamed_back: actions.iter().filter(|a| matches!(a, UndoAction::RenameBack)).count() as u64,
             files_copied_back: actions.iter().filter(|a| matches!(a, UndoAction::CopyBack { .. })).count() as u64,
             bytes_to_copy: actions.iter().map(UndoAction::bytes_to_copy).sum(),
@@ -1166,7 +1199,7 @@ impl<'a> Applier<'a> {
                 continue;
             }
             for e in self.store.journal(&other)? {
-                if e.state == JournalState::Reverted {
+                if matches!(e.state, JournalState::Reverted | JournalState::Undone) {
                     continue;
                 }
                 for p in step_paths_touched(&e.step) {
@@ -1225,18 +1258,29 @@ impl<'a> Applier<'a> {
     /// Removes the database rows a reverted step created.
     fn forget_group_records(&self, entry: &JournalEntry) -> Result<()> {
         match &entry.step {
-            JournalStep::CreateLink { link, .. } => {
-                if let Some(record) = self.store.link_at_path(link)? {
-                    self.store.delete_link(&record.id)?;
-                }
-                Ok(())
-            }
-            JournalStep::MoveToVault { sha256, .. } => {
+            // A link record goes when its link is gone from the disk, not
+            // before: a link left for a later step to replace is still one a
+            // partly undone run's installs load through.
+            JournalStep::CreateLink { link: path, .. }
+            | JournalStep::StashOriginal { path, .. }
+            | JournalStep::DeleteStash { original: path, .. } => self.forget_link_if_gone(path),
+            JournalStep::MoveToVault { from, sha256, .. } => {
+                self.forget_link_if_gone(from)?;
                 self.store.delete_vault_file(sha256)?;
                 Ok(())
             }
             _ => Ok(()),
         }
+    }
+
+    fn forget_link_if_gone(&self, path: &Path) -> Result<()> {
+        if self.platform.is_symlink(path) {
+            return Ok(());
+        }
+        if let Some(record) = self.store.link_at_path(path)? {
+            self.store.delete_link(&record.id)?;
+        }
+        Ok(())
     }
 
     /// Apply runs that stopped in the middle.
@@ -1416,6 +1460,25 @@ impl<'a> Applier<'a> {
             eta_ms: estimate_remaining_ms(elapsed_ms, run.bytes_moved, run.bytes_to_move),
         });
     }
+}
+
+/// The paths a later step of an undo fills again with a file, by renaming it
+/// over the link there. The link at such a path must stay until then.
+///
+/// Read once, before anything moves, from the steps to undo.
+fn paths_filled_later(entries: &[JournalEntry]) -> std::collections::HashSet<PathBuf> {
+    entries
+        .iter()
+        .filter_map(|e| match &e.step {
+            JournalStep::MoveToVault { from, .. } => Some(from.clone()),
+            JournalStep::StashOriginal { path, stash }
+                if !stash.as_os_str().is_empty() && stash.exists() =>
+            {
+                Some(path.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn short_id(apply_id: &str) -> String {

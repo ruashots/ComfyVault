@@ -395,6 +395,7 @@ fn apply_record() -> ApplyRecord {
 fn revert_preview() -> RevertPreview {
     RevertPreview {
         apply_id: "apply-1".into(),
+        files_already_back: 0,
         files_renamed_back: 2,
         files_copied_back: 3,
         bytes_to_copy: 13_876_297_728,
@@ -1171,13 +1172,17 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("LinkState", wire(&l), expected));
     }
 
-    for a in [A::Running, A::Completed, A::CompletedWithErrors, A::Cancelled, A::Interrupted, A::Reverted] {
+    for a in [
+        A::Running, A::Completed, A::CompletedWithErrors, A::Cancelled, A::Interrupted,
+        A::PartlyReverted, A::Reverted,
+    ] {
         let expected = match a {
             A::Running => "running",
             A::Completed => "completed",
             A::CompletedWithErrors => "completedWithErrors",
             A::Cancelled => "cancelled",
             A::Interrupted => "interrupted",
+            A::PartlyReverted => "partlyReverted",
             A::Reverted => "reverted",
         };
         out.push(("ApplyState", wire(&a), expected));
@@ -1253,7 +1258,7 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
 
     let mut checked = 0;
     let mut wrong = Vec::new();
-    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode", "RevertAction"] {
+    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode", "RevertAction", "ApplyState"] {
         let engine: Vec<&str> = values
             .iter()
             .filter(|(k, _, _)| *k == kind)

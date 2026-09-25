@@ -16,6 +16,10 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Default)]
 pub struct CancelToken {
     flag: Arc<AtomicBool>,
+    /// Tests only: raise the flag at the Nth check, so a test can stop an
+    /// operation at every point it can be stopped, one after another.
+    #[cfg(test)]
+    stop_at_check: Option<Arc<AtomicU64>>,
 }
 
 impl CancelToken {
@@ -31,8 +35,20 @@ impl CancelToken {
         self.flag.load(Ordering::SeqCst)
     }
 
+    /// A token that stops the operation at its `n`th check, counting from 1.
+    #[cfg(test)]
+    pub fn stopping_at_check(n: u64) -> Self {
+        Self { stop_at_check: Some(Arc::new(AtomicU64::new(n))), ..Self::default() }
+    }
+
     /// Returns `Err(cancelled)` when the caller asked to stop.
     pub fn check(&self) -> crate::Result<()> {
+        #[cfg(test)]
+        if let Some(left) = &self.stop_at_check {
+            if left.fetch_sub(1, Ordering::SeqCst) == 1 {
+                self.cancel();
+            }
+        }
         if self.is_cancelled() {
             Err(crate::VaultError::cancelled())
         } else {

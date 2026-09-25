@@ -231,6 +231,10 @@ pub enum ApplyState {
     Cancelled,
     /// The process stopped in the middle. The journal says where.
     Interrupted,
+    /// An undo started and did not finish: it was stopped, it failed, or the
+    /// app closed. Every path still holds its file or a working link, and
+    /// undoing again finishes the rest.
+    PartlyReverted,
     Reverted,
 }
 
@@ -295,7 +299,12 @@ pub enum JournalState {
     Pending,
     Done,
     Failed,
+    /// Put back while an apply rolled back a group it could not finish.
     Reverted,
+    /// Put back by an undo the person asked for. Kept apart from `Reverted`
+    /// so a partly undone run can say how many of its files are back, even
+    /// after a restart.
+    Undone,
 }
 
 /// One filesystem step, with everything needed to undo it.
