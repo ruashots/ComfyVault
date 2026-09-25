@@ -1354,7 +1354,8 @@ fn every_command_is_wired_into_the_window() {
     let mut declared = Vec::new();
     for block in commands.split("#[tauri::command]").skip(1) {
         let Some(after) = block.split("fn ").nth(1) else { continue };
-        let Some(name) = after.split('(').next() else { continue };
+        // A command generic over the runtime reads `name<R: Runtime>(`.
+        let Some(name) = after.split(['(', '<']).next() else { continue };
         let name = name.trim();
         if !name.is_empty() && !declared.contains(&name) {
             declared.push(name);

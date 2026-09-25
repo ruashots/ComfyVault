@@ -1,19 +1,27 @@
 //! What the window may open outside the app, driven through the real opener
 //! plugin and the real capability file on the mock runtime.
 //!
-//! The opener refuses every address its scope does not name, and the scope
-//! was empty, so "Open on Civitai" and the Developer Mode link did nothing.
-//! The scope names exactly the model pages the engine builds and that one
-//! settings page. Anything else must stay refused, because a page address can
-//! come from a vault's cached answers.
+//! The opener refuses every address its scope does not name. The scope names
+//! the Developer Mode settings page and the front page of a port on this
+//! computer, and nothing else. It matches the raw text against a pattern whose
+//! wildcard also matches "/", "@", "?", "#", spaces and quotes, so it cannot
+//! say "a model page and nothing else". A Civitai page therefore does not go
+//! through it at all: the window sends two numbers to `open_civitai_page`, and
+//! the engine builds the address.
 
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
 
 fn open(url: &str) -> Result<(), String> {
+    call("plugin:opener|open_url", serde_json::json!({ "url": url }))
+}
+
+/// Sends one command from the window, as the interface does.
+fn call(cmd: &str, body: serde_json::Value) -> Result<(), String> {
     let app = mock_builder()
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![comfyvault_lib::commands::open_civitai_page])
         .build(tauri::generate_context!())
         .expect("build the app");
     let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -22,13 +30,13 @@ fn open(url: &str) -> Result<(), String> {
     get_ipc_response(
         &window,
         InvokeRequest {
-            cmd: "plugin:opener|open_url".into(),
+            cmd: cmd.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
             // Where the app's own page is served from on Windows. Any other
             // origin is refused before the scope is even read.
             url: "http://tauri.localhost".parse().unwrap(),
-            body: InvokeBody::Json(serde_json::json!({ "url": url })),
+            body: InvokeBody::Json(body),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
         },
@@ -42,6 +50,20 @@ fn addresses_outside_the_scope_are_refused() {
     for url in [
         "https://evil.example/",
         "https://civitai.com/user/someone",
+        // No Civitai address goes through the window's opener, not even a real
+        // model page: the window names a page by its numbers instead.
+        "https://civitai.com/models/4384?modelVersionId=128713",
+        "https://civitai.com/models/4384",
+        // What the old rule, https://civitai.com/models/*, let through: any
+        // page on the site, and spaces, quotes and new lines that reach the
+        // Windows shell.
+        "https://civitai.com/models/../../user/someone",
+        "https://civitai.com/models/%2e%2e/%2e%2e/api/v1/models",
+        "https://civitai.com/models/1?returnUrl=https://evil.example/",
+        "https://civitai.com/models/1 --some-browser-flag",
+        "https://civitai.com/models/1\" --some-browser-flag \"",
+        "https://civitai.com/models/1\nhttps://evil.example/",
+        "https://civitai.com/models/@evil.example/",
         "https://civitai.com.evil.example/models/1",
         "http://civitai.com/models/4384",
         "file:///C:/Windows/System32/calc.exe",
@@ -80,12 +102,33 @@ fn addresses_outside_the_scope_are_refused() {
     }
 }
 
-/// Opens a real Civitai page in the default browser, so it runs only when
-/// asked: `--ignored`.
+#[test]
+fn a_civitai_page_is_named_by_numbers_and_nothing_else() {
+    // Each of these fails before anything opens: the command takes whole
+    // numbers, so an address, a path or extra text cannot even arrive.
+    for bad in [
+        serde_json::json!({ "args": { "modelId": "4384/../../user/someone" } }),
+        serde_json::json!({ "args": { "modelId": "4384 --flag" } }),
+        serde_json::json!({ "args": { "modelId": -1 } }),
+        serde_json::json!({ "args": { "modelId": 1.5 } }),
+        serde_json::json!({ "args": { "modelId": 4384, "versionId": "1?x=y" } }),
+        serde_json::json!({ "args": { "url": "https://civitai.com/models/4384" } }),
+    ] {
+        let err = call("open_civitai_page", bad.clone()).expect_err(&bad.to_string());
+        assert!(err.contains("invalid args"), "{bad}: {err}");
+    }
+}
+
+/// Opens a real Civitai model page in the default browser, so it runs only
+/// when asked: `--ignored`.
 #[test]
 #[ignore]
 fn a_civitai_model_page_opens() {
-    open("https://civitai.com/models/4384?modelVersionId=128713").expect("the model page was refused");
+    call(
+        "open_civitai_page",
+        serde_json::json!({ "args": { "modelId": 4384, "versionId": 128713 } }),
+    )
+    .expect("the model page did not open");
 }
 
 /// Opens Windows' developer settings, the page where Developer Mode is turned

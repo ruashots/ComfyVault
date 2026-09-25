@@ -744,6 +744,34 @@ pub async fn open_task_manager(state: State<'_, AppEngine>) -> Reply<()> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CivitaiPageArgs {
+    pub model_id: u64,
+    #[serde(default)]
+    pub version_id: Option<u64>,
+}
+
+/// Opens a model's page on Civitai in the default browser. Answers before a
+/// vault exists.
+///
+/// The window sends two numbers, never an address, and the engine builds the
+/// address from them. So nothing the window holds, from a vault or from the
+/// network, can choose another page, another site, or extra text for the
+/// Windows shell. The window's own opener is not allowed to open Civitai.
+#[tauri::command]
+pub async fn open_civitai_page<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    args: CivitaiPageArgs,
+) -> Reply<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = comfyvault_core::metadata::civitai::model_page_url(args.model_id, args.version_id);
+    app.opener().open_url(url, None::<&str>).map_err(|e| {
+        VaultError::new(ErrorCode::IoError, "Windows did not open the Civitai page.")
+            .with_detail(e.to_string())
+    })
+}
+
+#[derive(Deserialize)]
 pub struct PathsArgs {
     pub paths: Vec<String>,
 }

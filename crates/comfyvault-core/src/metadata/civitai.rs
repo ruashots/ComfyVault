@@ -196,9 +196,7 @@ fn convert(v: &ApiVersion, sha256: &str, ambiguous: bool) -> ModelMetadata {
         nsfw_level: v.nsfw_level.unwrap_or(0),
         civitai_model_id: v.model_id,
         civitai_version_id: Some(v.id),
-        page_url: v
-            .model_id
-            .map(|m| format!("{DEFAULT_BASE_URL}/models/{m}?modelVersionId={}", v.id)),
+        page_url: v.model_id.map(|m| model_page_url(m, Some(v.id))),
         download_url: file
             .and_then(|f| f.download_url.clone())
             .or_else(|| v.download_url.clone())
@@ -218,6 +216,18 @@ fn safe_download_url(url: &str) -> Option<String> {
     let host = rest.split(['/', '?', '#']).next()?.split('@').next_back()?;
     let host = host.split(':').next()?.to_lowercase();
     (host == "civitai.com" || host.ends_with(".civitai.com")).then(|| url.to_string())
+}
+
+/// The address of a model's page on Civitai, built from its numbers alone.
+///
+/// The one place the address is made. The window opens a Civitai page only by
+/// sending these two numbers, so no text from a vault or the network can
+/// choose where it goes.
+pub fn model_page_url(model_id: u64, version_id: Option<u64>) -> String {
+    match version_id {
+        Some(v) => format!("{DEFAULT_BASE_URL}/models/{model_id}?modelVersionId={v}"),
+        None => format!("{DEFAULT_BASE_URL}/models/{model_id}"),
+    }
 }
 
 /// A Civitai model page, exactly as the engine builds it: the model's number,
@@ -309,7 +319,7 @@ mod tests;
 
 #[cfg(test)]
 mod url_tests {
-    use super::safe_download_url;
+    use super::{model_page_url, safe_download_url, safe_page_url};
 
     #[test]
     fn only_a_real_civitai_address_over_https_survives() {
@@ -329,6 +339,20 @@ mod url_tests {
             "",
         ] {
             assert!(safe_download_url(bad).is_none(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_model_page_address_is_made_from_its_two_numbers_only() {
+        assert_eq!(
+            model_page_url(4384, Some(128713)),
+            "https://civitai.com/models/4384?modelVersionId=128713"
+        );
+        assert_eq!(model_page_url(4384, None), "https://civitai.com/models/4384");
+        // Every address it makes passes the check a stored address must pass.
+        for (m, v) in [(0, None), (u64::MAX, Some(u64::MAX)), (7, Some(0))] {
+            let url = model_page_url(m, v);
+            assert_eq!(safe_page_url(&url), Some(url.clone()), "{url}");
         }
     }
 }

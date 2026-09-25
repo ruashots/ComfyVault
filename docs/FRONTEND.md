@@ -74,16 +74,20 @@ No screen talks to Tauri. Every screen reads the port in `src/ipc/contract.ts`.
 Beyond the commands in `docs/IPC-CONTRACT.md`:
 
 - `tauri-plugin-opener`, with `opener:allow-open-url` and
-  `opener:allow-reveal-item-in-dir`. The URL scope allows exactly three kinds of
+  `opener:allow-reveal-item-in-dir`. The URL scope allows exactly two kinds of
   address:
   - `ms-settings:developers`, the Developer Mode settings page.
-  - `https://civitai.com/models/*`, a Civitai model page.
-  - `http://127.0.0.1:*/`, the front page of a ComfyUI on this computer. The
-    running warning opens it when the process listens on exactly one port.
+  - `http://127.0.0.1:<port>/`, with the port in digits only, the front page of
+    a ComfyUI on this computer. The running warning opens it when the process
+    listens on exactly one port.
 
   `opener:allow-reveal-item-in-dir` shows the vault folder in Explorer.
 - `open_task_manager` (contract section 11.3) opens Task Manager for the
   running warning. The interface never ends a process.
+- `open_civitai_page` (contract section 10.5) opens a model's Civitai page from
+  `civitaiModelId` and `civitaiVersionId`. The opener scope refuses every
+  Civitai address, so "Open on Civitai" must use this command, never
+  `openUrl(pageUrl)`.
 - Nothing else. The folder picker browses through `list_directory` and
   `create_directory` from section 15 of the contract, so the window needs no
   file system access of its own.

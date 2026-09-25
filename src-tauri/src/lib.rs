@@ -11,7 +11,7 @@
 //! Keeping it this thin is what lets the same engine back a command line tool
 //! or an MCP server later without moving any logic.
 
-mod commands;
+pub mod commands;
 mod events;
 
 use std::path::PathBuf;
@@ -137,6 +137,7 @@ pub fn run() {
             commands::clear_metadata_cache,
             commands::get_running_comfy,
             commands::open_task_manager,
+            commands::open_civitai_page,
             commands::check_locked_files,
             commands::list_directory,
             commands::create_directory,

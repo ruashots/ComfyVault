@@ -144,6 +144,7 @@ These are the only calls that answer in that state:
 | `check_locked_files` | it asks the operating system, not the vault |
 | `list_drives` | every drive on this computer, with its size and its free space |
 | `open_task_manager` | it opens a Windows program, and reads nothing in the vault |
+| `open_civitai_page` | it opens a web page, and reads nothing in the vault |
 
 `select_vault` is the way out of the state, and it works.
 
@@ -1942,6 +1943,25 @@ asked for `refresh` and the network refused. Everything else degrades quietly.
 
 Arguments: none. Returns `{ cleared: number }`.
 
+### 10.5 `open_civitai_page`
+
+Opens a model's page on Civitai in the default browser.
+
+Arguments: `{ modelId: number, versionId?: number | null }`. Pass
+`civitaiModelId` and `civitaiVersionId` from `ModelMetadata`. Both are whole
+numbers. Any other value, a string included, rejects with `invalidArgument`
+before anything opens.
+
+Returns `null`. It rejects with `ioError` when Windows does not open the page.
+It answers before a vault is chosen.
+
+The engine builds the address, `https://civitai.com/models/<modelId>` with
+`?modelVersionId=<versionId>` when there is a version. The window's opener
+plugin is not allowed to open any Civitai address. Its scope matches the raw
+text of an address, and its wildcard also matches `/`, `@`, `?`, `#`, spaces
+and quotes. So it cannot hold "a model page and nothing else", and the window
+names the page by its numbers instead.
+
 ---
 
 ## 11. Running programs and locked files
@@ -2146,6 +2166,7 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `get_metadata` | 10.1 |
 | `fetch_metadata_batch` | 10.2 |
 | `clear_metadata_cache` | 10.4 |
+| `open_civitai_page` | 10.5 |
 | `get_running_comfy` | 11.1 |
 | `check_locked_files` | 11.2 |
 | `open_task_manager` | 11.3 |
