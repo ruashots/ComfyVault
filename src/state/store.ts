@@ -176,6 +176,19 @@ export interface AppStore {
   readonly cutOffRun: Accessor<InterruptedApply | null>;
   readonly lastApply: Accessor<ApplyRecord | null>;
   /**
+   * The last run, while it is still the latest thing that happened: until a
+   * scan finishes after it. Then the new scan's plan is what Consolidate shows,
+   * so a second run can be planned without undoing the first.
+   *
+   * A run cut off or an undo stopped part way stays on screen whatever was
+   * scanned since, because each has to be settled before anything else.
+   *
+   * Measured against the real engine: after a finished run, a model downloaded
+   * into two installs and a scan give a plan of that one model, and applying it
+   * finishes as a second run.
+   */
+  readonly runOnScreen: Accessor<ApplyRecord | null>;
+  /**
    * The plan the last run actually applied, as the engine stored it.
    *
    * Not a fresh one built from the same scan. After a run every consolidated
@@ -371,6 +384,17 @@ export function createAppStore(engine: Engine): AppStore {
     const run = lastApply();
     if (!run || appState()?.busy?.id === run.applyId) return null;
     return interrupted().find((i) => i.applyId === run.applyId) ?? null;
+  });
+  const runOnScreen = createMemo(() => {
+    const run = lastApply();
+    if (!run) return null;
+    if (run.state === "partlyReverted" || cutOffRun()) return run;
+    const last = scan();
+    const scannedSince =
+      last !== null &&
+      run.finishedAt !== null &&
+      Date.parse(last.finishedAt) > Date.parse(run.finishedAt);
+    return scannedSince ? null : run;
   });
   const scanPredatesUndo = createMemo(() => overtakenByUndo(lastUndoneAt(), scan()));
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
@@ -748,6 +772,7 @@ export function createAppStore(engine: Engine): AppStore {
     interrupted,
     cutOffRun,
     lastApply,
+    runOnScreen,
     appliedPlan,
     scanPredatesRun,
     scanPredatesUndo,

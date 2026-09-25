@@ -62,7 +62,7 @@ export function Rail() {
   const badgeFor = (key: Screen): number | null => {
     if (!app.hasInstalls()) return null;
     if (key === "consolidate") {
-      if (app.lastApply()) return null;
+      if (app.runOnScreen()) return null;
       return app.planView()?.duplicates.length || null;
     }
     if (key === "cleanup") {
@@ -121,7 +121,7 @@ export function Rail() {
     if (app.revertProgress()) {
       return <div class="rail-sub">putting files back</div>;
     }
-    const run = app.lastApply();
+    const run = app.runOnScreen();
     if (app.cutOffRun()) {
       return <div class="rail-sub">a run stopped part way</div>;
     }

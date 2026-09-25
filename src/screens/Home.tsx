@@ -234,7 +234,7 @@ function HomeReport() {
   const app = useApp();
   const totals = () => app.scan()?.totals ?? null;
   const drive = () => app.vault();
-  const run = () => app.lastApply();
+  const run = () => app.runOnScreen();
   const counted = () => app.planView()?.countedNeverMoved ?? [];
 
   /**

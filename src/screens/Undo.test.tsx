@@ -340,7 +340,10 @@ describe("the figures after an undo that stopped part way", () => {
     await waitFor(() => !h.app.scanPredatesRun());
     expect(h.app.scanPredatesUndo()).toBe(false);
 
-    await userEvent.click(screen.getByRole("button", { name: /Undo this run/ }));
+    // The scan after the run brings its plan up, and the run is undone from
+    // there.
+    await waitFor(() => text().includes("The plan"));
+    await userEvent.click(screen.getByRole("button", { name: /Undo the last run/ }));
     await userEvent.click(screen.getByRole("button", { name: /Undo the run/ }));
     await waitFor(() => document.querySelector('[role="dialog"]') === null);
     await advance(h, 40);

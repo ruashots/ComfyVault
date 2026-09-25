@@ -8,13 +8,14 @@ import {
   blockedWhy,
   isFixable,
 } from "~/domain/blocked";
-import { fmt } from "~/domain/format";
+import { fmt, relativeTime } from "~/domain/format";
 import { chosenBecauseText, fileNameOf } from "~/domain/view";
 import { gateBlockers } from "~/domain/selection";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { useApp } from "~/state/store";
 import { ApplyRunning } from "~/screens/Applying";
 import { ApplyDone } from "~/screens/ApplyDone";
+import { openUndoBox } from "~/modals/undo";
 import { RunCutOff } from "~/screens/RunCutOff";
 import { UndoStopped } from "~/screens/UndoStopped";
 import type { BlockedRow, PlanGroup } from "~/ipc/contract";
@@ -42,7 +43,7 @@ export function ConsolidateScreen() {
         fallback={<ApplyRunning />}
       >
         <Show
-          when={!app.lastApply()}
+          when={!app.runOnScreen()}
           fallback={
             <Show
               when={app.cutOffRun()}
@@ -153,6 +154,21 @@ function DryRun() {
         <div class="scroll">
           <Show when={gateBlockers(app.gate()).length > 0}>
             <BlockerPanel />
+          </Show>
+
+          {/* A plan made after a finished run replaces that run's screen, and
+              the run can still be undone from here. */}
+          <Show when={app.lastApply()?.revertible ? app.lastApply() : null}>
+            {(last) => (
+              <div class="note" style={{ "margin-bottom": "9px" }}>
+                This plan comes from a scan taken after your last run, which
+                finished {relativeTime(last().finishedAt ?? last().startedAt)}. That
+                run can still be undone.{" "}
+                <button class="lnk" onClick={() => void openUndoBox(app, last().applyId)}>
+                  Undo the last run
+                </button>
+              </div>
+            )}
           </Show>
 
           <div class="sec">
