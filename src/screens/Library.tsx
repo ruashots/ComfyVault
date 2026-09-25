@@ -851,7 +851,15 @@ export function CivitaiPicture(props: { meta: ModelMetadata }) {
       }
     >
       {(url) => (
-        <Show when={!broken()}>
+        <Show
+          when={!broken()}
+          fallback={
+            <div class="note" style={{ "margin-bottom": "8px" }}>
+              Civitai&rsquo;s picture for this model did not load, so none is shown
+              here. It is on its Civitai page.
+            </div>
+          }
+        >
           <img
             class="civ-pic"
             src={url()}

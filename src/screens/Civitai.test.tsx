@@ -163,6 +163,16 @@ describe("the Civitai picture", () => {
     unmount();
   });
 
+  it("says so in one line when the picture fails to load, instead of going blank", () => {
+    const { unmount } = render(() => (
+      <CivitaiPicture meta={meta({ previewImages: [pic(1, 1)] })} />
+    ));
+    screen.getByRole("img").dispatchEvent(new Event("error"));
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(document.body.textContent).toContain("picture for this model did not load");
+    unmount();
+  });
+
   it("skips adult, unrated and video entries to the first safe picture", () => {
     const { unmount } = render(() => (
       <CivitaiPicture
