@@ -50,7 +50,8 @@ has little to do for you.
 
 **Developer Mode must be on.** Windows does not let an ordinary program create a
 symbolic link without it. Open Settings, then System, then For developers, and
-turn on Developer Mode. You do not have to restart.
+turn on Developer Mode. On Windows 10 the page is under Update & Security. You
+do not have to restart.
 
 ComfyVault checks this itself: it makes a test link, reads it back, and deletes
 it. If the test fails, Apply stays blocked and the app tells you why.

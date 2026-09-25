@@ -59,7 +59,8 @@ true, with a re-check button.
 ### 1. Windows will not create links
 
 Turn Developer Mode on. Open Settings, go to System, then For developers, and
-turn Developer Mode on. No restart is needed.
+turn Developer Mode on. On Windows 10 the page is under Update & Security. No
+restart is needed.
 
 Then press the re-check button in Settings. ComfyVault tests this by creating a
 real link, reading it back, and deleting it, so the answer is a measurement, not
