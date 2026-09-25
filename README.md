@@ -46,7 +46,8 @@ has little to do for you.
 
 ## Before you start
 
-**Windows only.** There is no macOS or Linux build.
+**ComfyVault runs on Windows only.** There is no macOS or Linux version of the
+program.
 
 **Developer Mode must be on.** Windows does not let an ordinary program create a
 symbolic link without it. Open Settings, then System, then For developers, and
@@ -68,8 +69,9 @@ There is no installer and no download yet. You build ComfyVault from source,
 and the result is one portable program, `comfyvault.exe`. It needs no install
 step. Put it where you like and run it.
 
-The build runs on Linux or in WSL on Windows, and it cross-compiles the Windows
-program. In short:
+The program runs on Windows, but the tested build is made on Linux, or in WSL
+(the Linux that Windows can run inside itself), and it produces the Windows
+program from there. In short:
 
 ```
 git clone https://github.com/Ruashots/ComfyVault
