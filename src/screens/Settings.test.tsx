@@ -75,3 +75,21 @@ describe("where the Hugging Face cache is read from", () => {
     expect(text).not.toContain("null");
   });
 });
+
+describe("adding an install before a vault exists", () => {
+  it("is not offered, and says the vault comes first", async () => {
+    harness = await renderWithApp(() => <SettingsScreen />, {
+      engine: new FixtureEngine({ empty: true }),
+    });
+    await waitFor(() => harness!.app.appState() !== null);
+    expect(harness.app.hasVault()).toBe(false);
+    expect(screen.getByRole("button", { name: /Add an install/ })).toBeDisabled();
+    expect(document.body.textContent).toContain("Choose the vault folder first.");
+  });
+
+  it("is offered once the vault exists", async () => {
+    const { app } = await mount();
+    expect(app.hasVault()).toBe(true);
+    expect(screen.getByRole("button", { name: /Add an install/ })).toBeEnabled();
+  });
+});

@@ -146,12 +146,27 @@ export function SettingsScreen() {
             </For>
           </Show>
           <div class="settings-acts">
-            <button class="btn pri" onClick={() => void openInstallPicker(app)}>
+            {/* Measured against the real engine: before a vault exists the
+                folder check accepts an install and the engine then refuses to
+                register it, so the refusal would be the first thing the person
+                learns. The same rule as Home: no vault, no install step. */}
+            <button
+              class="btn pri"
+              disabled={!app.hasVault()}
+              title={
+                app.hasVault()
+                  ? undefined
+                  : "The vault has to exist before an install can point into it"
+              }
+              onClick={() => void openInstallPicker(app)}
+            >
               <Icon name="plus" size={13} />
               Add an install
             </button>
             <span class="note">
-              ComfyVault checks the folder before it accepts it.
+              {app.hasVault()
+                ? "ComfyVault checks the folder before it accepts it."
+                : "Choose the vault folder first. Every install points into it."}
             </span>
           </div>
           <Show when={app.orphans().length > 0}>
