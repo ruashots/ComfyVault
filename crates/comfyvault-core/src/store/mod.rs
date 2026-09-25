@@ -496,17 +496,62 @@ impl Store {
 
     // -- scans ------------------------------------------------------------
 
+    /// Stores a scan's record and moves both pointers in one transaction: the
+    /// latest scan, and the last scan that finished.
     pub fn put_scan(&self, s: &ScanRecord) -> Result<()> {
-        self.put(SCANS, &s.scan_id, s)?;
-        self.put_meta("lastScanId", &s.scan_id)
+        let record = serde_json::to_vec(s)?;
+        let id = serde_json::to_vec(&s.scan_id)?;
+        let tx = self.db.begin_write()?;
+        {
+            tx.open_table(SCANS)?.insert(s.scan_id.as_str(), record.as_slice())?;
+            let mut meta = tx.open_table(META)?;
+            meta.insert("lastScanId", id.as_slice())?;
+            if !s.cancelled {
+                meta.insert("lastFinishedScanId", id.as_slice())?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn scan(&self, id: &str) -> Result<Option<ScanRecord>> {
         self.get(SCANS, id)
     }
 
-    pub fn last_scan_id(&self) -> Result<Option<String>> {
+    /// The most recent scan, finished or cancelled.
+    pub fn latest_scan_id(&self) -> Result<Option<String>> {
         self.get(META, "lastScanId")
+    }
+
+    /// The scan whose results count: the last one that finished.
+    ///
+    /// A cancelled scan read only part of the installs, so it never replaces
+    /// a finished one. Its totals would say that a scanned computer holds
+    /// nothing. Only when no scan ever finished is the latest, cancelled one
+    /// the answer, so that the person still sees that a scan ran.
+    pub fn last_scan_id(&self) -> Result<Option<String>> {
+        if let Some(id) = self.get::<String>(META, "lastFinishedScanId")? {
+            return Ok(Some(id));
+        }
+        // A vault written before this pointer existed, or one where no scan
+        // has finished yet: find the last finished scan among the records.
+        let finished = self
+            .list::<ScanRecord>(SCANS)?
+            .into_iter()
+            .filter(|s| !s.cancelled)
+            .max_by_key(|s| s.started_at)
+            .map(|s| s.scan_id);
+        match finished {
+            Some(id) => Ok(Some(id)),
+            None => self.latest_scan_id(),
+        }
+    }
+
+    /// Makes the vault look like one written before the finished-scan pointer
+    /// existed.
+    #[cfg(test)]
+    pub fn forget_finished_scan_pointer_for_tests(&self) {
+        self.delete(META, "lastFinishedScanId").unwrap();
     }
 
     /// Stores the individual files a scan found, in one transaction.

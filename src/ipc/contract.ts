@@ -131,7 +131,10 @@ export interface AppState {
   installCount: number;
   platform: PlatformReport;
   settings: Settings;
+  /** The last scan that finished, or the latest cancelled one if none finished. */
   lastScanId: string | null;
+  /** When the latest scan was cancelled. Null when it finished, or none ran. */
+  lastCancelledScanAt: string | null;
   lastPlanId: string | null;
   /** Apply identifiers that need recovery before anything else may run. */
   interruptedApplies: string[];

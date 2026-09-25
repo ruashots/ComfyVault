@@ -433,6 +433,8 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 platform: platform(),
                 settings: settings(),
                 last_scan_id: Some("scan-1".into()),
+                // A later scan, cancelled an hour after scan-1 finished.
+                last_cancelled_scan_at: Some(Timestamp(SCAN_END.0 + 3_600_000)),
                 last_plan_id: Some("plan-1".into()),
                 interrupted_applies: vec!["apply-0".into()],
                 busy: Some(BusyOp { kind: BusyKind::Scan, id: "scan-2".into() }),

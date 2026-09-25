@@ -294,7 +294,8 @@ type AppState = {
   installCount: number
   platform: PlatformReport
   settings: Settings
-  lastScanId: string | null
+  lastScanId: string | null            // the scan results come from, see 4.8
+  lastCancelledScanAt: string | null   // when the latest scan was cancelled
   lastPlanId: string | null
   interruptedApplies: string[]   // apply identifiers that need recovery
   busy: null | { kind: 'scan' | 'apply' | 'revert', id: string }
@@ -800,6 +801,26 @@ scan changes nothing on disk. Hashes already computed stay in the cache.
 ### 4.8 `get_last_scan`
 
 Arguments: none. Returns `ScanRecord | null`.
+
+It returns the last scan that finished. Totals, plans, orphans and the running
+check all come from that scan. A scan that was cancelled later does not replace
+it, because a cancelled scan read only part of the installs, and its totals
+would say that a scanned computer holds nothing.
+
+When no scan finished yet, it returns the latest cancelled scan, with
+`cancelled: true`. It returns `null` only when no scan ran.
+
+`AppState.lastScanId` is the identifier of the same scan.
+`AppState.lastCancelledScanAt` is the time that the latest scan was cancelled.
+It is `null` when the latest scan finished, and when no scan ran. So after a
+full scan and then a cancelled one, `get_last_scan` returns the full scan, and
+`lastCancelledScanAt` tells that a later one was cancelled.
+
+A cancelled scan also leaves each install's `lastScanAt` and `lastScanTotals`
+as the last finished scan set them.
+
+A vault written by an older build reads the same way. The engine finds its last
+finished scan among the stored records.
 
 ---
 

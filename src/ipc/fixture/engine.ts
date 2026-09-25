@@ -228,6 +228,8 @@ export class FixtureEngine implements Engine {
     }
   }
   private lastScan: ScanRecord | null = null;
+  /** When the latest scan was cancelled; null once a later one finishes. */
+  private lastCancelledScanAt: string | null = null;
   private plans = new Map<string, ConsolidationPlan>();
   private applies: ApplyRecord[] = [];
   private worldBeforeApply: World | null = null;
@@ -305,6 +307,7 @@ export class FixtureEngine implements Engine {
     this.world.vault.clear();
     this.world.running = [];
     this.lastScan = null;
+    this.lastCancelledScanAt = null;
   }
 
   /**
@@ -323,6 +326,7 @@ export class FixtureEngine implements Engine {
   private recordScan(scanId: string): ScanRecord {
     const result = { ...scanResultOf(this.world, scanId), finishedAt: this.stamp() };
     this.lastScan = result;
+    this.lastCancelledScanAt = null;
     this.world.installs = this.world.installs.map((install) => ({
       ...install,
       lastScanAt: result.finishedAt,
@@ -359,6 +363,7 @@ export class FixtureEngine implements Engine {
       platform: await this.getPlatformReport(),
       settings: this.settingsNow(),
       lastScanId: this.lastScan?.scanId ?? null,
+      lastCancelledScanAt: this.lastCancelledScanAt,
       lastPlanId: [...this.plans.keys()].at(-1) ?? null,
       interruptedApplies: this.applies
         .filter((a) => this.waitsToBeSettled(a))
@@ -746,9 +751,9 @@ export class FixtureEngine implements Engine {
   }
 
   /**
-   * Measured against the real engine: a cancelled scan is kept as the last
-   * scan, marked cancelled, with every total at zero, and it stamps each
-   * install's last scan time as a finished one does.
+   * As the real engine does: a cancelled scan is recorded, marked cancelled,
+   * with every total at zero. It becomes the last scan only when no scan has
+   * finished, and it leaves each install's last scan time and totals alone.
    */
   async cancelScan(scanId: string): Promise<{ cancelled: true }> {
     this.stopScanTimer();
@@ -764,11 +769,8 @@ export class FixtureEngine implements Engine {
       totals: zero(full.totals),
       perInstall: full.perInstall.map(zero),
     };
-    this.lastScan = record;
-    this.world.installs = this.world.installs.map((install) => ({
-      ...install,
-      lastScanAt: record.finishedAt,
-    }));
+    if (this.lastScan === null || this.lastScan.cancelled) this.lastScan = record;
+    this.lastCancelledScanAt = record.finishedAt;
     this.scanDoneEvent.emit(record);
     return { cancelled: true };
   }

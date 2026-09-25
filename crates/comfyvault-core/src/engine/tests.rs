@@ -1072,3 +1072,82 @@ fn a_running_comfyui_sent_by_an_older_build_still_reads() {
     assert_eq!(r.listening_ports, None);
     assert_eq!(r.holds_model_files, None);
 }
+
+// --- a cancelled scan does not erase the last one that finished ------------
+
+fn cancelled_scan(f: &Fixture) -> ScanRecord {
+    let store = f.engine.store().unwrap();
+    let installs = f.engine.installs().unwrap();
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    f.engine
+        .run_scan(&store, &uuid::Uuid::new_v4().to_string(), &installs, &cancel, &NullSink)
+        .unwrap()
+}
+
+#[test]
+fn a_cancelled_scan_leaves_the_last_finished_scan_as_the_one_that_counts() {
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("ComfyUI-A");
+    f.write_model(&a, "models/checkpoints/base.safetensors", &weights("base"));
+    f.write_model(&a, "models/loras/base-copy.safetensors", &weights("base"));
+    let full = f.scan();
+    assert!(!full.cancelled);
+    assert!(full.totals.files_seen > 0, "the fixture scan found nothing");
+    let totals_before = f.engine.installs().unwrap()[0].last_scan_totals.clone();
+    assert!(totals_before.is_some());
+
+    let stopped = cancelled_scan(&f);
+    assert!(stopped.cancelled, "the scan was not cancelled");
+
+    // The results still come from the scan that finished.
+    let last = f.engine.last_scan().unwrap().unwrap();
+    assert_eq!(last.scan_id, full.scan_id, "the cancelled scan replaced the finished one");
+    assert_eq!(last.totals, full.totals);
+    let state = f.engine.app_state().unwrap();
+    assert_eq!(state.last_scan_id.as_deref(), Some(full.scan_id.as_str()));
+    // And the cancellation is still a fact the person can be told.
+    assert_eq!(state.last_cancelled_scan_at, Some(stopped.finished_at));
+    // The install keeps the totals of the scan that finished.
+    assert_eq!(f.engine.installs().unwrap()[0].last_scan_totals, totals_before);
+    // The plan is built from the finished scan, and finds the copy.
+    assert!(!f.engine.build_plan(&last.scan_id).unwrap().groups.is_empty());
+
+    // A scan that finishes afterwards clears the cancelled fact.
+    let again = f.scan();
+    assert_eq!(f.engine.last_scan().unwrap().unwrap().scan_id, again.scan_id);
+    assert_eq!(f.engine.app_state().unwrap().last_cancelled_scan_at, None);
+}
+
+#[test]
+fn when_no_scan_has_finished_the_cancelled_one_is_still_the_last_scan() {
+    let f = Fixture::new();
+    f.open_vault();
+    f.add_install("ComfyUI-A");
+    let stopped = cancelled_scan(&f);
+
+    let last = f.engine.last_scan().unwrap().expect("a scan ran, so there is a last scan");
+    assert_eq!(last.scan_id, stopped.scan_id);
+    assert!(last.cancelled);
+    assert_eq!(f.engine.app_state().unwrap().last_cancelled_scan_at, Some(stopped.finished_at));
+    // Nothing was read, so the install says so rather than showing zero.
+    assert_eq!(f.engine.installs().unwrap()[0].last_scan_totals, None);
+}
+
+#[test]
+fn a_vault_from_an_older_build_finds_its_last_finished_scan() {
+    // Before the engine kept a pointer to the last finished scan, a cancelled
+    // scan moved the only pointer. Such a vault must still read correctly.
+    let f = Fixture::new();
+    f.open_vault();
+    let a = f.add_install("ComfyUI-A");
+    f.write_model(&a, "models/checkpoints/base.safetensors", &weights("base"));
+    let full = f.scan();
+    let stopped = cancelled_scan(&f);
+
+    let store = f.engine.store().unwrap();
+    store.forget_finished_scan_pointer_for_tests();
+    assert_eq!(store.latest_scan_id().unwrap(), Some(stopped.scan_id.clone()));
+    assert_eq!(f.engine.last_scan().unwrap().unwrap().scan_id, full.scan_id);
+}

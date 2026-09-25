@@ -100,6 +100,9 @@ pub struct AppState {
     pub platform: PlatformReport,
     pub settings: Settings,
     pub last_scan_id: Option<String>,
+    /// When the most recent scan was cancelled. `None` when it finished, or
+    /// when no scan ran.
+    pub last_cancelled_scan_at: Option<crate::time_util::Timestamp>,
     pub last_plan_id: Option<String>,
     pub interrupted_applies: Vec<String>,
     pub busy: Option<BusyOp>,
@@ -407,11 +410,15 @@ impl Engine {
 
     pub fn app_state(&self) -> Result<AppState> {
         let store = self.store.read().ok().and_then(|g| g.clone());
-        let (installs, settings, last_scan, last_plan, interrupted) = match &store {
+        let (installs, settings, last_scan, cancelled_at, last_plan, interrupted) = match &store {
             Some(s) => (
                 s.installs()?.len() as u64,
                 s.settings()?,
                 s.last_scan_id()?,
+                match s.latest_scan_id()? {
+                    Some(id) => s.scan(&id)?.filter(|r| r.cancelled).map(|r| r.finished_at),
+                    None => None,
+                },
                 s.last_plan_id()?,
                 Applier::new(s, self.platform.as_ref())
                     .interrupted()?
@@ -419,7 +426,7 @@ impl Engine {
                     .map(|i| i.apply_id)
                     .collect(),
             ),
-            None => (0, Settings::default(), None, None, Vec::new()),
+            None => (0, Settings::default(), None, None, None, Vec::new()),
         };
 
         Ok(AppState {
@@ -429,6 +436,7 @@ impl Engine {
             platform: self.platform_report(),
             settings,
             last_scan_id: last_scan,
+            last_cancelled_scan_at: cancelled_at,
             last_plan_id: last_plan,
             interrupted_applies: interrupted,
             busy: self.busy(),
@@ -581,9 +589,14 @@ impl Engine {
         let settings = store.settings()?;
         let outcome = Scanner::new(store, self.platform.as_ref(), settings)
             .scan(scan_id, installs, cancel, sink)?;
-        store.put_scan(&outcome.record)?;
         store.put_scan_entries(scan_id, &outcome.entries)?;
+        store.put_scan(&outcome.record)?;
 
+        // A cancelled scan read only part of each install. The totals of the
+        // last scan that finished stay, so no install reads as empty.
+        if outcome.record.cancelled {
+            return Ok(outcome.record);
+        }
         for i in installs {
             if let Some(mut install) = store.install(&i.id)? {
                 install.last_scan_at = Some(crate::time_util::Timestamp::now());
