@@ -1,36 +1,19 @@
 # Building ComfyVault
 
-ComfyVault is a Windows desktop application. The engine is a plain Rust crate,
-the interface is Solid built by Vite, and Tauri puts the two in one window.
+ComfyVault is a Windows desktop program. The engine is a plain Rust crate, the
+interface is Solid built by Vite, and Tauri puts the two in one window.
+
+The build runs on Linux, or in WSL on Windows, and cross-compiles the Windows
+program with `cargo-xwin`. The result is one portable file, `comfyvault.exe`.
+There is no installer.
 
 ---
 
-## 1. The normal build, on Windows
+## 1. What has to be installed
 
-Install Node 22 or newer, Rust, and the Tauri prerequisites. Then run:
-
-```
-npm install
-npm run tauri build
-```
-
-The installer lands in `target/release/bundle/nsis/`.
-
-That path is the workspace's own `target/`, at the top of the repository.
-`src-tauri` is a workspace member, so cargo writes its output there and not into
-`src-tauri/target/`.
-
-`npm run tauri build` runs the interface build first, then the Rust build with
-the right feature turned on. Prefer it over a hand-rolled `cargo build`.
-
----
-
-## 2. Cross-building from Linux
-
-The engine is developed on Linux. A complete Windows executable is built from
-there with `cargo-xwin`.
-
-### 2.1 What has to be installed
+- Node 22.13 or newer. The repository has an `.nvmrc`.
+- Rust, from [rustup.rs](https://rustup.rs).
+- `cargo-xwin`, the Windows target, and LLVM:
 
 ```
 cargo install cargo-xwin
@@ -38,15 +21,15 @@ rustup target add x86_64-pc-windows-msvc
 sudo apt install llvm clang lld
 ```
 
-**LLVM is required.** Two tools in it are used:
+**LLVM is required.** The build uses two tools from it:
 
 - `llvm-rc` compiles the Windows resource that carries the icon and the version
-  information. Without it the build stops with `NotAttempted("llvm-rc")`.
-- `clang-cl` compiles any C code in the dependency tree.
+  information. Without it, the build stops with `NotAttempted("llvm-rc")`.
+- `clang-cl` compiles the C code in the dependency tree.
 
 Rust's own `llvm-tools` component does **not** include `llvm-rc`.
 
-#### If you cannot install packages
+### If you cannot install packages
 
 `apt-get download` needs no root. Unpack the packages into a folder of your
 own and put that folder's `bin` on `PATH`:
@@ -60,11 +43,11 @@ ln -sf clang root/usr/lib/llvm-18/bin/clang-cl
 export PATH="$PWD/root/usr/lib/llvm-18/bin:$PATH"
 ```
 
-The download is about 71 MB and the unpacked folder about 329 MB. The
-`clang-cl` link is needed because the package does not ship one, and
-`cargo-xwin` looks for that name.
+The download is about 71 MB, and the unpacked folder is about 329 MB. The
+package does not include a `clang-cl`, and `cargo-xwin` looks for that name, so
+the `ln` line makes one.
 
-Check it before building:
+Check both tools before you build:
 
 ```
 llvm-rc --version
@@ -73,61 +56,59 @@ clang-cl --version
 
 `llvm-rc` answers `Exactly one input file should be provided`, which means it
 runs. `clang-cl` prints a version. If either says `command not found`, `PATH`
-is not set in this shell.
+is not set in this shell. `export PATH` lasts only for the shell that ran it.
 
-`export PATH` lasts only for the shell that ran it. A new terminal needs it
-again.
+---
 
-This is the route the first Windows builds of this project were made with, and
-it was verified from an empty folder on a machine with no LLVM installed. Both
-routes work. Install the packages if you can, because one line beats seven.
+## 2. Build the program
 
-### 2.2 Build the interface first
+### 2.1 Build the interface first
 
 ```
 npm install
 npm run build
 ```
 
-This writes `dist/`. The Rust build reads it and embeds it. If `dist/` is
-missing, the Rust build still succeeds and produces an application with an
-empty window, so build the interface first, every time.
+This type-checks the interface and writes `dist/`. The Rust build reads `dist/`
+and embeds it. If `dist/` is missing, the Rust build still succeeds, and the
+program shows an empty window. Build the interface first, every time.
 
-### 2.3 Build the application
+### 2.2 Build the executable
 
 ```
 cargo xwin build -p comfyvault --release --features custom-protocol \
     --target x86_64-pc-windows-msvc
 ```
 
-The executable lands at:
+The program is at:
 
 ```
 target/x86_64-pc-windows-msvc/release/comfyvault.exe
 ```
 
-### 2.4 `--features custom-protocol` is not optional
+That one file is the whole program. Copy it to any folder on the Windows PC and
+run it. It keeps one small file outside the vault, which vault folder to open,
+in `%APPDATA%\app.comfyvault.desktop\config.json`.
 
-Tauri embeds the interface only when that feature is on. Without it the
-application looks for the development server at `http://localhost:1420`, and a
-person who installs it sees an empty window.
+### 2.3 `--features custom-protocol` is not optional
 
-The Tauri command line tool turns the feature on by itself. A direct
-`cargo build` does not, so pass it.
+Tauri embeds the interface only when that feature is on. Without it, the
+program looks for the development server at `http://localhost:1420`, and shows
+an empty window.
 
-### 2.5 Check the result
+### 2.4 Check the result
 
-The executable must be a graphical program, and it must contain the interface:
+The executable must be a graphical program:
 
 ```
 file target/x86_64-pc-windows-msvc/release/comfyvault.exe
 ```
 
-That must report `PE32+ executable (GUI) x86-64`. A report of `(console)` means
-the debug profile was built.
+The answer must be `PE32+ executable (GUI) x86-64`. An answer of `(console)`
+means that the debug profile was built.
 
-To confirm the interface is inside it, look for every built file name in the
-bytes of the executable:
+The executable must also contain the interface. Look for every built file name
+in its bytes:
 
 ```
 python3 - <<'EOF'
@@ -139,32 +120,23 @@ print('missing:', missing if missing else 'none')
 EOF
 ```
 
-The result must be `missing: none`. Every file in `dist/assets/` is embedded,
-the `.map` files included.
+The result must be `missing: none`.
 
 The check looks for names, not contents, because the contents are compressed
-inside the executable and do not appear as readable text. Names are enough.
-The interface build derives each file name from a hash of that file's
-contents, so different contents produce a different name. Measured here across
-three builds: the files that changed got new names each time, and the font and
-the `tauri` helper, which did not change, kept theirs.
+inside the executable. Names are enough: the interface build makes each file
+name from a hash of that file's contents, so new contents get a new name.
 
 Do not use `strings` for this check. `strings` joins a file name to the bytes
 that follow it, so an exact match fails on a name that is really there.
 
-### 2.6 A rebuilt interface does not go into the executable by itself
+### 2.5 A rebuilt interface does not reach the executable by itself
 
-Do not trust a rebuild to pick up a new interface. Tauri reads `dist/` once,
-during its build script. Cargo does not rerun that build script when only
-`dist/` changes. The build reports success and embeds the old interface.
+Tauri reads `dist/` once, in its build script. Cargo does not run that build
+script again when only `dist/` changes. The build reports success and embeds the
+old interface.
 
-This was measured by name. The interface was built again, which gave its two
-changed files new names. The release build ran again and reported success.
-Four of the nine names in `dist/assets/` were not in the executable: the two
-new ones and their two maps. The five that were in it were the files whose
-contents had not changed, so their names had not changed either.
-
-If the interface changed since the last build, force the capture:
+If the interface changed since the last build, make Cargo run the build script
+again:
 
 ```
 touch src-tauri/build.rs src-tauri/src/lib.rs
@@ -172,33 +144,25 @@ cargo xwin build -p comfyvault --release --features custom-protocol \
   --target x86_64-pc-windows-msvc
 ```
 
-Then run the check in section 2.5 again.
+Then run the check in section 2.4 again. Do not ship a build until it reports
+`missing: none`. A stale interface fails silently: the program starts, and
+shows an old screen.
 
-Do not ship a build until that check reports `missing: none`. A stale
-interface fails in the same silent way as a missing `custom-protocol` feature.
-The application starts, and the person uses an old screen.
-
-Do not start a release build while the interface is being rebuilt. The build
-reads `dist/` at the start and takes about 70 seconds. A write to `dist/`
-during that time does not reach the executable.
-
-This was measured. A release build started at 18:40:57. The interface was
-written again at 18:41:28. The build ended at 18:42:09 and reported success.
-Four of the nine built files were not in it. The five that were in it had not
-changed name, so their names still matched.
-
-Before a release build, confirm that `dist/` is at rest:
+Do not change `dist/` while a release build runs. The build reads `dist/` at
+the start, and a later write does not reach the executable. To make sure that
+`dist/` did not change, run this before and after the build:
 
 ```
 ls -l --time-style=+%s dist/assets
 ```
 
-Run the same command after the build. If the output differs, discard the
-executable and build again.
+If the two outputs differ, discard the executable and build again.
 
 ---
 
-## 3. Building and testing the engine alone
+## 3. The tests
+
+### 3.1 The engine
 
 The engine has no Tauri dependency, so it builds and tests on Linux with
 nothing extra installed:
@@ -207,47 +171,48 @@ nothing extra installed:
 cargo test -p comfyvault-core
 ```
 
-To type check the engine against Windows, including the Windows-only module:
+To type-check the engine against Windows, including its Windows-only code and
+test binaries:
 
 ```
 cargo xwin build -p comfyvault-core --target x86_64-pc-windows-msvc --tests
 ```
 
-That compiles the Windows test binaries as well. A mistake in them stops the
-build.
+### 3.2 The interface
 
-### 3.1 Run the tests on Windows
+```
+npm test
+```
 
-**A green run on Linux is not enough.** Three real bugs passed every Linux test
-and failed fifteen tests on Windows: paths that carried the `\\?\` prefix, a
-scan that read the machine's real Hugging Face cache, and a database key that
-told `/` and `\` apart. None of them can appear on Linux.
+### 3.3 Run the engine tests on Windows
 
-Build the test binary, copy it to a Windows folder, and run it. WSL runs a
-Windows executable directly, so this works from Linux:
+**A green run on Linux is not enough.** Paths with the `\\?\` prefix, the
+Hugging Face cache, and the difference between `/` and `\` in a stored path
+only go wrong on Windows.
+
+Build the test program, copy it to a scratch folder on the Windows drive, and
+run it. WSL runs a Windows program directly, so this works from WSL:
 
 ```
 cargo xwin test -p comfyvault-core --no-run --target x86_64-pc-windows-msvc
 cp "$(ls -t target/x86_64-pc-windows-msvc/debug/deps/comfyvault_core-*.exe | head -1)" \
-   /mnt/c/ComfyVault-Demo/core-tests.exe
-cd /mnt/c/ComfyVault-Demo
-COMFYVAULT_REPO='\\wsl.localhost\Ubuntu\home\user\ComfyVault' \
+   /mnt/c/<scratch folder>/core-tests.exe
+cd /mnt/c/<scratch folder>
+COMFYVAULT_REPO='<the repository folder, as Windows sees it>' \
   WSLENV=COMFYVAULT_REPO ./core-tests.exe
 ```
 
-Take the newest file, never a remembered name. The hash in that name changes
-whenever the crate's settings change, and a new file appears beside the old
-one. Copying yesterday's name runs yesterday's tests, and they pass.
+For a repository in WSL, the Windows path looks like
+`\\wsl.localhost\<distribution>\home\<you>\ComfyVault`.
 
-Three of the tests read files from the repository: the contract samples in
-`docs/golden/`, the contract itself, and the command layer's source. A test
-program knows where the repository is only because the path was fixed when it
-was compiled, and that path belongs to the machine that compiled it. Set
-`COMFYVAULT_REPO` to the repository folder as Windows sees it.
+Always take the newest test program, never a name you remember. The hash in
+the name changes when the crate's settings change, and the old file stays
+beside the new one. An old file runs old tests, and they pass.
 
-`WSLENV` is not optional. Without it, WSL does not pass the variable to a
-Windows program, the three tests cannot find the repository, and they fail.
-They do not quietly pass.
+Three tests read files from the repository: the samples in `docs/golden/`, the
+contract, and the command layer's source. `COMFYVAULT_REPO` tells the test
+program where the repository is. `WSLENV` is not optional: without it, WSL does
+not pass the variable to a Windows program, and those three tests fail.
 
 To run one test and see its output:
 
@@ -255,42 +220,45 @@ To run one test and see its output:
 ./core-tests.exe <test name> --exact --nocapture
 ```
 
-Two things change the result, so check them before you read a failure:
+Before you read a failure, check two things:
 
-- Developer Mode. With it off, every test that makes a link fails with the
-  engine's `symlinkUnsupported` message. That is correct behavior, not a
-  broken suite.
-- The folder you run in. Use a scratch folder. Never run against a real
-  ComfyUI install.
+- **Developer Mode.** If it is off, every test that makes a link fails with the
+  engine's `symlinkUnsupported` message. That is correct behavior.
+- **The folder you run in.** Use a scratch folder. Never run the tests against
+  a real ComfyUI install.
 
 ---
 
 ## 4. What a Linux build cannot do
 
 `cargo build -p comfyvault` for Linux fails. Tauri needs GTK and D-Bus
-development libraries that this project has no reason to install, because the
-product targets Windows. Use the cross-build in section 2.
+development libraries that this project does not install, because the product
+is for Windows. Use the cross build in section 2.
 
 Three behaviors can only be tested on Windows. The engine reports each of them
-honestly rather than guessing:
+as a measurement, not a guess:
 
-- Whether a symbolic link can be created. The engine measures this by creating
-  one, reading it back, and deleting it.
+- Whether a symbolic link can be made. The engine makes one, reads it back, and
+  deletes it.
 - Whether another program holds a file open. On Linux the engine reports
-  `checkable: false`, because a file there moves while it is open.
+  `checkable: false`, because a file there can move while it is open.
 - Whether paths longer than 260 characters work.
+
+One behavior has not been tested on real hardware: a vault on a different
+drive from an install. The engine tests simulate the drive boundary. No test
+has moved files to a real second drive and back.
 
 ---
 
-## 5. Where the pieces live
+## 5. Where the pieces are
 
 | Path | What it is |
 |---|---|
 | `crates/comfyvault-core/` | The engine. All the rules. No Tauri. |
 | `src-tauri/` | The command layer, the window, and the build settings. |
 | `src/` | The interface. |
-| `design/mock/comfyvault.html` | The design the interface was built from. Open it in a browser. |
+| `design/mock/comfyvault.html` | The design mock the interface was built from. Open it in a browser. |
 | `docs/IPC-CONTRACT.md` | Every command, payload and event. |
-| `docs/HOW-IT-WORKS.md` | What the scan reads, how the plan is decided, what Apply does. |
+| `docs/HOW-IT-WORKS.md` | What the scan reads, how the plan is made, what Apply and Undo do. |
 | `docs/FRONTEND.md` | Running the interface on its own, against a development engine. |
 | `docs/TROUBLESHOOTING.md` | The stuck states, and what to do about each one. |
