@@ -3,7 +3,7 @@
   "bytesFreed": 151119872,
   "failures": [
     {
-      "absPath": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors",
+      "absPath": "C:\\ComfyUI-Testing\\models\\checkpoints\\sdxl-base.safetensors",
       "detail": "ComfyUI is running and has this file open.",
       "groupId": "grp-2",
       "reason": "fileLocked"

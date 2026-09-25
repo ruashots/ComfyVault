@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn a_default_label_is_the_folder_name() {
-        assert_eq!(Install::default_label(std::path::Path::new("/a/b/ComfyUI-Alpha")), "ComfyUI-Alpha");
+        assert_eq!(Install::default_label(std::path::Path::new("/a/b/ComfyUI-Main")), "ComfyUI-Main");
     }
 
     #[test]

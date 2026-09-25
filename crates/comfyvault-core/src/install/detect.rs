@@ -12,7 +12,7 @@
 //! # Why the search goes deeper
 //!
 //! A launcher does not put ComfyUI at the top. One real layout is
-//! `C:\ComfyUI-Alpha\ComfyUI-Easy-Install\ComfyUI\`. So a folder that
+//! `C:\ComfyUI-Main\ComfyUI-Easy-Install\ComfyUI\`. So a folder that
 //! fails the test is searched three levels down, the shallowest match becomes
 //! the root, and any other match is reported so the person can choose.
 //!
@@ -557,9 +557,9 @@ mod tests {
     #[test]
     fn a_nested_install_is_found_and_the_depth_is_reported() {
         // The real layout this handles:
-        // C:\ComfyUI-Alpha\ComfyUI-Easy-Install\ComfyUI\
+        // C:\ComfyUI-Main\ComfyUI-Easy-Install\ComfyUI\
         let d = tmp();
-        let outer = d.path().join("ComfyUI-Alpha");
+        let outer = d.path().join("ComfyUI-Main");
         let real = outer.join("ComfyUI-Easy-Install").join("ComfyUI");
         std::fs::create_dir_all(&outer).unwrap();
         make_install(&real);

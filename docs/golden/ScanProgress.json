@@ -2,14 +2,14 @@
   "bytesFromCache": 94000000000,
   "bytesHashed": 318000000000,
   "bytesToHash": 612000000000,
-  "currentPath": "C:\\ComfyUI-Alpha\\models\\checkpoints\\sdxl-base.safetensors",
+  "currentPath": "C:\\ComfyUI-Main\\models\\checkpoints\\sdxl-base.safetensors",
   "elapsedMs": 128000,
   "etaMs": 94000,
   "filesHashed": 211,
   "filesSeen": 412,
   "filesToHash": 388,
   "installId": "inst-1",
-  "installLabel": "ComfyUI Production",
+  "installLabel": "ComfyUI Main",
   "phase": "hashing",
   "scanId": "scan-1"
 }

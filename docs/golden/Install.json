@@ -11,7 +11,7 @@
     }
   ],
   "id": "inst-1",
-  "label": "ComfyUI Production",
+  "label": "ComfyUI Main",
   "lastScanAt": "2025-09-22T00:03:32Z",
   "lastScanTotals": {
     "alreadyLinkedBytes": 12000000000,
@@ -27,7 +27,7 @@
     "hfCacheBytes": 22000000000,
     "hfCacheFiles": 11,
     "installId": "inst-1",
-    "installLabel": "ComfyUI Production",
+    "installLabel": "ComfyUI Main",
     "movableBytes": 612000000000,
     "movableFiles": 388,
     "reclaimableBytes": 224000000000,
@@ -35,16 +35,16 @@
     "uniqueBytes": 388000000000,
     "uniqueContents": 241
   },
-  "modelsDir": "C:\\ComfyUI-Alpha\\models",
+  "modelsDir": "C:\\ComfyUI-Main\\models",
   "outputModelDirs": [
     {
       "category": "checkpoints",
       "exists": false,
-      "path": "C:\\ComfyUI-Alpha\\output\\models"
+      "path": "C:\\ComfyUI-Main\\output\\models"
     }
   ],
-  "registeredPath": "C:\\ComfyUI-Alpha",
-  "root": "C:\\ComfyUI-Alpha",
+  "registeredPath": "C:\\ComfyUI-Main",
+  "root": "C:\\ComfyUI-Main",
   "version": "0.3.41",
   "versionSource": "comfyui_version.py"
 }

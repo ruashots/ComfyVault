@@ -3,8 +3,8 @@
     "python.exe",
     "main.py"
   ],
-  "cwd": "C:\\ComfyUI-Alpha",
-  "exePath": "C:\\ComfyUI-Alpha\\python_embeded\\python.exe",
+  "cwd": "C:\\ComfyUI-Main",
+  "exePath": "C:\\ComfyUI-Main\\python_embeded\\python.exe",
   "matchReason": "exeUnderRoot",
   "matchedInstallIds": [
     "inst-1"

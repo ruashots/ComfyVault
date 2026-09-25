@@ -1,10 +1,10 @@
 {
   "blocked": [
     {
-      "absPath": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors",
+      "absPath": "C:\\ComfyUI-Testing\\models\\checkpoints\\sdxl-base.safetensors",
       "detail": "ComfyUI is running and has this file open.",
       "installId": "inst-2",
-      "installLabel": "ComfyUI Normal",
+      "installLabel": "ComfyUI Testing",
       "reason": "fileLocked",
       "sha256": "A45F9C7EA1DAD86AC6176BC5F23E84F1BDD904B09D5929F34CBAF92145BB8C0D",
       "sizeBytes": 6938040320
@@ -22,9 +22,9 @@
       "groupId": "grp-1",
       "links": [
         {
-          "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+          "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
           "installId": "inst-1",
-          "installLabel": "ComfyUI Production",
+          "installLabel": "ComfyUI Main",
           "isSource": true,
           "linkName": "detail-tweaker.safetensors",
           "mtimeNanos": "1758240000000000000",
@@ -34,9 +34,9 @@
           "sizeBytes": 151119872
         },
         {
-          "absPath": "C:\\ComfyUI-Beta\\models\\loras\\detail_tweaker_xl.safetensors",
+          "absPath": "C:\\ComfyUI-Testing\\models\\loras\\detail_tweaker_xl.safetensors",
           "installId": "inst-2",
-          "installLabel": "ComfyUI Normal",
+          "installLabel": "ComfyUI Testing",
           "isSource": false,
           "linkName": "detail_tweaker_xl.safetensors",
           "mtimeNanos": "1758240000000000000",
@@ -51,10 +51,10 @@
       "singleCopy": false,
       "sizeBytes": 151119872,
       "source": {
-        "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+        "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
         "chosenBecause": "sameVolume",
         "installId": "inst-1",
-        "installLabel": "ComfyUI Production",
+        "installLabel": "ComfyUI Main",
         "mtimeNanos": "1758240000000000000",
         "relPath": "loras\\detail-tweaker.safetensors",
         "sameVolumeAsVault": true,

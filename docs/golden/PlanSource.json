@@ -1,8 +1,8 @@
 {
-  "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+  "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
   "chosenBecause": "sameVolume",
   "installId": "inst-1",
-  "installLabel": "ComfyUI Production",
+  "installLabel": "ComfyUI Main",
   "mtimeNanos": "1758240000000000000",
   "relPath": "loras\\detail-tweaker.safetensors",
   "sameVolumeAsVault": true,

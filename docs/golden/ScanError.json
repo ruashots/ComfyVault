@@ -2,5 +2,5 @@
   "code": "permissionDenied",
   "detail": "Windows refused to open this file.",
   "installId": "inst-2",
-  "path": "C:\\ComfyUI-Beta\\models\\checkpoints\\broken.safetensors"
+  "path": "C:\\ComfyUI-Testing\\models\\checkpoints\\broken.safetensors"
 }

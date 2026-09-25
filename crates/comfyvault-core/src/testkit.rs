@@ -2,9 +2,9 @@
 //!
 //! **Every test builds its own tree in a temporary folder and deletes it
 //! afterwards. The engine's tests never read, list or touch a real ComfyUI
-//! install.** That is not a convenience, it is a rule of this project: the
-//! machine this was written on holds real installs with a terabyte of weights
-//! in them, and they are off limits.
+//! install.** That is not a convenience, it is a rule of this project: a
+//! machine running these tests may hold real installs with a terabyte of
+//! weights in them, and they are off limits.
 //!
 //! A world holds a vault and however many fabricated installs a test asks for,
 //! all under one temporary folder, with a [`FakePlatform`] so a test can make a
@@ -39,8 +39,8 @@ impl TestWorld {
         let settings = Settings {
             min_file_size_bytes: 0,
             // A test must never walk the machine's real Hugging Face cache.
-            // On the person's computer that folder holds real models, and a
-            // scan would count files no test put there.
+            // On a machine that runs ComfyUI that folder holds real models,
+            // and a scan would count files no test put there.
             huggingface_cache_dirs: Some(Vec::new()),
             ..Default::default()
         };

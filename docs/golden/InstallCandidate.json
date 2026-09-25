@@ -10,7 +10,7 @@
       "section": "comfyui"
     }
   ],
-  "extraPathsFile": "C:\\ComfyUI-Alpha\\extra_model_paths.yaml",
+  "extraPathsFile": "C:\\ComfyUI-Main\\extra_model_paths.yaml",
   "extraPathsProblems": [
     "In section \"comfyui\", \"..\\..\\ESCAPED\" cannot be a model folder name, so it was skipped. A model folder name cannot contain a path separator."
   ],
@@ -20,7 +20,7 @@
     "models"
   ],
   "markersMissing": [],
-  "modelsDir": "C:\\ComfyUI-Alpha\\models",
+  "modelsDir": "C:\\ComfyUI-Main\\models",
   "modelsDirExists": true,
   "nestedDepth": 0,
   "otherCandidates": [],
@@ -28,11 +28,11 @@
     {
       "category": "checkpoints",
       "exists": false,
-      "path": "C:\\ComfyUI-Alpha\\output\\models"
+      "path": "C:\\ComfyUI-Main\\output\\models"
     }
   ],
   "reason": null,
-  "root": "C:\\ComfyUI-Alpha",
+  "root": "C:\\ComfyUI-Main",
   "valid": true,
   "version": "0.3.41",
   "versionSource": "comfyui_version.py"

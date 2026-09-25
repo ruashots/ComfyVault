@@ -8,9 +8,9 @@
   "groupId": "grp-1",
   "links": [
     {
-      "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+      "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
       "installId": "inst-1",
-      "installLabel": "ComfyUI Production",
+      "installLabel": "ComfyUI Main",
       "isSource": true,
       "linkName": "detail-tweaker.safetensors",
       "mtimeNanos": "1758240000000000000",
@@ -20,9 +20,9 @@
       "sizeBytes": 151119872
     },
     {
-      "absPath": "C:\\ComfyUI-Beta\\models\\loras\\detail_tweaker_xl.safetensors",
+      "absPath": "C:\\ComfyUI-Testing\\models\\loras\\detail_tweaker_xl.safetensors",
       "installId": "inst-2",
-      "installLabel": "ComfyUI Normal",
+      "installLabel": "ComfyUI Testing",
       "isSource": false,
       "linkName": "detail_tweaker_xl.safetensors",
       "mtimeNanos": "1758240000000000000",
@@ -37,10 +37,10 @@
   "singleCopy": false,
   "sizeBytes": 151119872,
   "source": {
-    "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+    "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
     "chosenBecause": "sameVolume",
     "installId": "inst-1",
-    "installLabel": "ComfyUI Production",
+    "installLabel": "ComfyUI Main",
     "mtimeNanos": "1758240000000000000",
     "relPath": "loras\\detail-tweaker.safetensors",
     "sameVolumeAsVault": true,

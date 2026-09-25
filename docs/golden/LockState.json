@@ -2,5 +2,5 @@
   "checkable": true,
   "detail": "Another program has this file open.",
   "locked": true,
-  "path": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors"
+  "path": "C:\\ComfyUI-Testing\\models\\checkpoints\\sdxl-base.safetensors"
 }

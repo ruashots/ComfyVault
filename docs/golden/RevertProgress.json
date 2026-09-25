@@ -3,7 +3,7 @@
   "applyId": "apply-1",
   "bytesCopied": 2147483648,
   "bytesToCopy": 13876297728,
-  "currentPath": "C:\\ComfyUI-Beta\\models\\checkpoints\\sdxl-base.safetensors",
+  "currentPath": "C:\\ComfyUI-Testing\\models\\checkpoints\\sdxl-base.safetensors",
   "elapsedMs": 19000,
   "etaMs": 104000,
   "filesPutBack": 1,

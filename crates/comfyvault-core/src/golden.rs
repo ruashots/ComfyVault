@@ -94,10 +94,10 @@ fn vault_dir() -> PathBuf {
 fn production() -> Install {
     Install {
         id: "inst-1".into(),
-        label: "ComfyUI Production".into(),
-        registered_path: PathBuf::from(r"C:\ComfyUI-Alpha"),
-        root: PathBuf::from(r"C:\ComfyUI-Alpha"),
-        models_dir: PathBuf::from(r"C:\ComfyUI-Alpha\models"),
+        label: "ComfyUI Main".into(),
+        registered_path: PathBuf::from(r"C:\ComfyUI-Main"),
+        root: PathBuf::from(r"C:\ComfyUI-Main"),
+        models_dir: PathBuf::from(r"C:\ComfyUI-Main\models"),
         version: Some("0.3.41".into()),
         version_source: Some(VersionSource::VersionFile),
         extra_paths: vec![ExtraPath {
@@ -109,7 +109,7 @@ fn production() -> Install {
             exists: true,
         }],
         output_model_dirs: vec![OutputModelDir {
-            path: PathBuf::from(r"C:\ComfyUI-Alpha\output\models"),
+            path: PathBuf::from(r"C:\ComfyUI-Main\output\models"),
             category: "checkpoints".into(),
             exists: false,
         }],
@@ -117,7 +117,7 @@ fn production() -> Install {
         last_scan_at: Some(SCAN_END),
         last_scan_totals: Some(InstallScanTotals {
             install_id: "inst-1".into(),
-            install_label: "ComfyUI Production".into(),
+            install_label: "ComfyUI Main".into(),
             totals: totals(),
         }),
     }
@@ -150,7 +150,7 @@ fn link_record() -> LinkRecord {
     LinkRecord {
         id: "link-1".into(),
         install_id: "inst-1".into(),
-        abs_path: PathBuf::from(r"C:\ComfyUI-Alpha\models\loras\detail-tweaker.safetensors"),
+        abs_path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors"),
         rel_path: PathBuf::from(r"loras\detail-tweaker.safetensors"),
         link_name: "detail-tweaker.safetensors".into(),
         sha256: hash_a(),
@@ -201,7 +201,7 @@ fn vault_file() -> VaultFile {
 
 fn scan_entry() -> ScanEntryRecord {
     ScanEntryRecord {
-        abs_path: PathBuf::from(r"C:\ComfyUI-Alpha\models\loras\detail-tweaker.safetensors"),
+        abs_path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors"),
         rel_path: PathBuf::from(r"loras\detail-tweaker.safetensors"),
         install_id: "inst-1".into(),
         category: "loras".into(),
@@ -246,8 +246,8 @@ fn vault_name() -> VaultName {
 fn usage_match() -> UsageMatch {
     UsageMatch {
         install_id: "inst-1".into(),
-        install_label: "ComfyUI Production".into(),
-        workflow_path: r"C:\ComfyUI-Alpha\user\default\workflows\portrait.json".into(),
+        install_label: "ComfyUI Main".into(),
+        workflow_path: r"C:\ComfyUI-Main\user\default\workflows\portrait.json".into(),
         workflow_name: "portrait.json".into(),
     }
 }
@@ -264,9 +264,9 @@ fn plan_group() -> PlanGroup {
         vault_aliases: vec!["detail_tweaker_xl.safetensors".into()],
         source: PlanSource {
             install_id: "inst-1".into(),
-            install_label: "ComfyUI Production".into(),
+            install_label: "ComfyUI Main".into(),
             abs_path: PathBuf::from(
-                r"C:\ComfyUI-Alpha\models\loras\detail-tweaker.safetensors",
+                r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors",
             ),
             rel_path: PathBuf::from(r"loras\detail-tweaker.safetensors"),
             same_volume_as_vault: true,
@@ -277,9 +277,9 @@ fn plan_group() -> PlanGroup {
         links: vec![
             PlanLink {
                 install_id: "inst-1".into(),
-                install_label: "ComfyUI Production".into(),
+                install_label: "ComfyUI Main".into(),
                 abs_path: PathBuf::from(
-                    r"C:\ComfyUI-Alpha\models\loras\detail-tweaker.safetensors",
+                    r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors",
                 ),
                 rel_path: PathBuf::from(r"loras\detail-tweaker.safetensors"),
                 link_name: "detail-tweaker.safetensors".into(),
@@ -291,8 +291,8 @@ fn plan_group() -> PlanGroup {
             },
             PlanLink {
                 install_id: "inst-2".into(),
-                install_label: "ComfyUI Normal".into(),
-                abs_path: PathBuf::from(r"C:\ComfyUI-Beta\models\loras\detail_tweaker_xl.safetensors"),
+                install_label: "ComfyUI Testing".into(),
+                abs_path: PathBuf::from(r"C:\ComfyUI-Testing\models\loras\detail_tweaker_xl.safetensors"),
                 rel_path: PathBuf::from(r"loras\detail_tweaker_xl.safetensors"),
                 link_name: "detail_tweaker_xl.safetensors".into(),
                 name_differs_from_vault: true,
@@ -320,9 +320,9 @@ fn plan() -> ConsolidationPlan {
         symlinks_supported: true,
         groups: vec![plan_group()],
         blocked: vec![BlockedRow {
-            abs_path: PathBuf::from(r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors"),
+            abs_path: PathBuf::from(r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors"),
             install_id: Some("inst-2".into()),
-            install_label: Some("ComfyUI Normal".into()),
+            install_label: Some("ComfyUI Testing".into()),
             size_bytes: 6_938_040_320,
             sha256: Some(hash_b()),
             reason: BlockReason::FileLocked,
@@ -384,7 +384,7 @@ fn apply_record() -> ApplyRecord {
         vault_free_bytes_after: Some(287_999_999_680),
         failures: vec![ApplyFailure {
             group_id: "grp-2".into(),
-            abs_path: r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
+            abs_path: r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors".into(),
             reason: BlockReason::FileLocked,
             detail: "ComfyUI is running and has this file open.".into(),
         }],
@@ -462,7 +462,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             "InstallCandidate",
             InstallCandidate {
                 valid: true,
-                root: Some(PathBuf::from(r"C:\ComfyUI-Alpha")),
+                root: Some(PathBuf::from(r"C:\ComfyUI-Main")),
                 nested_depth: 0,
                 markers_found: vec!["main.py".into(), "comfy".into(), "models".into()],
                 markers_missing: Vec::new(),
@@ -470,10 +470,10 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 other_candidates: Vec::new(),
                 version: Some("0.3.41".into()),
                 version_source: Some(VersionSource::VersionFile),
-                models_dir: Some(PathBuf::from(r"C:\ComfyUI-Alpha\models")),
+                models_dir: Some(PathBuf::from(r"C:\ComfyUI-Main\models")),
                 models_dir_exists: true,
                 extra_paths_file: Some(PathBuf::from(
-                    r"C:\ComfyUI-Alpha\extra_model_paths.yaml",
+                    r"C:\ComfyUI-Main\extra_model_paths.yaml",
                 )),
                 extra_paths: production().extra_paths,
                 extra_paths_problems: vec![
@@ -489,13 +489,13 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             "ModelDirNode",
             ModelDirNode {
                 rel_path: "loras".into(),
-                abs_path: PathBuf::from(r"C:\ComfyUI-Alpha\models\loras"),
+                abs_path: PathBuf::from(r"C:\ComfyUI-Main\models\loras"),
                 category: "loras".into(),
                 origin: RootOrigin::ModelsDir,
                 file_count: 61,
                 children: vec![ModelDirNode {
                     rel_path: r"loras\sdxl".into(),
-                    abs_path: PathBuf::from(r"C:\ComfyUI-Alpha\models\loras\sdxl"),
+                    abs_path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\sdxl"),
                     category: "loras".into(),
                     origin: RootOrigin::ModelsDir,
                     file_count: 12,
@@ -524,11 +524,11 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 totals: totals(),
                 per_install: vec![InstallScanTotals {
                     install_id: "inst-1".into(),
-                    install_label: "ComfyUI Production".into(),
+                    install_label: "ComfyUI Main".into(),
                     totals: totals(),
                 }],
                 errors: vec![ScanError {
-                    path: r"C:\ComfyUI-Beta\models\checkpoints\broken.safetensors".into(),
+                    path: r"C:\ComfyUI-Testing\models\checkpoints\broken.safetensors".into(),
                     install_id: Some("inst-2".into()),
                     code: ErrorCode::PermissionDenied,
                     detail: "Windows refused to open this file.".into(),
@@ -548,7 +548,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 steps_pending: 2,
                 description: "A consolidation of 4 groups stopped part way through.".into(),
                 affected_paths: vec![
-                    r"C:\ComfyUI-Alpha\models\loras\detail-tweaker.safetensors".into(),
+                    r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors".into(),
                 ],
             },
         ),
@@ -614,8 +614,8 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             RunningComfy {
                 pid: 18_244,
                 name: "python.exe".into(),
-                exe_path: Some(r"C:\ComfyUI-Alpha\python_embeded\python.exe".into()),
-                cwd: Some(r"C:\ComfyUI-Alpha".into()),
+                exe_path: Some(r"C:\ComfyUI-Main\python_embeded\python.exe".into()),
+                cwd: Some(r"C:\ComfyUI-Main".into()),
                 command_line: vec!["python.exe".into(), "main.py".into()],
                 matched_install_ids: vec!["inst-1".into()],
                 match_reason: MatchReason::ExeUnderRoot,
@@ -624,7 +624,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
         s(
             "LockState",
             LockState {
-                path: r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
+                path: r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors".into(),
                 locked: true,
                 checkable: true,
                 detail: Some("Another program has this file open.".into()),
@@ -654,7 +654,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 scan_id: "scan-1".into(),
                 phase: ScanPhase::Hashing,
                 install_id: Some("inst-1".into()),
-                install_label: Some("ComfyUI Production".into()),
+                install_label: Some("ComfyUI Main".into()),
                 files_seen: 412,
                 files_to_hash: 388,
                 files_hashed: 211,
@@ -662,7 +662,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 bytes_hashed: 318_000_000_000,
                 bytes_from_cache: 94_000_000_000,
                 current_path: Some(
-                    r"C:\ComfyUI-Alpha\models\checkpoints\sdxl-base.safetensors".into(),
+                    r"C:\ComfyUI-Main\models\checkpoints\sdxl-base.safetensors".into(),
                 ),
                 elapsed_ms: 128_000,
                 eta_ms: Some(94_000),
@@ -677,7 +677,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 group_total: 2,
                 current_group_id: Some("grp-2".into()),
                 current_path: Some(
-                    r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
+                    r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors".into(),
                 ),
                 step: ApplyStep::Linking,
                 bytes_moved: 0,
@@ -698,7 +698,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 step_index: 3,
                 step_total: 9,
                 current_path: Some(
-                    r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into(),
+                    r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors".into(),
                 ),
                 action: RevertAction::CopyingBack,
                 files_put_back: 1,
@@ -727,14 +727,14 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             "InstallScanTotals",
             InstallScanTotals {
                 install_id: "inst-1".into(),
-                install_label: "ComfyUI Production".into(),
+                install_label: "ComfyUI Main".into(),
                 totals: totals(),
             },
         ),
         s(
             "ScanError",
             ScanError {
-                path: r"C:\ComfyUI-Beta\models\checkpoints\broken.safetensors".into(),
+                path: r"C:\ComfyUI-Testing\models\checkpoints\broken.safetensors".into(),
                 install_id: Some("inst-2".into()),
                 code: ErrorCode::PermissionDenied,
                 detail: "Windows refused to open this file.".into(),
@@ -765,7 +765,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 message: "ComfyUI is running and has this file open. Close it and try again."
                     .into(),
                 detail: Some("python.exe, process 18244".into()),
-                path: Some(r"C:\ComfyUI-Beta\models\checkpoints\sdxl-base.safetensors".into()),
+                path: Some(r"C:\ComfyUI-Testing\models\checkpoints\sdxl-base.safetensors".into()),
             },
         ),
     ]

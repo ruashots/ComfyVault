@@ -1,6 +1,6 @@
 {
   "affectedPaths": [
-    "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors"
+    "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors"
   ],
   "applyId": "apply-0",
   "description": "A consolidation of 4 groups stopped part way through.",

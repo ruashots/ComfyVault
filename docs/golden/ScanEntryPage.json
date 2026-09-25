@@ -1,7 +1,7 @@
 {
   "entries": [
     {
-      "absPath": "C:\\ComfyUI-Alpha\\models\\loras\\detail-tweaker.safetensors",
+      "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
       "category": "loras",
       "classification": "movable",
       "installId": "inst-1",
