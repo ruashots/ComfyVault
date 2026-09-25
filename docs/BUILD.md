@@ -307,7 +307,6 @@ has moved files to a real second drive and back.
 | `crates/comfyvault-core/` | The engine. All the rules. No Tauri. |
 | `src-tauri/` | The command layer, the window, and the build settings. |
 | `src/` | The interface. |
-| `design/mock/comfyvault.html` | The design mock the interface was built from. Open it in a browser. |
 | `docs/IPC-CONTRACT.md` | Every command, payload and event. |
 | `docs/HOW-IT-WORKS.md` | What the scan reads, how the plan is made, what Apply and Undo do. |
 | `docs/FRONTEND.md` | Running the interface on its own, against a development engine. |

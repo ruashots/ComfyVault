@@ -53,6 +53,13 @@ fn addresses_outside_the_scope_are_refused() {
         "http://192.168.1.20:8188/",
         "http://10.0.0.1:8188/",
         "file://127.0.0.1/C$/Windows/System32/calc.exe",
+        // Port 9, which nothing serves: a case the scope wrongly let through
+        // would reach a real ComfyUI on its usual port.
+        "https://127.0.0.1:9/",
+        // Only the page itself, never a request to ComfyUI's API.
+        "http://127.0.0.1:9/api/prompt",
+        "http://127.0.0.1:9/?x=1",
+        "http://127.0.0.1:9/#x",
     ] {
         let err = open(url).expect_err(url);
         // Refused by the scope itself, not for some other reason.
@@ -76,13 +83,29 @@ fn the_developer_mode_settings_page_opens() {
     open("ms-settings:developers").expect("the Developer Mode page was refused");
 }
 
-/// Opens a ComfyUI on this computer in the default browser, the way the
-/// running warning does, so it runs only when asked: `--ignored`. Nothing
-/// needs to listen on the port: the scope decides before the browser does.
+/// Opens a page on this computer in the default browser, the way the running
+/// warning does, so it runs only when asked: `--ignored`. The test serves the
+/// page itself, on a port the system picks, so no real ComfyUI is ever asked.
 #[test]
 #[ignore]
 fn a_comfyui_on_this_computer_opens() {
-    // A port nothing on this computer serves, so the browser shows only that
-    // nothing answered there.
-    open("http://127.0.0.1:49151").expect("the local address was refused");
+    use std::io::{Read, Write};
+    let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let served = std::thread::spawn(move || {
+        let (mut conn, _) = server.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let n = conn.read(&mut buf).unwrap();
+        let body = "opener scope test, close this tab";
+        let _ = write!(
+            conn,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string()
+    });
+    open(&format!("http://127.0.0.1:{port}/")).expect("the local address was refused");
+    // The browser really asked for the page, so the opener did open it.
+    let request = served.join().unwrap();
+    assert!(request.starts_with("GET / "), "the browser asked for {request}");
 }

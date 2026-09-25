@@ -1978,9 +1978,10 @@ the same process in Task Manager.
 Data from a build before these fields existed reads back with all three set to
 `null`.
 
-To open a ComfyUI that listens, open `http://127.0.0.1:<port>` with the opener
-plugin's `open_url`. The window may open that address on any port, and no other
-address on this computer or the network.
+To open a ComfyUI that listens, call the opener plugin's `open_url` with
+`http://127.0.0.1:<port>/`, with the trailing slash. The window may open
+exactly that page, on any port. It may not open another path, a query, a
+fragment, `https`, or any other address on this computer or the network.
 
 ### 11.2 `check_locked_files`
 

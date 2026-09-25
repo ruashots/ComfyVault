@@ -16,7 +16,7 @@
       "allow": [
         { "url": "https://civitai.com/models/*" },
         { "url": "ms-settings:developers" },
-        { "url": "http://127.0.0.1:*" }
+        { "url": "http://127.0.0.1:*/" }
       ]
     },
     "opener:allow-reveal-item-in-dir"
