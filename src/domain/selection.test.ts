@@ -116,6 +116,9 @@ const comfy: RunningComfy = {
   commandLine: ["python.exe", "main.py"],
   matchedInstallIds: ["studio"],
   matchReason: "exeUnderRoot",
+  startedAt: "2026-09-24T16:42:00Z",
+  listeningPorts: [8188],
+  holdsModelFiles: true,
 };
 
 const stopped: InterruptedApply = {
@@ -148,6 +151,17 @@ describe("Apply is held back until the machine allows it", () => {
 
   it("refuses while a ComfyUI is running", () => {
     const blockers = applyBlockers(machine({ running: [comfy] }));
+    expect(blockers.map((b) => b.kind)).toEqual(["comfy_running"]);
+  });
+
+  it.each([
+    ["holds no model file right now", { holdsModelFiles: false }],
+    ["serves nothing", { listeningPorts: [] }],
+    ["gave Windows no answers at all", { startedAt: null, listeningPorts: null, holdsModelFiles: null }],
+  ])("still refuses while a ComfyUI that %s is running", (_, facts) => {
+    // It can open any model the moment a workflow runs, so what it holds now
+    // is something to show, never a reason to let a run start.
+    const blockers = applyBlockers(machine({ running: [{ ...comfy, ...facts }] }));
     expect(blockers.map((b) => b.kind)).toEqual(["comfy_running"]);
   });
 

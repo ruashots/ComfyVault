@@ -827,6 +827,15 @@ export interface RunningComfy {
   commandLine: string[];
   matchedInstallIds: string[];
   matchReason: "exeUnderRoot" | "cwdUnderRoot" | "argUnderRoot";
+  /**
+   * The last three are what tell a working ComfyUI from one that never exited.
+   * Null on each means Windows gave no answer, never "no".
+   */
+  startedAt: string | null;
+  /** The TCP ports it listens on. Empty means it serves nothing. */
+  listeningPorts: number[] | null;
+  /** Whether it holds open any model file the vault knows about. */
+  holdsModelFiles: boolean | null;
 }
 
 export interface LockState {

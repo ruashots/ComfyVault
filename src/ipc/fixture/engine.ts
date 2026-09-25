@@ -1648,18 +1648,41 @@ export class FixtureEngine implements Engine {
 
   async getRunningComfy(): Promise<RunningComfy[]> {
     this.requireVault();
+    // Measured against the real engine: with no scan and an empty vault there
+    // is no model file to ask about, so whether one is held is not known.
+    const nothingToAsk = this.lastScan === null && this.world.vault.size === 0;
     return this.world.running.map((installId, i) => {
       const root = this.world.installs.find((x) => x.id === installId)?.root ?? null;
+      const facts = this.processFacts;
       return {
         pid: 18244 + i,
         name: "python.exe",
         exePath: root ? `${root}\\python_embeded\\python.exe` : null,
         cwd: root,
-        commandLine: ["python.exe", "main.py"],
+        commandLine: facts.commandLine,
         matchedInstallIds: [installId],
         matchReason: "exeUnderRoot" as const,
+        startedAt: facts.startedAt,
+        listeningPorts: facts.listeningPorts,
+        holdsModelFiles: nothingToAsk ? null : facts.holdsModelFiles,
       };
     });
+  }
+
+  /**
+   * What Windows says about each running ComfyUI. By default one started the
+   * evening before, still serving on 8188. A test sets each answer, including
+   * none at all.
+   */
+  private processFacts: ProcessFacts = {
+    startedAt: yesterdayAt(18, 42),
+    listeningPorts: [8188],
+    holdsModelFiles: true,
+    commandLine: ["python.exe", "main.py", "--port", "8188"],
+  };
+
+  devSetProcessFacts(facts: Partial<ProcessFacts>): void {
+    this.processFacts = { ...this.processFacts, ...facts };
   }
 
   async checkLockedFiles(paths: string[]): Promise<LockState[]> {
@@ -1836,6 +1859,20 @@ export class FixtureEngine implements Engine {
     if (empty) this.emptyWorld();
     else this.recordScan("scan-1");
   }
+}
+
+/** What Windows says about a running ComfyUI in this world. */
+export interface ProcessFacts {
+  startedAt: string | null;
+  listeningPorts: number[] | null;
+  holdsModelFiles: boolean | null;
+  commandLine: string[];
+}
+
+/** An ISO time for the day before today, at this local hour and minute. */
+function yesterdayAt(hour: number, minute: number): string {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, hour, minute).toISOString();
 }
 
 function invalidCandidate(reason: string): InstallCandidate {
