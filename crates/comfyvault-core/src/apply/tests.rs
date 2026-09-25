@@ -628,7 +628,7 @@ fn a_resumed_run_keeps_the_reading_from_before_the_work_began() {
     const BEFORE: u64 = 10_000_000_000;
     w.platform.set_free_bytes(BEFORE);
 
-    // Stop after the first group, leaving the run interrupted.
+    // Stop after the first group.
     let cancel = CancelToken::new();
     let trigger = cancel.clone();
     let stop = move |p: &ApplyProgress| {
@@ -638,6 +638,9 @@ fn a_resumed_run_keeps_the_reading_from_before_the_work_began() {
     };
     let first = applier(&w).apply("ap-1", &plan, &req, &cancel, &stop).unwrap();
     assert_eq!(first.vault_free_bytes_before, Some(BEFORE));
+    // Then the power goes before the record is closed: only a run cut off
+    // part way can be finished.
+    w.store.put_apply(&ApplyRecord { state: ApplyState::Running, finished_at: None, ..first }).unwrap();
 
     // The drive now reads differently, because the first pass freed something.
     w.platform.set_free_bytes(30_000_000_000);
@@ -2246,4 +2249,186 @@ fn a_scan_between_two_stopped_undos_is_out_of_date_once_the_second_one_moves_a_f
         stamp().unwrap() > scanned,
         "files came back after the scan, and the recorded time still calls it current"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The vault's database is not trusted
+// ---------------------------------------------------------------------------
+
+fn crafted(ap: &str, seq: u64, step: JournalStep, state: JournalState) -> JournalEntry {
+    JournalEntry {
+        apply_id: ap.into(),
+        seq,
+        group_id: "g-crafted".into(),
+        step,
+        state,
+        started_at: crate::time_util::Timestamp::now(),
+        finished_at: None,
+        error: None,
+    }
+}
+
+#[test]
+fn an_undo_refuses_a_run_that_names_a_file_outside_the_vault_and_the_installs() {
+    // One row added to the database made an undo delete a document that was
+    // in no install and not in the vault.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+
+    let victim = w.write_file("Documents/thesis.docx", b"irreplaceable");
+    let decoy = w.write_file("Documents/anything.txt", b"any real file");
+    w.store
+        .append_journal(&crafted(
+            "ap-1",
+            99,
+            JournalStep::MoveToVault { from: decoy, to: victim.clone(), copied: false, sha256: "0".repeat(64), size_bytes: 1 },
+            JournalState::Done,
+        ))
+        .unwrap();
+
+    let err = applier(&w).preview_revert("ap-1").unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+    assert!(err.detail.unwrap().contains("thesis.docx"), "the refusal must name the place");
+    assert_eq!(std::fs::read(&victim).unwrap(), b"irreplaceable");
+    assert!(w.is_link(&pa) && w.is_link(&pb), "the refusal came after files were touched");
+    assert_ne!(w.store.apply("ap-1").unwrap().unwrap().state, ApplyState::PartlyReverted);
+}
+
+#[test]
+fn a_crafted_cut_off_run_cannot_write_a_file_anywhere() {
+    // A fake cut-off run made the recovery buttons copy a script into the
+    // Windows Startup folder.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/x.safetensors", &weights("x"));
+    let plan = w.plan(&[a]);
+
+    let payload = b"@echo off\r\n".to_vec();
+    let payload_path = w.vault_root.join("loras/readme.safetensors");
+    std::fs::create_dir_all(payload_path.parent().unwrap()).unwrap();
+    std::fs::write(&payload_path, &payload).unwrap();
+    let startup = w.path().join("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/update.bat");
+
+    w.store
+        .put_apply(&ApplyRecord {
+            apply_id: "ap-evil".into(),
+            plan_id: plan.plan_id.clone(),
+            state: ApplyState::Running,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            groups_requested: 1,
+            group_ids: vec![],
+            groups_applied: 0,
+            groups_failed: 0,
+            bytes_freed: 0,
+            files_moved: 0,
+            links_created: 0,
+            vault_free_bytes_before: None,
+            vault_free_bytes_after: None,
+            failures: vec![],
+            revertible: true,
+            last_undo_step_at: None,
+        })
+        .unwrap();
+    w.store
+        .append_journal(&crafted(
+            "ap-evil",
+            0,
+            JournalStep::DeleteStash {
+                stash: w.path().join("nothing-here"),
+                original: startup.clone(),
+                vault_path: payload_path,
+                sha256: crate::scan::hash::hash_bytes(&payload),
+                size_bytes: payload.len() as u64,
+                mtime_nanos: None,
+            },
+            JournalState::Pending,
+        ))
+        .unwrap();
+
+    for result in [
+        applier(&w).resume("ap-evil", &CancelToken::new(), &NullSink).map(|_| ()),
+        applier(&w).revert("ap-evil", &CancelToken::new(), &NullSink).map(|_| ()),
+    ] {
+        assert_eq!(result.unwrap_err().code, ErrorCode::PathOutsideBoundary);
+    }
+    assert!(!startup.exists(), "a file was written outside every install");
+}
+
+#[test]
+fn a_stored_plan_that_names_a_place_outside_the_installs_is_not_applied() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let mut plan = w.plan(&[a, b]);
+    // The plan is read back from the database, so it can say anything.
+    let outside = w.write_file("Documents/m.safetensors", &weights("m"));
+    let meta = std::fs::metadata(&outside).unwrap();
+    let link = &mut plan.groups[0].links[1];
+    link.abs_path = outside.clone();
+    link.size_bytes = meta.len();
+    link.mtime_nanos = crate::time_util::Timestamp::mtime_nanos(&meta);
+
+    let record = run_apply(&w, &plan);
+    assert_eq!(record.groups_applied, 0);
+    assert_eq!(record.failures.len(), 1);
+    assert!(outside.is_file() && !w.is_link(&outside), "a file outside every install was touched");
+}
+
+#[test]
+fn a_stored_install_that_is_not_a_comfyui_install_gives_no_place_to_touch() {
+    // A row in the database is only a claim. Its folders count only when the
+    // folder on this disk is a ComfyUI install now.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a.clone(), b]);
+    run_apply(&w, &plan);
+
+    // The install stops being one: its markers are gone.
+    for f in ["main.py", "nodes.py", "execution.py", "server.py", "folder_paths.py"] {
+        let _ = std::fs::remove_file(a.root.join(f));
+    }
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+    assert!(w.is_link(&pa));
+}
+
+#[test]
+fn a_run_over_every_kind_of_model_folder_can_still_be_undone() {
+    // The places the check accepts are the places a scan can find a model:
+    // the models folder, a folder named in extra_model_paths.yaml, and the
+    // model folders under output.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let shared = w.path().join("SharedModels");
+    let a = w.add_extra_model_path(&a, "loras", &shared);
+    let places = vec![
+        w.write_model(&a, "models/checkpoints/c.safetensors", &weights("c")),
+        w.write_file("SharedModels/c.safetensors", &weights("c")),
+        w.write_model(&b, "output/checkpoints/c.safetensors", &weights("c")),
+    ];
+    let plan = w.plan(&[a, b]);
+    assert_eq!(plan.groups.len(), 1);
+    assert_eq!(plan.groups[0].links.len(), 3, "the scan must find all three places");
+    run_apply(&w, &plan);
+    assert!(places.iter().all(|p| w.is_link(p)));
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    for p in &places {
+        assert!(!w.is_link(p));
+        assert_eq!(std::fs::read(p).unwrap(), weights("c"));
+    }
 }

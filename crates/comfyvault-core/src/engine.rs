@@ -506,8 +506,12 @@ impl Engine {
         Ok(outcome.record)
     }
 
+    /// The installs to scan. Each is inspected on the disk again, and an
+    /// install whose folder is not a ComfyUI install now is left out, so a row
+    /// in a database from elsewhere cannot make the scan read a folder of its
+    /// choosing.
     fn installs_for(&self, store: &Store, ids: Option<Vec<String>>) -> Result<Vec<Install>> {
-        let all = store.installs()?;
+        let all: Vec<Install> = store.installs()?.iter().filter_map(|i| i.proved().ok()).collect();
         match ids {
             None => Ok(all),
             Some(ids) => ids
@@ -587,7 +591,7 @@ impl Engine {
             return Err(VaultError::not_found("That scan is not in this vault's history."));
         }
         let entries = store.scan_entries(scan_id)?;
-        let installs = store.installs()?;
+        let installs: Vec<Install> = store.installs()?.iter().filter_map(|i| i.proved().ok()).collect();
         let plan = Planner::new(&store, self.platform.as_ref()).build(
             &uuid::Uuid::new_v4().to_string(),
             scan_id,

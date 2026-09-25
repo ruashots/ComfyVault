@@ -26,6 +26,7 @@
 //! removed. An interruption at any point leaves the bytes present under one
 //! name or the other, never gone.
 
+pub mod boundary;
 pub mod fsops;
 
 use std::path::{Path, PathBuf};
@@ -311,6 +312,8 @@ struct Run {
     /// Read a duplicate again before deleting it, rather than trusting a hash
     /// from an earlier scan.
     verify_before_delete: bool,
+    /// Where this run may touch the disk, read once when it starts.
+    places: boundary::Places,
 }
 
 impl<'a> Applier<'a> {
@@ -382,6 +385,7 @@ impl<'a> Applier<'a> {
             groups_applied: 0,
             failures: Vec::new(),
             verify_before_delete: self.store.settings()?.verify_before_delete,
+            places: boundary::Places::read(self.store)?,
         };
 
         // Read from the drive before anything moves. A resumed pass keeps the
@@ -506,6 +510,13 @@ impl<'a> Applier<'a> {
     ) -> Result<()> {
         let vault_root = self.store.vault_root().to_path_buf();
         let temp_dir = self.store.temp_dir();
+
+        // The plan is read from the vault's database, which may not have been
+        // written on this computer. Every place it names is proved first.
+        let refused = run.places.refused_in_group(group);
+        if !refused.is_empty() {
+            return Err(boundary::refusal(&refused));
+        }
 
         // Proved here, at the write, not assumed from a plan that was built
         // earlier and stored. The folder name inside a vault path comes from a
@@ -1101,6 +1112,14 @@ impl<'a> Applier<'a> {
             .filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending))
             .collect();
 
+        // Every path comes from the vault's database. Proved before anything
+        // else, so a run naming a place outside the vault and the installs is
+        // refused whole, with nothing touched.
+        let refused = boundary::Places::read(self.store)?.refused_in_steps(&to_undo);
+        if !refused.is_empty() {
+            return Err(boundary::refusal(&refused));
+        }
+
         // The contract promises this and nothing implemented it. Renaming a
         // model in the vault, or a later run touching the same files, leaves
         // this run's steps describing a world that no longer exists. Undoing
@@ -1346,12 +1365,37 @@ impl<'a> Applier<'a> {
             .store
             .apply(apply_id)?
             .ok_or_else(|| VaultError::not_found("That run is not in this vault's history."))?;
+        // Only a run cut off in the middle is finished. Resuming a run the
+        // person undid applied the whole of it again: files moved back into
+        // the vault and duplicates deleted, for a run they had taken back.
+        if record.state != ApplyState::Running {
+            return Err(VaultError::conflict(
+                "Only a run that was cut off part way can be finished. This one is not.",
+            ));
+        }
         let plan = self
             .store
             .plan(&record.plan_id)?
             .ok_or_else(|| VaultError::not_found("The plan for that run is no longer in this vault."))?;
 
         let entries = self.store.journal(apply_id)?;
+
+        // The journal and the plan are read from the vault's database. Every
+        // place they name is proved before a file is touched.
+        let places = boundary::Places::read(self.store)?;
+        let mut refused = places.refused_in_steps(
+            entries.iter().filter(|e| matches!(e.state, JournalState::Done | JournalState::Pending)),
+        );
+        for gid in &record.group_ids {
+            if let Some(g) = plan.group(gid) {
+                refused.extend(places.refused_in_group(g));
+            }
+        }
+        if !refused.is_empty() {
+            refused.sort();
+            refused.dedup();
+            return Err(boundary::refusal(&refused));
+        }
 
         // A group is finished when its last step is done and nothing in it is
         // pending. Everything else is rolled back and applied again.

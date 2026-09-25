@@ -67,6 +67,29 @@ impl Install {
         })
     }
 
+    /// The install as the disk shows it now, keeping this record's identity.
+    ///
+    /// A vault's database can come from another computer or from someone
+    /// else, so a stored install is a claim, not a fact. Before a stored
+    /// install decides where the engine reads, writes or deletes, its folder
+    /// is inspected again, and its model folders come from that inspection.
+    pub fn proved(&self) -> crate::Result<Self> {
+        let c = detect::require_valid(&self.root)?;
+        let root = c.root.clone().unwrap_or_default();
+        if !crate::paths::same_path_lexically(&root, &self.root) {
+            return Err(crate::VaultError::new(
+                crate::ErrorCode::NotAComfyInstall,
+                "That install's folder is not a ComfyUI install any more.",
+            )
+            .with_path(&self.root));
+        }
+        let mut fresh = Self::from_candidate(self.id.clone(), self.label.clone(), self.registered_path.clone(), &c)?;
+        fresh.added_at = self.added_at;
+        fresh.last_scan_at = self.last_scan_at;
+        fresh.last_scan_totals = self.last_scan_totals.clone();
+        Ok(fresh)
+    }
+
     /// A label from the folder name, used when the person does not give one.
     pub fn default_label(path: &std::path::Path) -> String {
         path.file_name()

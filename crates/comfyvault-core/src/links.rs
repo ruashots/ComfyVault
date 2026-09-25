@@ -82,7 +82,9 @@ impl<'a> Links<'a> {
         let install = self
             .store
             .install(&req.install_id)?
-            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?;
+            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
+            // Its folders come from the disk, not from the database row.
+            .proved()?;
 
         let sha = crate::scan::hash::normalize_sha256(&req.sha256)
             .ok_or_else(|| VaultError::invalid("That is not a file hash."))?;
@@ -188,7 +190,9 @@ impl<'a> Links<'a> {
         let install = self
             .store
             .install(install_id)?
-            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?;
+            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
+            // Its folders come from the disk, not from the database row.
+            .proved()?;
         let existed = self.resolve_dir_path(&install, relative_dir)?.is_dir();
         let path = self.resolve_dir(&install, relative_dir, true)?;
         Ok((path, !existed))
@@ -235,7 +239,9 @@ impl<'a> Links<'a> {
         let install = self
             .store
             .install(install_id)?
-            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?;
+            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
+            // Its folders come from the disk, not from the database row.
+            .proved()?;
 
         // Only the folders a link may actually be written to. Offering a
         // folder the engine would then refuse is a worse experience than not

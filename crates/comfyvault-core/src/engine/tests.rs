@@ -814,3 +814,54 @@ fn a_path_spelled_the_way_the_interface_sends_it_finds_the_same_link() {
         "the link vanished when its path was spelled with forward slashes: {as_sent:?}"
     );
 }
+
+#[test]
+fn a_stored_install_row_is_proved_on_the_disk_before_it_is_scanned_or_linked_into() {
+    // The vault's database travels with the vault. A row naming a folder that
+    // is not a ComfyUI install on this disk must not decide where the engine
+    // reads or writes.
+    let f = Fixture::new();
+    f.open_vault();
+    let i = f.add_install("A");
+    let store = f.engine.store().unwrap();
+    let mut settings = store.settings().unwrap();
+    settings.min_file_size_bytes = 0;
+    settings.huggingface_cache_dirs = Some(Vec::new());
+    store.put_settings(&settings).unwrap();
+
+    let elsewhere = f.dir.path().join("Elsewhere");
+    let secret = elsewhere.join("models/loras/private.safetensors");
+    std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    std::fs::write(&secret, weights("private")).unwrap();
+    store
+        .put_install(&Install {
+            root: elsewhere.clone(),
+            registered_path: elsewhere.clone(),
+            models_dir: elsewhere.join("models"),
+            ..i.clone()
+        })
+        .unwrap();
+
+    let done = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&done);
+    f.engine
+        .start_scan(
+            None,
+            Arc::new(crate::progress::NullSink),
+            Arc::new(move |r: Result<ScanRecord>| *captured.lock().unwrap() = Some(r)),
+        )
+        .unwrap();
+    for _ in 0..600 {
+        if done.lock().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let record = done.lock().unwrap().take().expect("the scan never reported back").unwrap();
+    let page = f.engine.scan_entries(&record.scan_id, 0, 100, &Default::default()).unwrap();
+    assert_eq!(page.total, 0, "the scan read a folder only a database row named");
+
+    let err = f.engine.create_model_folder(&i.id, "loras/new").unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotAComfyInstall);
+    assert!(!elsewhere.join("models/loras/new").exists(), "a folder was made where only a row pointed");
+}

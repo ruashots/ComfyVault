@@ -1215,7 +1215,31 @@ resolve it before it allows a new scan or a new apply.
 ### 6.8 `resume_apply` and `revert_apply`
 
 `resume_apply` takes `{ applyId: string }` and finishes an interrupted run. It
-re-checks every file it has not yet touched. It emits the apply events.
+re-checks every file it has not yet touched. It emits the apply events. It
+rejects with `conflict` unless the run's `state` is `running`, which is what a
+run cut off part way is left as. A run that finished, was stopped, or was
+undone is not finished again.
+
+#### Every place a run names is proved first
+
+The journal, the stored plan and the stored installs are read from the vault's
+database, which travels with the vault and may not have been written on this
+computer. Before `resume_apply`, `revert_apply` or `preview_revert` touches or
+reports anything, every path the run names is proved to be one of two places:
+
+- inside the vault, and not inside its `.comfyvault` folder;
+- inside a folder the scan walks for a registered install whose folder is a
+  ComfyUI install on this disk now, and not inside its `custom_nodes`.
+
+If any path is neither, the whole call rejects with `pathOutsideBoundary`
+before a file is touched. `detail` lists every such path, and `path` is the
+first. `start_apply` proves each group of the stored plan the same way, and a
+group that fails is reported in `failures` and not touched.
+
+A stored install is inspected on the disk again before its folders are scanned
+or receive a link. One whose folder is not a ComfyUI install now is left out of
+a scan and a plan, and `create_link` and `create_model_folder` reject with
+`notAComfyInstall`.
 
 `revert_apply` takes `{ applyId: string }` and undoes a run, in reverse order.
 It emits `revert:progress`, `revert:done` and `revert:error`. `revert:done`
