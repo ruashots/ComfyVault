@@ -492,6 +492,31 @@ export interface ApplyProgress {
   etaMs: number | null;
 }
 
+/**
+ * A progress update for an undo, on `revert:progress`.
+ *
+ * Its own shape, not `ApplyProgress`: files moved into the vault, links made
+ * and space returned are the opposite of what an undo does, and the engine sent
+ * them as zeros for the whole undo.
+ */
+export interface RevertProgress {
+  applyId: string;
+  phase: "restoring" | "finalizing";
+  /** Journal steps. Not a count to show a person: a model is several steps. */
+  stepIndex: number;
+  stepTotal: number;
+  currentPath: string | null;
+  action: "removingLink" | "renamingBack" | "copyingBack" | "tidying";
+  filesPutBack: number;
+  filesToPutBack: number;
+  linksRemoved: number;
+  /** Bytes copied back out of the vault. The copies set how long it takes. */
+  bytesCopied: number;
+  bytesToCopy: number;
+  elapsedMs: number;
+  etaMs: number | null;
+}
+
 export interface ApplyFailure {
   groupId: string;
   absPath: string;
@@ -840,7 +865,7 @@ export interface Engine {
   onApplyProgress(fn: (p: ApplyProgress) => void): Unsubscribe;
   onApplyDone(fn: (r: ApplyRecord) => void): Unsubscribe;
   onApplyError(fn: (e: VaultError) => void): Unsubscribe;
-  onRevertProgress(fn: (p: ApplyProgress) => void): Unsubscribe;
+  onRevertProgress(fn: (p: RevertProgress) => void): Unsubscribe;
   onRevertDone(fn: (r: ApplyRecord) => void): Unsubscribe;
   onRevertError(fn: (e: VaultError) => void): Unsubscribe;
 

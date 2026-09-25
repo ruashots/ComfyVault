@@ -256,7 +256,9 @@ function HomeReport() {
             ? "not scanned yet"
             : app.scanPredatesRun()
               ? "not scanned since the run"
-              : `last scan ${relativeTime(app.scan()!.finishedAt)}`
+              : app.scanPredatesUndo()
+                ? "not scanned since the undo"
+                : `last scan ${relativeTime(app.scan()!.finishedAt)}`
         }
       >
         <button
@@ -279,6 +281,13 @@ function HomeReport() {
               These figures come from the scan taken before the run, so they
               describe the installs as they were then. Scan again to see what is
               on disk now.
+            </div>
+          </Show>
+                <Show when={app.scanPredatesUndo()}>
+            <div class="note" style={{ "margin-bottom": "9px" }}>
+              These figures come from a scan taken before the undo put the files
+              back, so they do not describe the installs as they are now. Scan
+              again to see what is on disk now.
             </div>
           </Show>
           <div class="tiles">

@@ -47,6 +47,7 @@ import type {
   InterruptedApply,
   LinkRecord,
   NameGroup,
+  RevertProgress,
   RunningComfy,
   ScanProgress,
   ScanRecord,
@@ -181,11 +182,21 @@ export interface AppStore {
    * panel saying the space has already come back.
    */
   readonly scanPredatesRun: Accessor<boolean>;
+  /**
+   * The last scan was taken before a run was undone.
+   *
+   * Measured against the real engine: an undo does not scan either. When the
+   * last scan was taken after the run, a plan built from it after the undo
+   * finds nothing to consolidate, on a tree that holds every duplicate again.
+   */
+  readonly scanPredatesUndo: Accessor<boolean>;
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
   readonly scanProgress: Accessor<ScanProgress | null>;
   readonly applyProgress: Accessor<ApplyProgress | null>;
+  /** An undo while it runs, which reports in its own shape. */
+  readonly revertProgress: Accessor<RevertProgress | null>;
   readonly ready: Accessor<boolean>;
   readonly failure: Accessor<string | null>;
 
@@ -291,6 +302,30 @@ export function detailOf(error: unknown): readonly string[] {
     .filter((line) => line.length > 0);
 }
 
+/**
+ * When the most recent undo finished. The engine stamps `finishedAt` again
+ * when it undoes a run, so on a reverted record it is the time of the undo.
+ */
+function latestUndo(applies: readonly ApplyRecord[]): string | null {
+  let latest: string | null = null;
+  for (const a of applies) {
+    if (a.state !== "reverted" || a.finishedAt === null) continue;
+    if (latest === null || Date.parse(a.finishedAt) > Date.parse(latest)) {
+      latest = a.finishedAt;
+    }
+  }
+  return latest;
+}
+
+/** True when an undo finished after this scan, so the scan is out of date. */
+function overtakenByUndo(undoneAt: string | null, scan: ScanRecord | null): boolean {
+  return (
+    undoneAt !== null &&
+    scan !== null &&
+    Date.parse(undoneAt) > Date.parse(scan.finishedAt)
+  );
+}
+
 export function createAppStore(engine: Engine): AppStore {
   const [appState, setAppState] = createSignal<AppState | null>(null);
   const [vault, setVault] = createSignal<VaultInfo | null>(null);
@@ -310,6 +345,9 @@ export function createAppStore(engine: Engine): AppStore {
     const last = scan();
     return ran !== null && last !== null && ran.scanId === last.scanId;
   });
+  /** When the most recent undo finished, as the engine recorded it. */
+  const [lastUndoneAt, setLastUndoneAt] = createSignal<string | null>(null);
+  const scanPredatesUndo = createMemo(() => overtakenByUndo(lastUndoneAt(), scan()));
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
@@ -317,6 +355,7 @@ export function createAppStore(engine: Engine): AppStore {
 
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
+  const [revertProgress, setRevertProgress] = createSignal<RevertProgress | null>(null);
   const [ready, setReady] = createSignal(false);
   const [failure, setFailure] = createSignal<string | null>(null);
 
@@ -480,6 +519,7 @@ export function createAppStore(engine: Engine): AppStore {
           setInterrupted([]);
           setLastApply(null);
           setAppliedPlan(null);
+          setLastUndoneAt(null);
           setUsage(new Map());
           setNothingSearched(false);
           setFailure(null);
@@ -499,8 +539,15 @@ export function createAppStore(engine: Engine): AppStore {
 
       const vaultInfo = await orNotYet(engine.getVaultInfo(), null);
 
+      // A scan an undo has overtaken does not describe the installs. Measured
+      // against the real engine: a plan built from a scan taken after the run,
+      // once the run is undone, finds nothing to consolidate on a tree that
+      // holds every duplicate again. Nothing is built from it, so no screen can
+      // print it.
+      const undoneAt = latestUndo(applies);
+      const scanOvertaken = overtakenByUndo(undoneAt, lastScan);
       const nextPlan =
-        lastScan && !lastScan.cancelled
+        lastScan && !lastScan.cancelled && !scanOvertaken
           ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
           : null;
 
@@ -536,6 +583,7 @@ export function createAppStore(engine: Engine): AppStore {
         setRunning(runningList);
         setInterrupted(interruptedList);
         setLastApply(applies.find((a) => a.state !== "reverted") ?? null);
+        setLastUndoneAt(undoneAt);
         setFailure(null);
         setReady(true);
       });
@@ -602,16 +650,21 @@ export function createAppStore(engine: Engine): AppStore {
       setApplyProgress(null);
       showToast(error.message, "bad");
     }),
-    engine.onRevertProgress((p) => setApplyProgress(p)),
+    engine.onRevertProgress((p) => setRevertProgress(p)),
     engine.onRevertDone(() => {
       batch(() => {
-        setApplyProgress(null);
+        setRevertProgress(null);
         setLastApply(null);
       });
       showToast("Run undone · every file is back where it was");
       void refresh();
     }),
-    engine.onRevertError((error) => showToast(error.message, "bad")),
+    engine.onRevertError((error) => {
+      setRevertProgress(null);
+      showToast(error.message, "bad");
+      // Steps already undone stay undone, so what is on disk has changed.
+      void refresh();
+    }),
   ];
   onCleanup(() => {
     for (const stop of stops) stop();
@@ -669,10 +722,12 @@ export function createAppStore(engine: Engine): AppStore {
     lastApply,
     appliedPlan,
     scanPredatesRun,
+    scanPredatesUndo,
     usage,
     usageMethod,
     scanProgress,
     applyProgress,
+    revertProgress,
     ready,
     failure,
     planView,

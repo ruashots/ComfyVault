@@ -36,6 +36,7 @@ import type {
   ModelMetadata,
   NameGroup,
   PlatformReport,
+  RevertProgress,
   RunningComfy,
   ScanEntryPage,
   ScanProgress,
@@ -129,7 +130,7 @@ export function createTauriEngine(): Engine {
     onApplyProgress: (fn) => subscribe<ApplyProgress>("apply:progress", fn),
     onApplyDone: (fn) => subscribe<ApplyRecord>("apply:done", fn),
     onApplyError: (fn) => subscribe<VaultError>("apply:error", fn),
-    onRevertProgress: (fn) => subscribe<ApplyProgress>("revert:progress", fn),
+    onRevertProgress: (fn) => subscribe<RevertProgress>("revert:progress", fn),
     onRevertDone: (fn) => subscribe<ApplyRecord>("revert:done", fn),
     onRevertError: (fn) => subscribe<VaultError>("revert:error", fn),
 

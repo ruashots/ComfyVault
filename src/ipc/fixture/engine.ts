@@ -32,6 +32,7 @@ import type {
   NameGroup,
   PlanGroup,
   PlatformReport,
+  RevertProgress,
   RunningComfy,
   ScanEntryPage,
   ScanProgress,
@@ -67,6 +68,7 @@ const OTHER_ACTIVITY_BYTES = 734_003_200;
 
 const SCAN_MS = 16_000;
 const APPLY_MS = 10_000;
+const REVERT_MS = 12_000;
 const TICK_MS = 100;
 
 const SYMLINK_GUIDANCE =
@@ -226,6 +228,8 @@ export class FixtureEngine implements Engine {
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private applyTimer: ReturnType<typeof setInterval> | null = null;
   private applyCancelling = false;
+  /** The groups each run finished, which are what undoing it puts back. */
+  private appliedGroups = new Map<string, PlanGroup[]>();
   /** Vault files this run created that were renamed after it finished. */
   private renamedSinceApply = new Set<string>();
 
@@ -235,7 +239,7 @@ export class FixtureEngine implements Engine {
   private applyProgressEvent = new Emitter<ApplyProgress>();
   private applyDoneEvent = new Emitter<ApplyRecord>();
   private applyErrorEvent = new Emitter<VaultError>();
-  private revertProgressEvent = new Emitter<ApplyProgress>();
+  private revertProgressEvent = new Emitter<RevertProgress>();
   private revertDoneEvent = new Emitter<ApplyRecord>();
   private revertErrorEvent = new Emitter<VaultError>();
 
@@ -275,8 +279,21 @@ export class FixtureEngine implements Engine {
     this.lastScan = null;
   }
 
+  /**
+   * The engine's clock, as the order of events sees it. Operations run one at
+   * a time and each takes real time, so on the real engine a later one never
+   * carries the same millisecond as the one before it. Here two can land in
+   * the same millisecond on a fast machine, which would make "which came
+   * first" a race with the machine the suite runs on.
+   */
+  private lastStamp = 0;
+  private stamp(): string {
+    this.lastStamp = Math.max(Date.now(), this.lastStamp + 1);
+    return new Date(this.lastStamp).toISOString();
+  }
+
   private recordScan(scanId: string): ScanRecord {
-    const result = scanResultOf(this.world, scanId);
+    const result = { ...scanResultOf(this.world, scanId), finishedAt: this.stamp() };
     this.lastScan = result;
     this.world.installs = this.world.installs.map((install) => ({
       ...install,
@@ -819,6 +836,7 @@ export class FixtureEngine implements Engine {
           revertible: true,
         };
         this.applies = [result, ...this.applies];
+        this.appliedGroups.set(applyId, done);
         // Measured against the real engine: a run does not record a scan. The
         // last scan still describes the world as it was before the run, and
         // anything built from it afterwards describes that older world.
@@ -915,6 +933,8 @@ export class FixtureEngine implements Engine {
   }
 
   async revertApply(applyId: string): Promise<{ applyId: string }> {
+    this.requireVault();
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
     const before = this.worldBeforeApply;
     if (!before) throw error("conflict", "There is nothing to put back.");
     if (this.renamedSinceApply.size > 0) {
@@ -927,13 +947,102 @@ export class FixtureEngine implements Engine {
         paths.join("\n"),
       );
     }
-    this.world = before;
-    this.worldBeforeApply = null;
-    this.renamedSinceApply.clear();
-    this.applies = this.applies.map((a) =>
-      a.applyId === applyId ? { ...a, state: "reverted" as const, revertible: false } : a,
-    );
-    this.revertDoneEvent.emit(await this.getApplyResult(applyId));
+    this.busy = { kind: "revert", id: applyId };
+
+    // Undone in reverse, the way the engine walks its journal: for each group,
+    // newest first, the links come out and the removed copies are copied back
+    // out of the vault, and the file that moved into the vault is renamed back
+    // last. Only the copies take time, so time here follows their bytes.
+    type Step = { action: RevertProgress["action"]; path: string; bytes: number };
+    const steps: Step[] = [];
+    for (const g of this.appliedGroups.get(applyId) ?? []) {
+      steps.push({ action: "renamingBack", path: g.source.absPath, bytes: 0 });
+      for (const link of g.links) {
+        steps.push({ action: "removingLink", path: link.absPath, bytes: 0 });
+      }
+      const copies = g.links.filter((l) => l.absPath !== g.source.absPath);
+      for (const copy of copies.slice(0, Math.max(0, g.distinctFiles - 1))) {
+        steps.push({ action: "copyingBack", path: copy.absPath, bytes: g.sizeBytes });
+      }
+    }
+    steps.reverse();
+    const bytesToCopy = steps.reduce((sum, st) => sum + st.bytes, 0);
+    const filesToPutBack = steps.filter((st) => st.action !== "removingLink").length;
+    const ticks = REVERT_MS / TICK_MS;
+    const perTick = bytesToCopy > 0 ? bytesToCopy / ticks : 0;
+    let index = 0;
+    let intoStep = 0;
+    let bytesCopied = 0;
+    let filesPutBack = 0;
+    let linksRemoved = 0;
+    let elapsed = 0;
+
+    const complete = (st: Step) => {
+      index += 1;
+      intoStep = 0;
+      if (st.action === "removingLink") linksRemoved += 1;
+      else filesPutBack += 1;
+    };
+
+    const step = () => {
+      elapsed += TICK_MS;
+      let budget = perTick > 0 ? perTick : Infinity;
+      let instant = perTick > 0 ? Infinity : Math.ceil(steps.length / ticks);
+      while (index < steps.length) {
+        const st = steps[index]!;
+        if (st.bytes === 0) {
+          if (instant <= 0) break;
+          instant -= 1;
+          complete(st);
+          continue;
+        }
+        const take = Math.min(budget, st.bytes - intoStep);
+        intoStep += take;
+        bytesCopied += take;
+        budget -= take;
+        if (intoStep < st.bytes) break;
+        complete(st);
+      }
+      const overall = index >= steps.length ? 1 : 0;
+      const current = steps[index];
+      this.revertProgressEvent.emit({
+        applyId,
+        phase: overall >= 1 ? "finalizing" : "restoring",
+        stepIndex: index,
+        stepTotal: steps.length,
+        currentPath: current?.path ?? null,
+        action: current?.action ?? "tidying",
+        filesPutBack,
+        filesToPutBack,
+        linksRemoved,
+        bytesCopied: Math.round(bytesCopied),
+        bytesToCopy,
+        elapsedMs: elapsed,
+        etaMs: overall >= 1 ? null : Math.max(0, REVERT_MS - elapsed),
+      });
+
+      if (overall >= 1) {
+        this.stopApplyTimer();
+        this.busy = null;
+        this.world = before;
+        this.worldBeforeApply = null;
+        this.renamedSinceApply.clear();
+        // Measured against the real engine: an undo stamps the record's
+        // finishedAt again, so on a reverted run it is the time of the undo.
+        // It does not record a scan.
+        const finishedAt = this.stamp();
+        this.applies = this.applies.map((a) =>
+          a.applyId === applyId
+            ? { ...a, state: "reverted" as const, revertible: false, finishedAt }
+            : a,
+        );
+        const undone = this.applies.find((a) => a.applyId === applyId);
+        if (undone) this.revertDoneEvent.emit(undone);
+      }
+    };
+    this.tick = step;
+    if (!this.manual) this.applyTimer = setInterval(step, this.tickMs);
+
     return { applyId };
   }
 
@@ -946,7 +1055,7 @@ export class FixtureEngine implements Engine {
   onApplyError(fn: (e: VaultError) => void): Unsubscribe {
     return this.applyErrorEvent.on(fn);
   }
-  onRevertProgress(fn: (p: ApplyProgress) => void): Unsubscribe {
+  onRevertProgress(fn: (p: RevertProgress) => void): Unsubscribe {
     return this.revertProgressEvent.on(fn);
   }
   onRevertDone(fn: (r: ApplyRecord) => void): Unsubscribe {
@@ -1336,6 +1445,14 @@ export class FixtureEngine implements Engine {
       step();
     }
     throw new Error(`devFinish: still running after ${limit} steps`);
+  }
+
+  /** The running undo stops on an error, the way the engine reports one. */
+  devFailRevert(message: string): void {
+    if (this.busy?.kind !== "revert") throw new Error("devFailRevert: no undo is running");
+    this.stopApplyTimer();
+    this.busy = null;
+    this.revertErrorEvent.emit(error("ioError", message));
   }
 
   /**

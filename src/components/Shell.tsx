@@ -116,6 +116,11 @@ export function Rail() {
       const freed = app.applyProgress()!.bytesFreed;
       return freed > 0 ? <div class="rail-sub amb">{fmt(freed)} freed so far</div> : null;
     }
+    // The run is still on record while it is undone, and "freed just now"
+    // beside an undo putting those bytes back says the opposite.
+    if (app.revertProgress()) {
+      return <div class="rail-sub">putting files back</div>;
+    }
     const run = app.lastApply();
     if (run) {
       return <div class="rail-sub grn">{fmt(run.bytesFreed)} freed just now</div>;
@@ -127,6 +132,9 @@ export function Rail() {
     // be a claim about files nobody has read.
     if (!app.scan()) {
       return <div class="rail-sub">not scanned yet</div>;
+    }
+    if (app.scanPredatesUndo()) {
+      return <div class="rail-sub">not scanned since the undo</div>;
     }
     return <div class="rail-sub">every model is held once already</div>;
   };

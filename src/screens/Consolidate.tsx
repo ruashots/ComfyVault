@@ -35,31 +35,63 @@ export function ConsolidateScreen() {
         </EmptyScreen>
       }
     >
-      <Show when={!app.applyProgress()} fallback={<ApplyRunning />}>
+      <Show
+        when={!app.applyProgress() && !app.revertProgress()}
+        fallback={<ApplyRunning />}
+      >
         <Show when={!app.lastApply()} fallback={<ApplyDone />}>
-          <Show
-            when={app.planView()}
-            fallback={
-              <EmptyScreen
-                title="Consolidate"
-                head="Nothing has been read yet"
-                body="ComfyVault has to read your installs once before it can say what is duplicated. A scan changes nothing on disk."
-              >
-                <button
-                  class="btn pri"
-                  onClick={() => void app.actions.run(() => app.engine.startScan())}
+          <Show when={!app.scanPredatesUndo()} fallback={<StaleAfterUndo />}>
+            <Show
+              when={app.planView()}
+              fallback={
+                <EmptyScreen
+                  title="Consolidate"
+                  head="Nothing has been read yet"
+                  body="ComfyVault has to read your installs once before it can say what is duplicated. A scan changes nothing on disk."
                 >
-                  <Icon name="scan" size={13} />
-                  Scan now
-                </button>
-              </EmptyScreen>
-            }
-          >
-            <DryRun />
+                  <button
+                    class="btn pri"
+                    onClick={() => void app.actions.run(() => app.engine.startScan())}
+                  >
+                    <Icon name="scan" size={13} />
+                    Scan now
+                  </button>
+                </EmptyScreen>
+              }
+            >
+              <DryRun />
+            </Show>
           </Show>
         </Show>
       </Show>
     </Show>
+  );
+}
+
+/**
+ * After an undo, before anything has scanned again.
+ *
+ * Measured against the real engine: a plan rebuilt from the last scan after an
+ * undo reports no model held twice and every restored copy as changed, on a
+ * tree that holds every duplicate again. Nobody can act on that plan, so it is
+ * not shown.
+ */
+function StaleAfterUndo() {
+  const app = useApp();
+  return (
+    <EmptyScreen
+      title="Consolidate"
+      head="Your installs changed since the last scan"
+      body="The undo put every file back where it was, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
+    >
+      <button
+        class="btn pri"
+        onClick={() => void app.actions.run(() => app.engine.startScan())}
+      >
+        <Icon name="scan" size={13} />
+        Scan now
+      </button>
+    </EmptyScreen>
   );
 }
 
