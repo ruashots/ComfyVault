@@ -2206,3 +2206,44 @@ fn the_time_of_the_last_undo_step_stays_empty_until_a_step_begins() {
     let read: ApplyRecord = serde_json::from_value(old).unwrap();
     assert_eq!(read.last_undo_step_at, None);
 }
+
+#[test]
+fn a_scan_between_two_stopped_undos_is_out_of_date_once_the_second_one_moves_a_file() {
+    // Undo, stop, scan, undo again, stop again. The scan was right when it
+    // finished, and is out of date once the second undo puts anything back. A
+    // time written only once, at the first undo, stays older than that scan
+    // and calls it current.
+    let w = TestWorld::new();
+    let installs: Vec<_> = ["A", "B", "C"].iter().map(|l| w.add_install(l)).collect();
+    for tag in ["one", "two", "three"] {
+        for i in &installs {
+            w.write_model(i, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        }
+    }
+    let plan = w.plan(&installs);
+    run_apply(&w, &plan);
+    let stamp = || w.store.apply("ap-1").unwrap().unwrap().last_undo_step_at;
+    let undone = || {
+        w.store.journal("ap-1").unwrap().iter().filter(|e| e.state == JournalState::Undone).count()
+    };
+
+    applier(&w).revert("ap-1", &CancelToken::stopping_at_check(8), &NullSink).unwrap_err();
+    let first = undone();
+    assert!(first > 0, "the first undo must have put something back");
+
+    let scanned = crate::time_util::Timestamp::now();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // A second attempt stopped before its first step changes nothing, so the
+    // scan is still current and the time must not claim otherwise.
+    applier(&w).revert("ap-1", &CancelToken::stopping_at_check(1), &NullSink).unwrap_err();
+    assert_eq!(undone(), first);
+    assert!(stamp().unwrap() < scanned, "nothing came back, yet the scan is called out of date");
+
+    applier(&w).revert("ap-1", &CancelToken::stopping_at_check(8), &NullSink).unwrap_err();
+    assert!(undone() > first, "the second undo must have put something back");
+    assert!(
+        stamp().unwrap() > scanned,
+        "files came back after the scan, and the recorded time still calls it current"
+    );
+}
