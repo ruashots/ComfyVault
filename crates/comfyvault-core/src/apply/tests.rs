@@ -3088,7 +3088,41 @@ fn a_cut_off_run_the_engine_will_not_touch_can_be_set_aside_and_nothing_moves() 
     assert_eq!(vec![w.is_link(&dup)], links_before);
     assert_eq!(stash.exists(), false);
     assert!(applier(&w).interrupted().unwrap().is_empty(), "the run still blocks the app");
-    assert_eq!(applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err().code, ErrorCode::Conflict);
+    assert_eq!(
+        applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err().code,
+        ErrorCode::PathOutsideBoundary,
+        "a set-aside run was touched while its places could not be proved"
+    );
+}
+
+#[test]
+fn a_run_set_aside_while_its_install_was_away_can_be_settled_when_it_returns() {
+    // Cut off after the model moved into the vault and before its link was
+    // made, so its place is empty. The drive holding the install is unplugged,
+    // the person sets the run aside, and the drive comes back. Setting aside
+    // used to be final, and the place stayed empty for good.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let p = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a.clone()]);
+    run_apply(&w, &plan);
+    let link = index_of(&w.store.journal("ap-1").unwrap(), |s| matches!(s, JournalStep::CreateLink { .. }));
+    simulate_crash_after(&w, "ap-1", link);
+    std::fs::remove_file(&p).unwrap();
+
+    let away = a.root.with_file_name("A-away");
+    std::fs::rename(&a.root, &away).unwrap();
+    assert!(applier(&w).interrupted().unwrap()[0].blocked);
+    applier(&w).set_aside("ap-1").unwrap();
+    assert!(applier(&w).interrupted().unwrap().is_empty());
+
+    std::fs::rename(&away, &a.root).unwrap();
+    let listed = applier(&w).interrupted().unwrap();
+    assert_eq!(listed.len(), 1, "the run did not come back once its install did");
+    assert!(!listed[0].blocked);
+    let record = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.state, ApplyState::Completed);
+    assert_eq!(std::fs::read(&p).unwrap(), weights("m"), "the model's place stayed empty");
 }
 
 #[test]

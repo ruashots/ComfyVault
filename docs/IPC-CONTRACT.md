@@ -1248,12 +1248,15 @@ harmless. The one way out is `set_aside_run`.
 Arguments: `{ applyId: string }`. Returns the `ApplyRecord`, with `state`
 `setAside` and `revertible` false.
 
-It changes only the run's record. Nothing on the disk moves: every link the run
-made keeps pointing into the vault, so every model keeps loading, and any file
-the run set aside or had not reached stays where it is. The run can no longer
-be finished or undone from ComfyVault, and it stops being listed by
-`get_interrupted_applies`. Setting a run aside is final, so the person confirms
-it knowing that, with `blockedPaths` in front of them.
+It changes only the run's record. Nothing on the disk moves: the links the run
+made keep pointing into the vault, and any file the run set aside or had not
+reached stays where it is. A model the run was in the middle of may have no
+file and no link at its place, so it may not load until the run is finished or
+undone. The run stops being listed by `get_interrupted_applies` while its
+places cannot be proved. Once they can, for example when an unplugged drive is
+back, it is listed again with `blocked: false`, and `resume_apply` and
+`revert_apply` accept it. Setting a run aside is not final, but the person
+confirms it knowing what it leaves, with `blockedPaths` in front of them.
 
 It rejects with `conflict` for a run whose `state` is not `running`, and for a
 cut-off run that is not `blocked`, which can be finished or undone instead.
@@ -1263,7 +1266,7 @@ cut-off run that is not `blocked`, which can be finished or undone instead.
 `resume_apply` takes `{ applyId: string }` and finishes an interrupted run. It
 re-checks every file it has not yet touched. It emits the apply events. It
 rejects with `conflict` unless the run's `state` is `running`, which is what a
-run cut off part way is left as. A run that finished, was stopped, or was
+run cut off part way is left as, or `setAside`. A run that finished, was stopped, or was
 undone is not finished again.
 
 #### Every place a run names is proved first

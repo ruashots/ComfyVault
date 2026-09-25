@@ -238,8 +238,8 @@ pub enum ApplyState {
     Reverted,
     /// A cut-off run the engine would not touch, because it names places
     /// outside the vault and the registered installs, which the person set
-    /// aside. Nothing on the disk was changed by that, and it can no longer be
-    /// finished or undone from the app.
+    /// aside. Nothing on the disk was changed by that. Once its places can be
+    /// proved again, it can be finished or undone like a cut-off run.
     SetAside,
 }
 

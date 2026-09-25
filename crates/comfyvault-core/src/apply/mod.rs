@@ -1203,9 +1203,6 @@ impl<'a> Applier<'a> {
         if record.state == ApplyState::Reverted {
             return Err(VaultError::conflict("That run was already undone."));
         }
-        if record.state == ApplyState::SetAside {
-            return Err(VaultError::conflict("That run was set aside, so it cannot be undone from ComfyVault."));
-        }
 
         let to_undo: Vec<JournalEntry> = self
             .store
@@ -1492,11 +1489,13 @@ impl<'a> Applier<'a> {
 
     /// Sets aside a cut-off run the engine will not touch.
     ///
-    /// Only the record changes. Nothing on the disk moves: every link the run
-    /// made keeps leading into the vault, so every model keeps loading, and
-    /// the files it set aside or had not reached stay where they are. The run
-    /// can no longer be finished or undone from the app. Refused for a run
-    /// that was not cut off, and for one the engine can finish or undo.
+    /// Only the record changes. Nothing on the disk moves: the links the run
+    /// made keep leading into the vault, and the files it set aside or had not
+    /// reached stay where they are. A model the run was in the middle of may
+    /// have no file and no link at its place. The run stops blocking the app
+    /// while its places cannot be proved, and comes back to be finished or
+    /// undone once they can. Refused for a run that was not cut off, and for
+    /// one the engine can finish or undo now.
     pub fn set_aside(&self, apply_id: &str) -> Result<ApplyRecord> {
         let mut record = self
             .store
@@ -1521,10 +1520,17 @@ impl<'a> Applier<'a> {
     pub fn interrupted(&self) -> Result<Vec<InterruptedApply>> {
         let mut out = Vec::new();
         for record in self.store.applies()? {
-            if record.state != ApplyState::Running {
+            if !matches!(record.state, ApplyState::Running | ApplyState::SetAside) {
                 continue;
             }
             let entries = self.store.journal(&record.apply_id)?;
+            // A run set aside because its places could not be proved comes
+            // back once they can: its install was unplugged or renamed, not
+            // gone. A model it was in the middle of may have no file and no
+            // link until it is finished or undone.
+            if record.state == ApplyState::SetAside && !self.refused_paths_of_run(&record, &entries)?.is_empty() {
+                continue;
+            }
             let done = entries.iter().filter(|e| e.state == JournalState::Done).count() as u64;
             let pending = entries.iter().filter(|e| e.state == JournalState::Pending).count() as u64;
             let affected: Vec<String> = entries
@@ -1569,10 +1575,11 @@ impl<'a> Applier<'a> {
             .store
             .apply(apply_id)?
             .ok_or_else(|| VaultError::not_found("That run is not in this vault's history."))?;
-        // Only a run cut off in the middle is finished. Resuming a run the
-        // person undid applied the whole of it again: files moved back into
-        // the vault and duplicates deleted, for a run they had taken back.
-        if record.state != ApplyState::Running {
+        // Only a run cut off in the middle is finished, or one set aside
+        // while its places could not be proved. Resuming a run the person
+        // undid applied the whole of it again: files moved back into the
+        // vault and duplicates deleted, for a run they had taken back.
+        if !matches!(record.state, ApplyState::Running | ApplyState::SetAside) {
             return Err(VaultError::conflict(
                 "Only a run that was cut off part way can be finished. This one is not.",
             ));
