@@ -454,7 +454,7 @@ export function SettingsScreen() {
                   </span>
                 </div>
                 <div class="note up">
-                  The fingerprint goes out, nothing else. No filename, no path. After
+                  The fingerprint goes out. No filename, no path. After
                   each scan ComfyVault asks, in the background, about the files it has
                   not asked about before, a hundred at a time. Turn it off and
                   ComfyVault runs with no network at all. Files Civitai does not know

@@ -93,3 +93,12 @@ describe("adding an install before a vault exists", () => {
     expect(screen.getByRole("button", { name: /Add an install/ })).toBeEnabled();
   });
 });
+
+describe("what the Civitai lookup says it sends", () => {
+  it("claims nothing it cannot keep: a web request carries more than the fingerprint", async () => {
+    await mount();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("The fingerprint goes out. No filename, no path.");
+    expect(text).not.toContain("nothing else");
+  });
+});
