@@ -56,7 +56,7 @@ export async function openUndoBox(app: AppStore, applyId: string): Promise<void>
             head: "There is not enough room to undo this run",
             message: `Free some space on drive ${short
               .map((d) => volumeLabel(d.volume))
-              .join(" and ")}, then undo it again. Nothing has been touched.`,
+              .join(" and ")}, then undo it again. This undo has not started.`,
             detail: [],
           }
         : undefined,

@@ -209,6 +209,10 @@ describe("the Undo box", () => {
     expect(text).toContain("There is not enough room to undo this run");
     // The run put copies back on two drives, and both are named.
     expect(text).toContain("Free some space on drive C: and D:");
+    // On a run already partly undone, "nothing has been touched" is false, so
+    // the box speaks only of this undo.
+    expect(text).toContain("This undo has not started.");
+    expect(text).not.toContain("Nothing has been touched");
     expect(screen.queryByRole("button", { name: /Undo the run/ })).toBeNull();
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
     expect(within(dialog).getByRole("button", { name: /^Close$/ })).toBeTruthy();
