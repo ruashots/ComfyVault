@@ -664,9 +664,13 @@ impl<'a> Scanner<'a> {
                 _ if excluded.iter().any(|e| abs_path.starts_with(e) || real_path.starts_with(e)) => {
                     Classification::CustomNodes
                 }
-                _ if reached_through_link && real_path.starts_with(&vault_root) => {
-                    Classification::AlreadyInVault
-                }
+                // Inside the vault, however the walk got there: through a
+                // link, or because an install's extra_model_paths.yaml names
+                // a vault folder so ComfyUI can read the vault directly.
+                // Offered as a new copy, a vault file was planned as a copy
+                // of itself, and the apply replaced the only copy with a link
+                // to itself.
+                _ if real_path.starts_with(&vault_root) => Classification::AlreadyInVault,
                 _ if !lives_where_it_was_found => Classification::ExternalLink,
                 _ if reached_through_link && self.platform.is_symlink(&abs_path) => {
                     Classification::ExternalLink

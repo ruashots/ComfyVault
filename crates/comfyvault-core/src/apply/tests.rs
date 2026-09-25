@@ -3156,3 +3156,79 @@ fn a_crafted_run_cannot_add_a_file_that_is_not_a_model_to_a_model_folder() {
     assert!(err.detail.unwrap().contains("notes.txt"));
     assert!(!target.exists(), "a file that is not a model was added to a model folder");
 }
+
+// ---------------------------------------------------------------------------
+// An install that reads the vault's own folder
+// ---------------------------------------------------------------------------
+
+/// A vault holding `m` from run ap-1, and an install B whose
+/// extra_model_paths.yaml names the vault's loras folder, the way a fresh
+/// ComfyUI can read the vault directly.
+fn an_install_reading_the_vault(w: &TestWorld) -> (crate::install::Install, crate::install::Install, PathBuf, PathBuf) {
+    let a = w.add_install("A");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let first = w.plan(&[a.clone()]);
+    run_apply(w, &first);
+    let b = w.add_install("B");
+    let b = w.add_extra_model_path(&b, "loras", &w.vault_root.join("loras"));
+    (a, b, pa, w.vault_root.join("loras/m.safetensors"))
+}
+
+fn vault_file_is_intact(vault_file: &Path, when: &str) {
+    let meta = std::fs::symlink_metadata(vault_file).unwrap_or_else(|_| panic!("{when}: the vault file is gone"));
+    assert!(meta.file_type().is_file(), "{when}: the vault file was replaced by a link");
+    assert_eq!(std::fs::read(vault_file).unwrap(), weights("m"), "{when}: the vault file lost its bytes");
+}
+
+#[test]
+fn a_vault_file_seen_through_an_installs_extra_folder_is_never_a_copy_of_itself() {
+    // Offered as a new copy, the vault file was planned as a copy of itself,
+    // and the apply replaced the only copy with a link to itself.
+    for order in ["only the reader", "the reader first", "an orphan, in the usual order"] {
+        let w = TestWorld::new();
+        let (a, b, pa, vault_file) = an_install_reading_the_vault(&w);
+        let installs = match order {
+            "only the reader" => vec![b.clone()],
+            "the reader first" => vec![b.clone(), a.clone()],
+            _ => {
+                std::fs::remove_file(&pa).unwrap();
+                vec![a.clone(), b.clone()]
+            }
+        };
+        let scan = w.scan(&installs);
+        let seen = scan.entries.iter().find(|e| e.abs_path.starts_with(&w.vault_root)).expect("the scan sees the vault file");
+        assert_eq!(seen.classification, crate::store::Classification::AlreadyInVault, "{order}");
+        let plan = w.plan(&installs);
+        assert!(plan.groups.is_empty(), "{order}: a group was planned: {:?}", plan.groups.iter().map(|g| &g.links).collect::<Vec<_>>());
+
+        let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+        assert_eq!(record.groups_applied, 0, "{order}");
+        vault_file_is_intact(&vault_file, order);
+        if order != "an orphan, in the usual order" {
+            assert_eq!(std::fs::read(&pa).unwrap(), weights("m"), "{order}: install A no longer loads the model");
+        }
+    }
+}
+
+#[test]
+fn a_stored_plan_that_names_a_vault_file_as_a_copy_is_not_applied() {
+    // The second guard, for a plan read back from the database: no place
+    // inside the vault is a place in an install.
+    let w = TestWorld::new();
+    let (_, b, _, vault_file) = an_install_reading_the_vault(&w);
+    let c = w.add_install("C");
+    w.write_model(&c, "models/loras/m.safetensors", &weights("m"));
+    let mut plan = w.plan(&[c, b]);
+    let g = plan.groups.iter_mut().find(|g| g.already_in_vault).expect("a group for the new copy");
+    let meta = std::fs::metadata(&vault_file).unwrap();
+    let mut inside = g.links[0].clone();
+    inside.abs_path = vault_file.clone();
+    inside.size_bytes = meta.len();
+    inside.mtime_nanos = crate::time_util::Timestamp::mtime_nanos(&meta);
+    g.links.push(inside);
+
+    let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.groups_applied, 0);
+    assert_eq!(record.failures[0].reason, BlockReason::UnsafeVaultPath);
+    vault_file_is_intact(&vault_file, "a crafted plan");
+}

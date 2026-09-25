@@ -74,11 +74,16 @@ impl Places {
 
     /// Is `path` inside a folder the scan walks for a proved install, and not
     /// inside that install's `custom_nodes`?
+    ///
+    /// Never inside the vault, even when an install's extra model folders
+    /// reach into it: a place in an install is one a vault file's copy came
+    /// from, and a vault file is not a copy of itself.
     pub fn in_an_install(&self, path: &Path) -> bool {
-        self.install_roots.iter().any(|(root, custom_nodes)| {
-            crate::paths::resolve_new_path_within(root, path).is_ok()
-                && crate::paths::resolve_new_path_within(custom_nodes, path).is_err()
-        })
+        crate::paths::resolve_new_path_within(&self.vault_root, path).is_err()
+            && self.install_roots.iter().any(|(root, custom_nodes)| {
+                crate::paths::resolve_new_path_within(root, path).is_ok()
+                    && crate::paths::resolve_new_path_within(custom_nodes, path).is_err()
+            })
     }
 
     /// Is the last part of `path` a model file's name: a plain name, with an
