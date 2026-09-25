@@ -418,6 +418,30 @@ describe("Home when the first scan was cancelled", () => {
   });
 });
 
+describe("Home when a later scan was cancelled", () => {
+  it("keeps the figures from the scan that finished", async () => {
+    const engine = new FixtureEngine({ manual: true });
+    harness = await renderWithApp(() => <App />, { engine });
+    const { app } = harness;
+    await waitFor(() => app.plan() !== null);
+    const before = app.scan()!.scanId;
+
+    await userEvent.click(button("Scan now"));
+    await waitFor(() => app.appState()?.busy?.kind === "scan");
+    engine.devAdvance();
+    await waitFor(() => app.scanProgress() !== null);
+    await engine.cancelScan(app.scanProgress()!.scanId);
+    await waitFor(() => app.scanProgress() === null && app.appState()?.busy === null);
+
+    // The engine keeps the finished scan as the last one, so nothing is lost.
+    expect(app.scan()!.scanId).toBe(before);
+    expect(app.nothingRead()).toBe(false);
+    expect(document.querySelector(".tiles")).not.toBeNull();
+    expect(text()).not.toContain("nothing has been read yet");
+    expect(text()).not.toContain("not read yet");
+  });
+});
+
 describe("Settings before the first scan", () => {
   it("says an install has not been read rather than printing a size", async () => {
     const { app } = await setup(["C:\\ComfyUI-Studio"]);
