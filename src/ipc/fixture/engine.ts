@@ -1819,6 +1819,7 @@ function notFoundMetadata(sha256: string): ModelMetadata {
     pageUrl: null,
     downloadUrl: null,
     previewImageUrls: [],
+    previewImages: [],
     ambiguous: false,
   };
 }

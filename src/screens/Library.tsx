@@ -815,40 +815,44 @@ function CivitaiNothing(props: { answered: boolean }) {
 }
 
 /**
- * The model's first picture on Civitai.
+ * The first picture Civitai rates PG or PG-13, and no picture above that.
  *
- * Civitai marks each model version with the ratings of its pictures, one bit
- * for each rating: 1 is PG and 2 is PG-13, and 4 and above are adult. A version
- * whose pictures include any adult rating shows none here, because the picture
- * that comes first can be any of them. Measured against the live service:
- * DreamShaper 8 carries 11, so its pictures stay on Civitai.
+ * Civitai rates each picture on its own. Measured against the live service:
+ * DreamShaper 8's ten pictures are rated 2, 1, 1, 1, 1, 1, 8, 1, 1, 1, so the
+ * first of them is shown. A version with no such picture shows none, and says
+ * so in one line rather than leaving an empty space that looks broken.
  */
+export function safePicture(meta: ModelMetadata): string | null {
+  const picture = meta.previewImages.find(
+    (p) => p.type === "image" && (p.nsfwLevel === 1 || p.nsfwLevel === 2),
+  );
+  return picture?.url ?? null;
+}
+
 export function CivitaiPicture(props: { meta: ModelMetadata }) {
   const [broken, setBroken] = createSignal(false);
-  const safe = () => !props.meta.nsfw && props.meta.nsfwLevel <= 3;
-  const first = () => props.meta.previewImageUrls[0] ?? null;
   return (
-    <Show when={first()}>
+    <Show
+      when={safePicture(props.meta)}
+      fallback={
+        <Show when={props.meta.previewImages.length > 0}>
+          <div class="note" style={{ "margin-bottom": "8px" }}>
+            Civitai has no picture of this model rated PG or PG-13, so none is
+            shown here. Its pictures are on its Civitai page.
+          </div>
+        </Show>
+      }
+    >
       {(url) => (
-        <Show
-          when={safe()}
-          fallback={
-            <div class="note" style={{ "margin-bottom": "8px" }}>
-              Civitai rates some pictures of this model as adult, so none is shown
-              here. They are on its Civitai page.
-            </div>
-          }
-        >
-          <Show when={!broken()}>
-            <img
-              class="civ-pic"
-              src={url()}
-              alt={`A picture of ${props.meta.modelName ?? "this model"} from Civitai`}
-              loading="lazy"
-              referrerpolicy="no-referrer"
-              onError={() => setBroken(true)}
-            />
-          </Show>
+        <Show when={!broken()}>
+          <img
+            class="civ-pic"
+            src={url()}
+            alt={`A picture of ${props.meta.modelName ?? "this model"} from Civitai`}
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            onError={() => setBroken(true)}
+          />
         </Show>
       )}
     </Show>

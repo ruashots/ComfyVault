@@ -133,21 +133,51 @@ const meta = (over: Partial<ModelMetadata>): ModelMetadata => ({
   pageUrl: "https://civitai.com/models/1",
   downloadUrl: null,
   previewImageUrls: ["https://image.civitai.com/x/1.jpeg"],
+  previewImages: [],
   ambiguous: false,
   ...over,
 });
 
+const pic = (nsfwLevel: number, n: number, type = "image") => ({
+  url: `https://image.civitai.com/x/${n}.jpeg`,
+  nsfwLevel,
+  type,
+});
+
 describe("the Civitai picture", () => {
-  it("shows the first picture when every picture is rated PG or PG-13", () => {
-    const { unmount } = render(() => <CivitaiPicture meta={meta({ nsfwLevel: 3 })} />);
+  it("shows the first picture when it is rated PG or PG-13", () => {
+    const { unmount } = render(() => (
+      <CivitaiPicture meta={meta({ previewImages: [pic(2, 1), pic(1, 2), pic(8, 3)] })} />
+    ));
     expect(screen.getByRole("img").getAttribute("src")).toBe("https://image.civitai.com/x/1.jpeg");
     unmount();
   });
 
-  it("shows none when any picture is rated adult, as DreamShaper 8 is (11)", () => {
-    const { unmount } = render(() => <CivitaiPicture meta={meta({ nsfwLevel: 11 })} />);
+  it("skips adult, unrated and video entries to the first safe picture", () => {
+    const { unmount } = render(() => (
+      <CivitaiPicture
+        meta={meta({
+          nsfwLevel: 11,
+          previewImages: [pic(8, 1), pic(0, 2), pic(1, 3, "video"), pic(16, 4), pic(1, 5), pic(2, 6)],
+        })}
+      />
+    ));
+    expect(screen.getByRole("img").getAttribute("src")).toBe("https://image.civitai.com/x/5.jpeg");
+    unmount();
+  });
+
+  it("shows none, and says so in one line, when no picture is rated PG or PG-13", () => {
+    const { unmount } = render(() => (
+      <CivitaiPicture meta={meta({ previewImages: [pic(4, 1), pic(8, 2), pic(0, 3)] })} />
+    ));
     expect(screen.queryByRole("img")).toBeNull();
-    expect(document.body.textContent).toContain("rates some pictures of this model as adult");
+    expect(document.body.textContent).toContain("Civitai has no picture of this model rated PG or PG-13");
+    unmount();
+  });
+
+  it("says nothing when Civitai has no picture at all", () => {
+    const { container, unmount } = render(() => <CivitaiPicture meta={meta({ previewImages: [] })} />);
+    expect(container.textContent).toBe("");
     unmount();
   });
 });
