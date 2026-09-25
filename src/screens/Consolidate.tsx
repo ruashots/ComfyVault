@@ -60,7 +60,10 @@ export function ConsolidateScreen() {
             </Show>
           }
         >
-          <Show when={!app.scanPredatesUndo()} fallback={<StaleAfterUndo />}>
+          <Show
+            when={!app.scanPredatesUndo() && !app.scanPredatesSetAside()}
+            fallback={<StaleScan />}
+          >
             <Show
               when={app.planView()}
               fallback={
@@ -89,20 +92,25 @@ export function ConsolidateScreen() {
 }
 
 /**
- * After an undo, before anything has scanned again.
+ * After an undo or a run set aside, before anything has scanned again.
  *
  * Measured against the real engine: a plan rebuilt from the last scan after an
  * undo reports no model held twice and every restored copy as changed, on a
  * tree that holds every duplicate again. Nobody can act on that plan, so it is
- * not shown.
+ * not shown. A run set aside had put some models in the vault before it was
+ * cut off, so a scan from before it is out of date the same way.
  */
-function StaleAfterUndo() {
+function StaleScan() {
   const app = useApp();
   return (
     <EmptyScreen
       title="Consolidate"
       head="Your installs changed since the last scan"
-      body="The undo put every file back where it was, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
+      body={
+        app.scanPredatesSetAside()
+          ? "The run you set aside had already put some models in the vault, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
+          : "The undo put every file back where it was, so the last scan no longer describes your installs. Scan again to see what is duplicated now. A scan changes nothing on disk."
+      }
     >
       <button
         class="btn pri"

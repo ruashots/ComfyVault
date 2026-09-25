@@ -1,6 +1,9 @@
+import { For, Show } from "solid-js";
+
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import type { InterruptedApply } from "~/ipc/contract";
+import { openConfirm } from "~/modals/confirm";
 import { openUndoBox } from "~/modals/undo";
 import { useApp } from "~/state/store";
 
@@ -15,6 +18,14 @@ import { useApp } from "~/state/store";
  * the whole run: 9 of 9 groups, 9 files moved, 27 links.
  */
 export function RunCutOff(props: { run: InterruptedApply }) {
+  return (
+    <Show when={props.run.blocked} fallback={<Settle run={props.run} />}>
+      <Blocked run={props.run} />
+    </Show>
+  );
+}
+
+function Settle(props: { run: InterruptedApply }) {
   const app = useApp();
   return (
     <>
@@ -62,6 +73,97 @@ export function RunCutOff(props: { run: InterruptedApply }) {
             Every step was written down before it happened, so this run can be
             finished or undone rather than left half done. Finishing moves the rest
             of the files it was asked for. Undoing puts back what it already moved.
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A cut-off run that names places outside the vault and the registered
+ * installs. The engine will neither finish nor undo it, so the one way out is
+ * to set it aside, which changes only its record.
+ *
+ * Measured against the real engine: a run cut off three groups in, then one of
+ * its installs removed from ComfyVault. The run came back blocked, naming the
+ * nine places in that install. Finish, undo and the undo's cost check were
+ * refused with pathOutsideBoundary. Setting it aside left it off the list of
+ * runs to settle, and all nine links on disk still reached the vault.
+ */
+function Blocked(props: { run: InterruptedApply }) {
+  const app = useApp();
+  const shown = () => props.run.blockedPaths.slice(0, 3);
+  const more = () => props.run.blockedPaths.length - shown().length;
+
+  const setAside = () =>
+    openConfirm(app, {
+      title: "Set this run aside",
+      cta: "Set it aside",
+      body: [
+        [
+          { text: "Setting it aside moves nothing on the disk. " },
+          {
+            text: "Every link this run made keeps pointing into the vault, so every model keeps loading.",
+            emph: true,
+          },
+        ],
+        [{ text: "After this, the run can no longer be undone from ComfyVault." }],
+        [
+          {
+            text: "The usual causes are the vault being opened on a different computer, or an install moved or removed after the run. A vault someone else prepared can cause it too.",
+          },
+        ],
+        [
+          {
+            text: "The run names these places, which are not in the vault or in any registered install:",
+          },
+        ],
+      ],
+      list: props.run.blockedPaths,
+      action: async () => {
+        await app.engine.setAsideRun(props.run.applyId);
+      },
+    });
+
+  return (
+    <>
+      <Header title="Consolidate" sub="cut off part way" />
+      <div class="screen">
+        <div class="scroll">
+          <div class="blk">
+            <h3>
+              <Icon name="warn" size={13} />
+              A run stopped part way through
+            </h3>
+            <div class="blkrow">
+              <div class="bl">
+                <div class="bt">ComfyVault cannot finish or undo it</div>
+                <div class="bd">
+                  {props.run.description} It names{" "}
+                  {props.run.blockedPaths.length}{" "}
+                  {props.run.blockedPaths.length === 1 ? "place" : "places"} that are
+                  not in the vault or in any registered install, so ComfyVault will
+                  not touch it.
+                </div>
+                <ul class="paths" style={{ "margin-top": "7px" }}>
+                  <For each={shown()}>{(path) => <li>{path}</li>}</For>
+                  <Show when={more() > 0}>
+                    <li>and {more()} more</li>
+                  </Show>
+                </ul>
+              </div>
+              <div class="ba">
+                <button class="btn sm dng" onClick={setAside}>
+                  Set it aside
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="note up">
+            This usually means the vault was opened on a different computer, or an
+            install was moved or removed after the run. A vault someone else
+            prepared can cause it too, so look at these places before going on.
           </div>
         </div>
       </div>

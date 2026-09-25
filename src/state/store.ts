@@ -132,6 +132,8 @@ export interface ConfirmModal {
   kind: "confirm";
   title: string;
   body: ConfirmLine[];
+  /** Paths the person must see before confirming, one per line. */
+  list: readonly string[];
   /** Null when the action is refused before it starts, so none is offered. */
   cta: string | null;
   action: () => Promise<void> | void;
@@ -217,6 +219,11 @@ export interface AppStore {
    * finds nothing to consolidate, on a tree that holds every duplicate again.
    */
   readonly scanPredatesUndo: Accessor<boolean>;
+  /**
+   * The last run was set aside, and the last scan was taken before that run
+   * started, so it describes the installs as they were before the run's links.
+   */
+  readonly scanPredatesSetAside: Accessor<boolean>;
   readonly usage: Accessor<ReadonlyMap<string, UsageResult>>;
   readonly usageMethod: Accessor<string | null>;
 
@@ -353,6 +360,16 @@ function latestUndo(applies: readonly ApplyRecord[]): string | null {
   return latest;
 }
 
+/** True when this scan was taken before a run that has since been set aside. */
+function predatesSetAside(run: ApplyRecord | null, scan: ScanRecord | null): boolean {
+  return (
+    run !== null &&
+    scan !== null &&
+    run.state === "setAside" &&
+    Date.parse(scan.finishedAt) < Date.parse(run.startedAt)
+  );
+}
+
 /** True when an undo finished after this scan, so the scan is out of date. */
 function overtakenByUndo(undoneAt: string | null, scan: ScanRecord | null): boolean {
   return (
@@ -405,6 +422,8 @@ export function createAppStore(engine: Engine): AppStore {
   const runOnScreen = createMemo(() => {
     const run = lastApply();
     if (!run) return null;
+    // Settled and never finished: its record counts nothing the person can use.
+    if (run.state === "setAside") return null;
     if (run.state === "partlyReverted" || cutOffRun()) return run;
     const last = scan();
     const scannedSince =
@@ -414,6 +433,7 @@ export function createAppStore(engine: Engine): AppStore {
     return scannedSince ? null : run;
   });
   const scanPredatesUndo = createMemo(() => overtakenByUndo(lastUndoneAt(), scan()));
+  const scanPredatesSetAside = createMemo(() => predatesSetAside(lastApply(), scan()));
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
@@ -612,7 +632,9 @@ export function createAppStore(engine: Engine): AppStore {
       // holds every duplicate again. Nothing is built from it, so no screen can
       // print it.
       const undoneAt = latestUndo(applies);
-      const scanOvertaken = overtakenByUndo(undoneAt, lastScan);
+      const scanOvertaken =
+        overtakenByUndo(undoneAt, lastScan) ||
+        predatesSetAside(applies.find((a) => a.state !== "reverted") ?? null, lastScan);
       const nextPlan =
         lastScan && !lastScan.cancelled && !scanOvertaken
           ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
@@ -881,6 +903,7 @@ export function createAppStore(engine: Engine): AppStore {
     appliedPlan,
     scanPredatesRun,
     scanPredatesUndo,
+    scanPredatesSetAside,
     usage,
     usageMethod,
     lookup,

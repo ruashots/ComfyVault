@@ -16,6 +16,8 @@ export function openConfirm(
     /** Null when the engine already refused, so there is nothing to confirm. */
     cta: string | null;
     body: ConfirmLine[];
+    /** Paths the person must see before confirming. */
+    list?: readonly string[];
     action: () => Promise<void> | void;
     /** Why the action cannot happen, known before the person presses it. */
     refusal?: { head: string; message: string; detail: readonly string[] };
@@ -26,6 +28,7 @@ export function openConfirm(
     title: options.title,
     cta: options.cta,
     body: options.body,
+    list: options.list ?? [],
     action: options.action,
     running: false,
     errorHead: options.refusal?.head ?? "That did not happen",
@@ -114,6 +117,11 @@ export function ConfirmModalView() {
                   </div>
                 )}
               </For>
+              <Show when={current().list.length > 0}>
+                <ul class="paths" style={{ "margin-bottom": "8px" }}>
+                  <For each={current().list}>{(line) => <li>{line}</li>}</For>
+                </ul>
+              </Show>
               <Show when={current().error}>
                 {(message) => (
                   <div class="verdict no" role="alert">
