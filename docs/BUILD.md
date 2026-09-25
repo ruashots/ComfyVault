@@ -227,6 +227,28 @@ Before you read a failure, check two things:
 - **The folder you run in.** Use a scratch folder. Never run the tests against
   a real ComfyUI install.
 
+### 3.2 What the window may open
+
+`src-tauri/tests/opener_scope.rs` drives the real opener plugin through the
+real capability file, on Tauri's mock runtime. Build it and run it on Windows:
+
+```
+cargo xwin test -p comfyvault --test opener_scope --no-run --target x86_64-pc-windows-msvc
+cp "$(ls -t target/x86_64-pc-windows-msvc/debug/deps/opener_scope-*.exe | head -1)" \
+   /mnt/c/<scratch folder>/opener-tests.exe
+cd /mnt/c/<scratch folder>
+./opener-tests.exe
+./opener-tests.exe --ignored
+```
+
+The first run checks that addresses outside the scope are refused. The second
+opens a real Civitai model page in the default browser, so it runs only when
+asked.
+
+The test program gets its own Windows manifest from `src-tauri/build.rs`. The
+shipped program does not use it. Without that manifest Windows refuses to start
+the test program, with an "Entry Point Not Found" message.
+
 ---
 
 ## 4. What a Linux build cannot do

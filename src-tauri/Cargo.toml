@@ -23,6 +23,11 @@ tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# The mock runtime, so a test can drive the real plugins through the real
+# capability file without a window.
+tauri = { version = "2", features = ["test"] }
+
 [features]
 default = []
 # Without this, Tauri does NOT embed the built frontend: the application falls
