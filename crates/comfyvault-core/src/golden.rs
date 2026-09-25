@@ -1301,6 +1301,34 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
 }
 
 #[test]
+fn the_program_icon_has_every_size_windows_draws() {
+    // The icon was one flat 32 pixel square, so Explorer, the taskbar and the
+    // title bar scaled that one image to every size. Windows picks the image
+    // closest to the size it draws, so the file must carry each of them.
+    let config = read_repo_file("src-tauri/tauri.conf.json");
+    let config: serde_json::Value = serde_json::from_str(&config).unwrap();
+    let listed = config["bundle"]["icon"].as_array().expect("no icons are listed");
+    for icon in listed {
+        let path = repo_root().join("src-tauri").join(icon.as_str().unwrap());
+        assert!(path.is_file(), "{} is listed and missing", path.display());
+    }
+
+    let ico = std::fs::read(repo_root().join("src-tauri/icons/icon.ico")).unwrap();
+    assert_eq!(&ico[..4], &[0, 0, 1, 0], "icon.ico is not an icon file");
+    let count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+    // Each entry's first byte is its width, where 0 means 256.
+    let sizes: Vec<u32> = (0..count)
+        .map(|i| match ico[6 + 16 * i] {
+            0 => 256,
+            w => w as u32,
+        })
+        .collect();
+    for want in [16, 24, 32, 48, 64, 256] {
+        assert!(sizes.contains(&want), "icon.ico has no {want} pixel image, only {sizes:?}");
+    }
+}
+
+#[test]
 fn only_one_copy_of_the_program_runs_at_a_time() {
     // A second copy opened a second window on the same vault. The single
     // instance plugin stops it, but only when it is the first plugin: Tauri
