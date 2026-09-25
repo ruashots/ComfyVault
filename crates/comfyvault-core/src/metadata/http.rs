@@ -55,6 +55,14 @@ impl Default for UreqTransport {
 impl UreqTransport {
     pub fn new() -> Self {
         let config = ureq::Agent::config_builder()
+            // Named, because ureq picks Rustls unless told otherwise, and
+            // only the system's TLS is compiled in. Left to the default,
+            // every https request panicked before it reached the network.
+            .tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .provider(ureq::tls::TlsProvider::NativeTls)
+                    .build(),
+            )
             .timeout_global(Some(TIMEOUT))
             .user_agent(concat!("ComfyVault/", env!("CARGO_PKG_VERSION")))
             .build();
@@ -363,5 +371,29 @@ mod tests {
             t.post_json("http://x/", &[], "[]").unwrap_err().code,
             ErrorCode::NetworkUnavailable
         );
+    }
+}
+
+#[cfg(test)]
+mod tls_tests {
+    use super::*;
+
+    #[test]
+    fn an_https_request_that_fails_is_an_offline_answer_not_a_crash() {
+        // ureq chooses Rustls unless told otherwise, and only the system's
+        // TLS is compiled in. Every https request then panicked before it
+        // reached the network, so no lookup could ever work.
+        // A server that accepts the connection and closes it, so the request
+        // reaches the TLS handshake and fails there, the way a network that
+        // intercepts or drops TLS does.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(2) {
+                drop(stream);
+            }
+        });
+        let err = UreqTransport::new().get(&format!("https://127.0.0.1:{port}/"), &[]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NetworkUnavailable);
     }
 }
