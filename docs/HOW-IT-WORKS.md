@@ -30,6 +30,10 @@ unless Developer Mode is on. That is the one system setting ComfyVault needs.
 
 ## 2. Registering an install
 
+An install can only be registered once a vault folder is open, because the
+record of every install lives inside the vault. The first-run screen asks for
+the vault first for this reason.
+
 ComfyVault has to be sure a folder really is a ComfyUI install before it reads
 anything from it.
 
@@ -93,7 +97,8 @@ the floor. The defaults are:
 .safetensors  .ckpt  .pt  .pth  .bin  .gguf  .onnx  .pt2  .sft  .pkl
 ```
 
-and 1 MB. Both are settings.
+and 1 MB. Settings shows both rules. This version has no control to change
+them.
 
 The first seven extensions are the common weight formats. The last three come
 from ComfyUI itself, which treats `.pt2`, `.sft` and `.pkl` as model weights.
@@ -109,8 +114,7 @@ can agree while the contents differ.
 
 Later scans are much faster. Each hash is cached against the file's path, its
 size, and its modification time. If all three match, the cached hash is reused
-and no bytes are read. Change any of the three and the file is read again. You
-can force a full read by turning the hash cache off in Settings.
+and no bytes are read. Change any of the three and the file is read again.
 
 ### Links the scan meets
 
@@ -217,6 +221,20 @@ a difference from the size and the date alone.
 You can turn it off to go faster. That makes the delete a matter of trust rather
 than proof.
 
+### Stopping a run
+
+**Stop now** on the running screen stops the run as soon as it can. A model
+that was part way through is put back first, so each model is done completely
+or not at all. Everything already done stays done, and the run can still be
+undone.
+
+During the whole run, each path holds either its own file or a working link.
+So every model keeps loading in ComfyUI, even while a model is part way
+through, and even if the run is stopped.
+
+A model the run stopped on is not reported as a failure, because you stopped
+it. A model that failed on its own earlier in the same run is still reported.
+
 ### Two rules that hold throughout
 
 **Each group is all or nothing.** If any step in a group fails, every step
@@ -255,8 +273,18 @@ renamed-aside name or its original name, its bytes are never in neither place.
 
 Undo walks the journal backwards and reverses every step.
 
+### What it costs, shown before it starts
+
+Before an undo starts, ComfyVault shows how many files come back by a rename,
+how many have to be copied, how much data the copies write, and how much room
+each drive is expected to need beside the room it has free. If a drive is
+short, the undo does not start.
+
+### How the files come back
+
 The copy that was kept comes back by a rename. Its bytes are the vault file, so
-on one drive this is instant and takes no room.
+on one drive this is instant and takes no room. If the vault is on a different
+drive from the install, this copy is copied back as well.
 
 Each duplicate comes back as a copy of the vault file. Its own bytes were
 deleted, which is what freed the room, and one file cannot be renamed into two
@@ -268,10 +296,18 @@ NTFS compressed file stays compressed, and each file gets back the modification
 time it had before the run. The room an undo takes is therefore what the files
 really occupied, which for a sparse file can be almost nothing.
 
-An undo can be stopped at any moment, and ComfyUI still loads every model.
-Each file comes back by one rename onto the link that stood in its place, so a
-model's path always holds the link or the file, even if the power goes. A
-stopped undo leaves the run partly undone. Undo it again to put back the rest.
+### Stopping an undo
+
+An undo can be stopped at any moment with **Stop now**, and ComfyUI still loads
+every model. Each file comes back by one rename onto the link that stood in its
+place. A copy is written to a temporary file beside the link, checked, and then
+renamed over it. So a model's path always holds the link or the file, even if
+the power goes.
+
+A stopped undo leaves the run partly undone. The files already back stay back,
+and the rest stay in the vault behind their links. Consolidate then shows where
+the undo stopped, with **Undo the rest** to finish it. An undo cut off by a
+crash is finished the same way.
 
 A run that was interrupted and then finished is undone as one run. Resuming
 continues the same journal rather than starting a new one, so the whole of it
@@ -285,10 +321,26 @@ the way, so you can undo the later change first.
 
 ## 8. The vault
 
-The vault is a plain folder. You choose where it goes, and it can be on any
-drive. It cannot be inside a ComfyUI install, and ComfyVault refuses that
-choice, because a file moved into it would still be inside the install it came
-from.
+The vault is a plain folder. You choose where it goes. It cannot be inside a
+ComfyUI install, and ComfyVault refuses that choice, because a file moved into
+it would still be inside the install it came from.
+
+### Which drive
+
+**Put the vault on the same drive as your installs.** There, a file is moved by
+a rename. The move is instant, and the vault needs no free space of its own. On
+any other drive, every file is copied across and checked first, so that drive
+needs the room before the run.
+
+**Do not put it on a removable drive or a network drive.** Every install points
+into the vault by link. On any day that drive is missing, every model in every
+install stops loading at once. ComfyVault warns you about this kind of drive,
+and the choice stays yours. A drive that does not answer at all is refused.
+
+**A vault on a different drive from an install is not proven.** The copy across
+drives, and the undo of it, have only been tested against a simulated drive
+boundary, never a real second drive. If you choose one, keep your own backup of
+those models until you have checked a run and an undo yourself.
 
 ```
 C:\ComfyVault\
@@ -364,10 +416,14 @@ name appears in a file. It does not prove the model runs.
 It searches these places under each install root:
 
 ```
-user\<any user>\workflows\**\*.json
-user\<any user>\subgraphs\**\*.json
-any file named workflow.json, outside models, custom_nodes, .git and virtual environments
+every .json file under user\, up to eight folders deep
+any file named workflow.json, up to four folders deep, outside user, models,
+  custom_nodes, output, input, temp, .git, venv, .venv and python_embeded
 ```
+
+The `user` folder holds saved workflows and subgraphs. It also holds other JSON
+files, such as settings, so a name found there does not always come from a
+workflow.
 
 Files over 50 MB are skipped and reported.
 

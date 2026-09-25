@@ -1,9 +1,10 @@
 # ComfyVault
 
-**Keep one copy of every ComfyUI model on your PC.** ComfyVault moves each model
-weight into a single vault folder and leaves a link in every place the file used
-to be. ComfyUI keeps loading the same models from the same paths, and the
-duplicate copies stop taking up room.
+**Keep one copy of every ComfyUI model on your Windows PC.** ComfyVault finds
+the model files that sit in more than one of your ComfyUI installs, keeps one
+copy of each in a single vault folder, and deletes the duplicate copies. A link
+takes the place of every file it moved, so ComfyUI loads each model from the
+same path as before.
 
 **Before.** The same LoRA in three installs, under three different folders:
 
@@ -23,225 +24,223 @@ C:\ComfyUI-B\models\loras\new\style.safetensors      ->  the vault file
 C:\ComfyUI-C\models\loras\style.safetensors          ->  the vault file
 ```
 
-288 MB goes back to the drive. Every path is the path it always was, so no
-workflow changes, no ComfyUI setting changes, and every install still lists the
-model exactly where it listed it before.
+288 MB goes back to the drive. Every path is the path it was before, so no
+workflow changes and no ComfyUI setting changes.
 
-The copy that moves gets a link in its old place too. The rule is simple:
-wherever a file was, a link takes its place.
+Every step goes into a journal before it happens. You can stop a run, finish a
+run that a crash cut off, and undo a run.
 
 ---
 
 ## Who this is for
 
-You run more than one ComfyUI install. A launcher put one there. A tutorial made
-you clone another. The portable build is still in Downloads.
+You run more than one ComfyUI install on one Windows PC. A launcher made one, a
+tutorial made another, and a portable build is still in Downloads. Each install
+has its own `models` folder, and the same weights sit in more than one of them.
+Nothing tells you which files are duplicates, so you keep all of them.
 
-Every one of them has its own `models` folder, and the same weights sit in more
-than one of them. The same 6 GB checkpoint, twice. The same LoRA, three times.
-Nothing tells you which files are duplicates, so you keep them all, and the drive
-fills up.
-
-One measured example: a 1.82 TB drive, 93 percent full, holding about 600 GB of
-duplicate copies.
-
-If you run a single install and never download the same model twice, there is
-little here for you.
+If you run a single install and never download the same model twice, ComfyVault
+has little to do for you.
 
 ---
 
 ## Before you start
 
-**Windows only.** The engine is cross platform, but the product is built,
-tested, and shipped for Windows. There is no macOS or Linux build.
+**Windows only.** There is no macOS or Linux build.
 
-**Windows Developer Mode must be on.** Windows refuses to let an ordinary
-program create a symbolic link without it. Open Settings, go to System, then For
-developers, and turn Developer Mode on. No restart is needed.
+**Developer Mode must be on.** Windows does not let an ordinary program create a
+symbolic link without it. Open Settings, then System, then For developers, and
+turn on Developer Mode. You do not have to restart.
 
-ComfyVault checks this by creating a real link, reading it back, and deleting
-it. It does not guess from your Windows version. If the check fails, Apply is
-blocked and the app tells you why.
+ComfyVault checks this itself: it makes a test link, reads it back, and deletes
+it. If the test fails, Apply stays blocked and the app tells you why.
+
+**Microsoft Edge WebView2 draws the window.** Windows 11 includes it, and most
+Windows 10 PCs have it through Edge. If the window does not open, install the
+WebView2 Runtime from Microsoft.
 
 ---
 
-## Install
+## Get it
 
-Build it from source. There is no prebuilt installer yet.
+There is no installer and no download yet. You build ComfyVault from source,
+and the result is one portable program, `comfyvault.exe`. It needs no install
+step. Put it where you like and run it.
+
+The build runs on Linux or in WSL on Windows, and it cross-compiles the Windows
+program. In short:
 
 ```
 git clone https://github.com/Ruashots/ComfyVault
 cd ComfyVault
 npm install
-npm run tauri build
+npm run build
+cargo xwin build -p comfyvault --release --features custom-protocol \
+    --target x86_64-pc-windows-msvc
 ```
 
-The installer lands in `target\release\bundle\nsis\`.
+The program is then at
+`target/x86_64-pc-windows-msvc/release/comfyvault.exe`.
 
-You need [Node 22 or newer](https://nodejs.org), [Rust](https://rustup.rs), and
-the Tauri prerequisites for Windows. Full build notes, including the cross build
-from Linux, are in [docs/BUILD.md](docs/BUILD.md).
+You need Node 22.13 or newer, Rust, `cargo-xwin` and LLVM. The full steps, and
+the check that tells you the build is good, are in
+[docs/BUILD.md](docs/BUILD.md).
 
 ---
 
 ## How a consolidation goes
 
-1. **The vault folder comes first.** It is one plain folder, and it can sit on
-   any drive. It cannot sit inside a ComfyUI install, and ComfyVault refuses
-   that choice. Nothing else runs until a vault is open, because the vault is
-   where ComfyVault keeps its record.
+1. **Choose the vault folder.** This is step one on the first run, and nothing
+   else opens until it is done. The vault is one plain folder. It cannot be
+   inside a ComfyUI install, and ComfyVault refuses that choice.
 
-2. **Then your installs.** ComfyVault checks that a folder really is a ComfyUI
-   install before it accepts it, and it finds the real root inside a launcher
-   layout. Register as many installs as you have.
+   - **Put it on the same drive as your installs.** On that drive, files are
+     moved by a rename, which is instant, so the vault needs no free space of
+     its own. On any other drive, every file is copied across first, so that
+     drive needs the room before the run starts.
+   - **Do not put it on a removable drive or a network drive.** Every install
+     points into the vault by link. On any day that drive is missing, every
+     model in every install stops loading at once. ComfyVault warns you and
+     lets you choose it anyway.
+   - **A vault on a different drive from an install is not proven.** Moving
+     files to another drive, and undoing that, has only been tested against a
+     simulated drive boundary, never a real second drive. If you choose one,
+     keep your own backup of those models until you have checked a run and an
+     undo yourself.
 
-3. **Close ComfyUI, then scan.** ComfyVault reads every model file in every
-   install and takes a SHA-256 hash of each one. A first scan over a terabyte
-   takes a while, because every byte is read. Later scans reuse the hashes of
-   files that have not changed.
+2. **Add your installs.** ComfyVault checks that a folder is really a ComfyUI
+   install before it accepts it, and it finds the real install folder inside a
+   launcher layout. Add as many as you have.
 
-4. **Read the plan.** The Consolidate screen shows a dry run. Nothing has moved.
-   It lists every model that exists more than once, which copy would move into
-   the vault, which paths would become links, and how much space comes back.
-   Untick anything you want left alone.
+3. **Close ComfyUI, then scan.** The scan reads every model file in every
+   install and calculates a SHA-256 hash of each one. The first scan reads
+   every byte, so a terabyte of models takes a while. Later scans reuse the
+   hash of each file that did not change.
 
-5. **Apply.** ComfyVault moves the files, creates the links, and deletes the
-   duplicate copies. Every step is written to a journal first, so a crash is
-   recoverable. When it is done you can undo the whole run.
+4. **Read the plan.** The Consolidate screen shows a dry run. Nothing has moved
+   yet. It lists every model that exists more than once, which copy goes into
+   the vault, which paths become links, and how much space comes back. Untick
+   anything you want left alone.
+
+5. **Apply.** ComfyVault moves the files, makes the links, and deletes the
+   duplicate copies. You can press **Stop now** at any time. Each model is done
+   completely or not at all, and each path always holds its own file or a
+   working link, so every model keeps loading in ComfyUI during the run.
+
+---
+
+## Undo, and what it costs
+
+Every run can be undone. Before an undo starts, ComfyVault shows what it will
+cost, drive by drive, and it refuses to start if a drive does not have the room.
+
+- **The copy the vault kept comes back instantly**, by a rename. On a vault that
+  is on another drive, this copy is copied back too.
+- **Each deleted duplicate is copied back out of the vault.** The run deleted
+  those copies to free the room, so the undo has to write them again. This is
+  what takes the time and the disk space.
+- **The copies keep what the drive knew about the file.** A sparse file stays
+  sparse, an NTFS compressed file stays compressed, and each file gets back its
+  original modification time.
+
+An undo can be stopped at any point too, and every model still loads while it is
+stopped. **Undo the rest** finishes it later.
+
+If the PC crashes or the app closes during a run, ComfyVault shows that run the
+next time it opens. You can finish it or undo it. Nothing else starts until you
+choose.
 
 ---
 
 ## What it will not do
 
-This is the part worth reading before you install anything.
+**It does not download models.** The Download screen says so. Downloads from
+Hugging Face and Civitai are not in this version. Download the way you always
+do, then scan again.
 
-**It does not download models.** The Download screen exists and says so. Hugging
-Face and Civitai downloads are not in this version. Download the way you always
-have, then run a scan.
-
-**Consolidated models lose their thumbnail in ComfyUI's model browser.** From
-ComfyUI 0.28.0 onward, the route that serves preview images rejects a file
-reached through a per-file symbolic link. This is a security fix in ComfyUI. It
-will not be reverted, and it is the price of per-file links.
-
-Loading the model is not affected. Running a workflow is not affected. Only the
-little preview picture in the model browser goes away. ComfyVault reads each
-install's version and tells you which of your installs this affects.
+**Consolidated models show no picture in ComfyUI's model browser**, from
+ComfyUI 0.28 on. ComfyUI refuses to serve a preview image through a per-file
+link. This is a security fix in ComfyUI, and it will not be reverted. Loading
+the model and running a workflow are not affected. ComfyVault reads each
+install's version and tells you which installs this affects.
 
 **"Not used" is not a safe-to-delete list.** ComfyVault can search your saved
-workflow files for a model's file name. That search is a plain text search
-inside the JSON. It does not read the graph and it does not resolve node inputs.
+workflow files for a model's file name. It is a plain-text search inside the
+JSON. It does not read the graph. A workflow that was never saved lives in the
+browser, and ComfyVault cannot see it. When there are no saved workflow files,
+the app says so rather than calling every model unused.
 
-A workflow that only ever lived in a browser tab was never saved to disk, so
-ComfyVault cannot see it at all. When there are no saved workflow files to
-search, the app says exactly that instead of reporting every model as unused.
+**It never moves files inside `custom_nodes` or the Hugging Face cache.** It
+counts them so the totals add up, and leaves them where they are. A custom node
+loads its own weights from its own folder, and the Hugging Face libraries manage
+their own cache.
 
-**It never moves weights inside `custom_nodes` or the Hugging Face cache.** They
-are counted and reported, so the numbers add up. They are never moved. A custom
-node loads its own weights straight from its own folder, and the Hugging Face
-libraries manage their cache themselves.
+**It only moves model weight files.** The scan takes files with one of these
+extensions, and over 1 MB in size:
+`.safetensors` `.ckpt` `.pt` `.pth` `.bin` `.gguf` `.onnx` `.pt2` `.sft` `.pkl`.
+Settings shows these rules. This version has no control to change them.
 
-**It only ever moves model weight files.** The scan takes files whose extension
-is one of `.safetensors` `.ckpt` `.pt` `.pth` `.bin` `.gguf` `.onnx` `.pt2`
-`.sft` `.pkl`, and whose size is over 1 MB. Both are settings you can change.
-
-**It runs one long job at a time.** A scan, a consolidation, and an undo are
-long jobs. A second one is refused while one runs, so two of them can never
-touch the same files.
+**It runs one long job at a time.** A scan, a run and an undo are long jobs.
+ComfyVault refuses a second one while one runs, so two jobs never touch the
+same files.
 
 ---
 
-## How it avoids losing your models
+## How it keeps your models safe
 
-Moving somebody's model weights is the kind of job where being mostly right is
-worthless. These are the rules the engine holds, and each one is covered by
-tests that fail if it breaks.
+**Nothing moves until you press Apply.** The plan only reads the disk.
 
-**Nothing moves until you press Apply.** The plan is a dry run. It is built by
-reading the disk, and it changes nothing.
+**Each file is checked again just before it is touched.** ComfyVault compares
+the size and the modification time with what the scan recorded. If either
+changed, it leaves that file alone and reports it.
 
-**A file is checked again immediately before it is touched.** The size and the
-modification time are compared against what the scan recorded. If either
-changed, that file is left alone and reported.
+**Bytes are never deleted before the link is in place.** For each duplicate,
+ComfyVault renames the file aside, makes the link, and deletes the renamed file
+last. If a step fails, the file goes back under its own name.
 
-**Bytes are never deleted before the replacement is in place.** For each
-duplicate, the engine renames the file aside, creates the link, and deletes the
-renamed file last. If any step fails, the file is put back under its own name.
-An interruption always leaves those bytes under one name or the other, never
-under neither.
+**A duplicate is read again before it is deleted.** By default, ComfyVault reads
+the duplicate one more time and compares it with the copy it keeps. The delete
+is the only step that removes bytes, so it happens on proof, not on a hash from
+an earlier scan. You can turn this off in Settings to go faster.
 
-**A duplicate is re-read before it is deleted.** By default ComfyVault reads the
-duplicate's bytes one more time, right before deleting it, and compares them
-against the copy it kept. Deleting is the one thing this app does that cannot be
-undone, so it is done on proof rather than on a hash from an earlier scan. You
-can turn this off in Settings to go faster.
+**A move to another drive is copy, check, then delete.** The copy is written,
+flushed to the disk, read back and hashed. Only then is the original removed.
 
-**A move to another drive is copy, verify, then delete.** The copy is written,
-flushed to the disk, read back, hashed, and compared. Only then is the original
-removed.
+**Nothing is ever overwritten.** If something already sits where a file or a
+link would go, ComfyVault stops and reports it.
 
-**Nothing is ever overwritten.** If something already sits where a file would
-go, the engine refuses and reports it.
-
-**Each model is all or nothing.** A model either finishes completely or leaves
-the disk exactly as it was. A failure on one model never leaves another one half
-done.
-
-**Every step is journaled before it is performed.** The journal lives in the
-vault. If the power goes out mid-run, the app shows you the interrupted run the
-next time it starts, and finishes or undoes it. A resumed run finishes only the
-models you originally ticked.
-
-**Any run can be undone.** Undo puts every file back where it came from and
-removes the link that stood in its place. Putting files back needs free space on
-the drive they came from, and ComfyVault checks that first and refuses rather
-than half doing it.
-
-There is more detail, including what the vault folder holds and what happens
-when a link breaks, in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+The full detail is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ---
 
 ## The screens
 
-**Home** is the report. How many installs, how many unique models, how much is
-on disk, how much comes back. It shows the drive as it is, with the part this
-run gives back marked on the meter.
+**Home** walks you through the two setup steps on the first run: the vault,
+then your installs. After a scan, it shows how many installs, how many unique
+models, how much is on disk, and how much can come back.
 
-**Library** is one row per unique model, whether its bytes are already in the
-vault or still sitting in four installs. Filter it, sort it by how many places
-hold a file, and see every name a model answers to.
+**Library** has one row per unique model, whether it is already in the vault or
+still in four installs. Search it, sort it by how many places hold a file, and
+see every name a model has.
 
-**Consolidate** is the dry run and the Apply button. It is the screen this
-product exists for.
+**Consolidate** shows the dry run and the Apply button, then the finished run
+with its undo.
 
-**Cleanup** handles what goes wrong over time. Links that point at a file that
-is not there are listed first and can be removed in one go. Files that arrived
-under two different names are settled by picking which name the vault keeps, and
-the other name stays as a link so saved workflows keep opening. Vault files that
-nothing points at any more are listed last, with what deleting one costs.
+**Cleanup** handles what goes wrong later. Links that point at a missing file
+come first, and you can remove them. A file that arrived under two names can
+keep the name you pick, and the other name stays as a link so saved workflows
+still open. Vault files that nothing points at come last.
 
-**Download** is the one screen that stands empty in this version, on purpose. It
-says what it will hold and what to do until then.
+**Download** is empty in this version, and says so.
 
-**Settings** is your installs, your vault folder, and the scan rules. It also
-re-checks Developer Mode and which ComfyUI processes are running.
+**Settings** holds your installs, the vault folder and the scan rules. It also
+checks Developer Mode again, and which ComfyUI programs are running.
 
 ---
 
-## What ComfyVault sends over the network
+## Your data
 
-Nothing, in this version.
-
-The engine can look a model up on Civitai by its hash. No screen calls that
-today, so no hash of any model you own leaves your machine. There is no account,
-no API key, and no telemetry.
-
----
-
-## Where things live
-
-The vault is a plain folder you choose. Inside it:
+The vault is a plain folder you choose:
 
 ```
 C:\ComfyVault\
@@ -249,12 +248,17 @@ C:\ComfyVault\
   loras\
   vae\
   .comfyvault\
-    vault.redb            the record of what was taken and from where
+    vault.redb            the record of every install, scan and run
 ```
 
-Everything ComfyVault knows lives inside the vault, not beside the application.
-Unplug the drive and plug it into another machine, and the record travels with
-it. The only thing kept outside is which vault folder to open.
+The record lives inside the vault, so it moves with the drive. The only thing
+kept outside is which vault folder to open, in
+`%APPDATA%\app.comfyvault.desktop\config.json`.
+
+**Nothing goes over the network in this version.** There is no account, no API
+key and no telemetry. The engine can look a model up on Civitai by its hash, and
+Settings has a switch for that, but no screen uses the lookup, so nothing is
+sent.
 
 ---
 
@@ -262,9 +266,9 @@ it. The only thing kept outside is which vault folder to open.
 
 | Document | What it covers |
 |---|---|
-| [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) | What the scan reads, how the plan is decided, what Apply does step by step |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Developer Mode, locked files, broken links, missing thumbnails, interrupted runs |
-| [docs/BUILD.md](docs/BUILD.md) | Building on Windows, cross building from Linux, running the tests |
+| [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) | What the scan reads, how the plan is made, what Apply and Undo do step by step |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Developer Mode, a blocked Apply, broken links, missing pictures, a run cut off by a crash |
+| [docs/BUILD.md](docs/BUILD.md) | Building the program, checking the build, running the tests |
 | [docs/IPC-CONTRACT.md](docs/IPC-CONTRACT.md) | Every command, payload, error and event between the window and the engine |
 | [docs/FRONTEND.md](docs/FRONTEND.md) | Running the interface on its own, against a development engine |
 
@@ -273,13 +277,7 @@ it. The only thing kept outside is which vault folder to open.
 ## How it is built
 
 The engine is a plain Rust crate, `crates/comfyvault-core`. It holds every rule
-about models, vaults and links, and it knows nothing about the window it sits
-in. The interface is Solid and TypeScript. Tauri puts the two together.
-
-The split is deliberate. The same engine can back a command line tool later
-without moving any logic.
-
-The engine and the interface each carry their own test suite. The engine's suite
-also runs on Windows, and that is the run that counts: three real defects passed
-every test on Linux and failed on Windows. [docs/BUILD.md](docs/BUILD.md) has
-both recipes.
+about models, vaults and links, and it knows nothing about the window. The
+interface is Solid and TypeScript. Tauri puts the two in one window. Each half
+has its own test suite, and the engine's suite also runs on Windows, where links
+and locked files behave differently from Linux.

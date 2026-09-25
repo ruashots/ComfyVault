@@ -7,7 +7,7 @@ application, see [BUILD.md](BUILD.md).
 
 ## Run it
 
-Node 22 or newer is required. Node 20 cannot install this dependency set.
+Node 22.13 or newer is required. Node 20 cannot install this dependency set.
 
 ```
 npm install
@@ -28,6 +28,9 @@ console:
 comfyVaultDev.symlinks(true)      // Developer Mode on, so links can be made
 comfyVaultDev.comfyRunning(false) // close ComfyUI
 comfyVaultDev.reset(false)        // start over; pass true for a first run
+comfyVaultDev.breakLinks(1)       // point some links at nothing, for Cleanup
+comfyVaultDev.forgetVersions()    // installs that do not record a version
+comfyVaultDev.noWorkflows()       // no saved workflow files to search
 ```
 
 `http://localhost:1420/?first-run` opens it with nothing registered.

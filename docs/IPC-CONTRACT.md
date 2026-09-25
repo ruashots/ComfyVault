@@ -895,8 +895,8 @@ type PlanTotals = {
 ### 5.3 How the plan decides
 
 **One group per unique content.** Every file with the same SHA-256 belongs to
-one group, whatever its name and whatever folder it sits in. The person's case
-is the normal case: the same weight file under `loras\awesomeloras\` in one
+one group, whatever its name and whatever folder it sits in. The common case:
+the same weight file under `loras\awesomeloras\` in one
 install and under `loras\newloras\` in another becomes one group.
 
 **The vault path.** The engine takes the model category, then the file name.
@@ -969,7 +969,6 @@ same scan, the plan gets **bigger**:
 
 Do not clear a flag on the old plan. Build it again.
 
-```ts
 **`vaultFreeBytesIfApplied` is a prediction, not a reading.** It is what the
 vault's drive would have free if this plan ran. The record of a finished run
 carries `vaultFreeBytesBefore` and `vaultFreeBytesAfter`, and those two are
@@ -983,6 +982,7 @@ that cannot happen by reading the wrong one.
 Null when the drive could not be read. When it is null, the engine also does
 not block anything for lack of space, because it has not measured any.
 
+```ts
 type BlockedRow = {
   absPath: string
   installId: string | null
@@ -1733,10 +1733,14 @@ check actually did.
 The engine searches these locations under each install root:
 
 ```
-user/<any user>/workflows/**/*.json
-user/<any user>/subgraphs/**/*.json
-any file named workflow.json, outside models, custom_nodes, .git, and virtual environments
+every .json file under user/, up to eight folders deep
+any file named workflow.json, up to four folders deep, outside user, models,
+  custom_nodes, output, input, temp, .git, venv, .venv and python_embeded
 ```
+
+Saved workflows and subgraphs live under `user/`, and so do other JSON files,
+such as settings. A match under `user/` can therefore come from a file that is
+not a workflow.
 
 Files larger than 50 MB are skipped and reported.
 

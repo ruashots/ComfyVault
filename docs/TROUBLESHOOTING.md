@@ -8,28 +8,55 @@ explain them, and the ones that need a decision rather than a button.
 
 ## "No vault folder is open yet"
 
-Choose the vault folder before you add an install. Open Settings and pick it.
+You tried to add an install before you chose a vault folder. The first-run
+screen on Home asks for the vault first, but the **Add an install** button in
+Settings is there before a vault exists.
+
+1. Open Home, or the vault section of Settings.
+2. Choose the vault folder.
+3. Add the install again.
 
 Everything ComfyVault knows lives inside the vault: which installs are
 registered, what each scan found, and the journal of every run. So a vault has
-to be open before an install can be added.
+to exist before an install can be recorded.
 
 ---
 
-## Apply is greyed out
+## A run stopped part way through
 
-Three things block Apply. The Consolidate screen lists whichever ones apply, in
-this order.
+If the PC restarted or the app closed during a run, Consolidate shows **A run
+stopped part way through** the next time ComfyVault opens. Nothing else can
+start until you choose one of the two buttons:
 
-### 1. A run stopped part way
+- **Finish it** checks every file the run did not reach yet, and completes only
+  the models you ticked for that run.
+- **Undo it** puts back what the run already moved. It first shows what the
+  undo costs.
 
-A previous consolidation did not finish, probably because the machine restarted
-or the app was killed. Nothing else can run until it is resolved.
+Every step went into the journal before it happened, so each model is either
+done or untouched, and every path holds its own file or a working link.
 
-Finish it or undo it. Both are offered. Finishing re-checks every file it had
-not yet touched, and completes only the models you originally ticked.
+---
 
-### 2. Windows will not create links
+## An undo stopped part way through
+
+You pressed **Stop now** during an undo, or the app closed during one. The
+files already back stay back. The rest stay in the vault behind their links,
+and they keep loading in ComfyUI.
+
+Consolidate shows where the undo stopped. Press **Undo the rest** to finish it.
+
+Scan again before you plan anything new. A scan from before the undo no longer
+matches the disk, and ComfyVault says so.
+
+---
+
+## Apply is blocked
+
+Two things on the PC block Apply. The Consolidate screen lists each one that is
+true, with a re-check button.
+
+### 1. Windows will not create links
 
 Turn Developer Mode on. Open Settings, go to System, then For developers, and
 turn Developer Mode on. No restart is needed.
@@ -43,7 +70,7 @@ the panel. Group Policy can override the setting on a managed machine. Running
 ComfyVault as an administrator also works, because an elevated process can
 create links without Developer Mode.
 
-### 3. ComfyUI is running
+### 2. ComfyUI is running
 
 Windows refuses to move a file that another program holds open. ComfyVault finds
 ComfyUI processes by looking at what each running program is, where it is
@@ -166,8 +193,9 @@ can never work on the same files at once.
 
 ## "A scan is already running"
 
-ComfyVault runs one long job at a time. A scan, a consolidation, and an undo are
-long jobs. Wait for the one running to finish, or cancel it.
+The message names the job that is running: a scan, a consolidation or an undo.
+ComfyVault runs one long job at a time. Wait for the one running to finish, or
+stop it.
 
 Cancelling a scan changes nothing on disk, and the hashes already computed stay
 in the cache, so starting again is not starting over.
@@ -183,17 +211,18 @@ differ.
 Later scans are much faster. Each hash is remembered against the file's path,
 size and modification time, so a file that has not changed is not read again.
 
-If you want to force a full read, turn the hash cache off in Settings.
-
 ---
 
-## I want the space back
+## Undoing a run
 
-Open the run in Consolidate and press undo. Every file goes back to the path it
+Open Consolidate and press **Undo this run**. Every file goes back to the path it
 came from, and the link that stood in its place is removed.
 
-Putting files back needs free space on the drive they came from. ComfyVault
-checks that first and refuses rather than half doing it.
+An undo uses disk space, it does not free it. The copy the vault kept comes back
+by a rename. Every duplicate the run deleted has to be copied back out of the
+vault. The undo box shows the cost for each drive before anything starts. If a
+drive does not have the room, the box says which one, and the undo does not
+start. Free some space on that drive, then try again.
 
 An undo is refused if something you did later depends on the run. The usual case
 is renaming a model inside the vault. ComfyVault names what is in the way, so
@@ -219,18 +248,21 @@ one asks you to type its hash back, and says plainly that it cannot be undone.
 
 ### Node 20 cannot install the dependencies
 
-Use Node 22 or newer. The repository has an `.nvmrc`.
+Use Node 22.13 or newer. The repository has an `.nvmrc`.
 
 ### The built application shows an empty window
 
 The interface was not embedded. Build the interface first with `npm run build`,
-and build the application with `npm run tauri build` rather than a hand-rolled
-`cargo build`.
-
-A direct `cargo build` needs `--features custom-protocol`. Without it the
-application looks for the development server instead of the interface it
-shipped with. [docs/BUILD.md](BUILD.md) has the full recipe and how to check the
+then build the program with `--features custom-protocol`. Without that feature,
+the program looks for the development server instead of the interface it
+shipped with. [BUILD.md](BUILD.md) has the full recipe and how to check the
 result.
+
+### The window does not open at all
+
+ComfyVault draws its window with Microsoft Edge WebView2. Windows 11 includes
+it, and most Windows 10 PCs have it through Edge. If it is missing, install the
+WebView2 Runtime from Microsoft and start ComfyVault again.
 
 ### `cargo build` for Linux fails
 
@@ -242,8 +274,7 @@ tests on Linux with nothing extra:
 cargo test -p comfyvault-core
 ```
 
-To build a Windows application from Linux, use the cross build in
-[docs/BUILD.md](BUILD.md).
+To build the Windows program, use the cross build in [BUILD.md](BUILD.md).
 
 ### Every test that creates a link fails
 
