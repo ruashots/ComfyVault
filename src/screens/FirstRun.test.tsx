@@ -122,9 +122,12 @@ describe("the order the two steps come in", () => {
 
     await addInstall();
     await pickFolder("ComfyUI-Studio", "Add this install");
-    await waitFor(() => app.setupDone(), 4000);
+    await waitFor(() => app.installs().length === 1, 4000);
     expect((await engine.listInstalls()).length).toBe(1);
-    expect(document.body.textContent).not.toContain("Two things to set");
+    // Setup stays until the person scans, so the next install goes in the
+    // same list.
+    expect(app.setupDone()).toBe(false);
+    expect(document.body.textContent).toContain("Two things to set");
   });
 
   it("every tick means something is on disk", async () => {
@@ -261,7 +264,9 @@ describe("the drive meter before anything has been read", () => {
     expect(harness.app.scan()).toBeNull();
     const rail = document.querySelector(".rail")!.textContent ?? "";
     expect(rail).not.toContain("every model is held once");
-    expect(rail).toContain("not scanned yet");
+    expect(rail).toContain("nothing read yet");
+    // No size for an install nothing has read.
+    expect(document.querySelector(".rail-inst .sz")!.textContent).toBe("");
   });
 });
 

@@ -129,6 +129,10 @@ export interface PickerModal {
    * holds files. The way out is a new folder, so the picker points there.
    */
   folderHasFiles: boolean;
+  /** How many installs this visit to the picker has registered. */
+  added: number;
+  /** What the last press added: its root, or "3 installs". */
+  lastAdded: string | null;
 }
 
 export type ConfirmLine = ReadonlyArray<{ text: string; emph?: boolean }>;
@@ -273,12 +277,28 @@ export interface AppStore {
    * choice an informed one.
    */
   readonly drives: Accessor<readonly DriveInfo[]>;
-  /** Both things a person has to set before any screen has anything to show. */
+  /**
+   * Setup is over once the person starts the first scan. Until then they are
+   * still adding installs, and one scan reads every install they add.
+   */
   readonly setupDone: Accessor<boolean>;
   /**
-   * What is still to be set, said as the thing it is. Null once both are done.
+   * What is still to be done before setup is over, said as the thing it is.
+   * Null once it is.
    */
   readonly missingStep: Accessor<string | null>;
+  /**
+   * The roots added by the last visit to the install picker, marked in the
+   * setup list until the next scan starts so the person sees what they added.
+   */
+  readonly freshInstalls: Accessor<readonly string[]>;
+  /**
+   * No scan has read the installs: there is none, or the last one was
+   * cancelled. Measured against the real engine: a cancelled scan is kept as
+   * the last scan, with every total at zero, so its figures are not sizes.
+   */
+  readonly nothingRead: Accessor<boolean>;
+  readonly setFreshInstalls: (roots: readonly string[]) => void;
   readonly unusedCount: Accessor<number>;
 
   readonly screen: Accessor<Screen>;
@@ -512,13 +532,23 @@ export function createAppStore(engine: Engine): AppStore {
   const hasInstalls = createMemo(() => installs().length > 0);
   const hasVault = createMemo(() => appState()?.vaultInitialized === true);
   const vaultVolume = createMemo(() => volumeLabel(vault()?.volume) || "C:");
-  const setupDone = createMemo(() => hasInstalls() && hasVault());
+  // Setup holds until the first scan reports progress. In the moment before
+  // that, the setup screen stays and its scan button waits on the engine.
+  const setupDone = createMemo(
+    () => hasInstalls() && hasVault() && (scan() !== null || scanProgress() !== null),
+  );
   const missingStep = createMemo(() => {
     if (setupDone()) return null;
     // The vault comes first because an install cannot be recorded without one,
     // so there is no state where installs are set and the vault is not.
     if (!hasVault()) return "Choose where the vault goes, then register a ComfyUI install.";
-    return "Register a ComfyUI install. The vault folder is already set.";
+    if (!hasInstalls()) return "Register a ComfyUI install. The vault folder is already set.";
+    return "Your installs are registered and nothing has been read yet.";
+  });
+  const [freshInstalls, setFreshInstalls] = createSignal<readonly string[]>([]);
+  const nothingRead = createMemo(() => {
+    const last = scan();
+    return last === null || last.cancelled;
   });
 
   const danglingLinks = createMemo<readonly LinkRecord[]>(
@@ -803,9 +833,17 @@ export function createAppStore(engine: Engine): AppStore {
   // ── the engine drives these ───────────────────────────────────────────────
 
   const stops = [
-    engine.onScanProgress((p) => setScanProgress(p)),
+    engine.onScanProgress((p) => {
+      batch(() => {
+        setScanProgress(p);
+        if (freshInstalls().length > 0) setFreshInstalls([]);
+      });
+    }),
     engine.onScanDone((result) => {
       batch(() => {
+        // The first record lands with the end of the progress, so setup
+        // never shows again in the moment before the refresh reads it back.
+        if (scan() === null) setScan(result);
         setScanProgress(null);
         setUnticked(new Set<string>());
         setShowAllDuplicates(false);
@@ -817,6 +855,8 @@ export function createAppStore(engine: Engine): AppStore {
     engine.onScanError((error) => {
       setScanProgress(null);
       showToast(error.message, "bad");
+      // The engine is free again, and the screens must know it.
+      void refresh();
     }),
     engine.onApplyProgress((p) => setApplyProgress(p)),
     engine.onApplyDone((result) => {
@@ -930,6 +970,9 @@ export function createAppStore(engine: Engine): AppStore {
     drives,
     setupDone,
     missingStep,
+    freshInstalls,
+    setFreshInstalls,
+    nothingRead,
     unusedCount,
     screen,
     toast,

@@ -136,8 +136,8 @@ export function Rail() {
     }
     // Before a scan there is no answer, and "every model is held once" would
     // be a claim about files nobody has read.
-    if (!app.scan()) {
-      return <div class="rail-sub">not scanned yet</div>;
+    if (app.nothingRead()) {
+      return <div class="rail-sub">nothing read yet</div>;
     }
     if (app.scanPredatesUndo()) {
       return <div class="rail-sub">not scanned since the undo</div>;
@@ -185,7 +185,7 @@ export function Rail() {
               >
                 <span class="led" classList={{ up: view.running, idle: !view.running }} />
                 <span class="nm">{view.install.label}</span>
-                <span class="sz">{fmt(view.bytes)}</span>
+                <span class="sz">{app.nothingRead() ? "" : fmt(view.bytes)}</span>
               </button>
             )}
           </For>

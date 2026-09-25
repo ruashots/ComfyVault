@@ -144,3 +144,47 @@ export function leafOf(path: string): string {
 export function joinPath(parent: string, name: string): string {
   return parent.endsWith("\\") ? parent + name : `${parent}\\${name}`;
 }
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "18:42", local time, 24-hour clock. */
+function hourMinute(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** "Thu 24 Sep at 18:42", in local time. */
+export function dayAndTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} at ${hourMinute(d)}`;
+}
+
+/**
+ * When a process started, the short way: "today at 09:12", "yesterday at
+ * 18:42", and the day itself before that. Today and yesterday are calendar
+ * days in local time, not the last 24 hours.
+ */
+export function startedShort(iso: string, now: number = Date.now()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const today = new Date(now);
+  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayBefore = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (d >= midnight) return `today at ${hourMinute(d)}`;
+  if (d >= dayBefore) return `yesterday at ${hourMinute(d)}`;
+  return dayAndTime(iso);
+}
+
+/** "21 hours ago": minutes under an hour, hours under 48, days after that. */
+export function agoLong(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const minutes = Math.floor(Math.max(0, now - then) / 60_000);
+  const say = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return say(minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return say(hours, "hour");
+  return say(Math.floor(hours / 24), "day");
+}

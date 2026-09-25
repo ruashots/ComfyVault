@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agoLong,
   breakPoints,
   clockTime,
+  dayAndTime,
   dayMonth,
   driveOf,
   fmt,
@@ -16,6 +18,7 @@ import {
   relativeTime,
   secondsLeft,
   shortHash,
+  startedShort,
   usedPercent,
 } from "~/domain/format";
 import { MB, SIZE_STRINGS } from "~/test/sizes";
@@ -186,5 +189,56 @@ describe("the person's rule about dashes", () => {
       }
     }
     expect(offenders, "an em dash or en dash reached the interface").toEqual([]);
+  });
+});
+
+describe("when a process started", () => {
+  // Built from local parts, so the test reads the same in every time zone.
+  const at = (day: number, hour: number, minute: number) =>
+    new Date(2026, 8, day, hour, minute).toISOString();
+  const now = new Date(2026, 8, 25, 15, 30).getTime();
+
+  it("says today and yesterday by the calendar, not by the last 24 hours", () => {
+    expect(startedShort(at(25, 9, 12), now)).toBe("today at 09:12");
+    expect(startedShort(at(25, 0, 0), now)).toBe("today at 00:00");
+    // 15 hours ago, and still yesterday.
+    expect(startedShort(at(24, 23, 59), now)).toBe("yesterday at 23:59");
+    expect(startedShort(at(24, 18, 42), now)).toBe("yesterday at 18:42");
+    expect(startedShort(at(24, 0, 1), now)).toBe("yesterday at 00:01");
+    // Before yesterday it names the day.
+    expect(startedShort(at(23, 23, 59), now)).toBe("Wed 23 Sep at 23:59");
+    expect(startedShort(at(22, 18, 42), now)).toBe("Tue 22 Sep at 18:42");
+  });
+
+  it("writes the long form with the weekday, on a 24-hour clock", () => {
+    expect(dayAndTime(at(24, 18, 42))).toBe("Thu 24 Sep at 18:42");
+    expect(dayAndTime(at(1, 7, 5))).toBe("Tue 1 Sep at 07:05");
+  });
+
+  it("counts minutes under an hour, hours under 48, and days after", () => {
+    const back = (ms: number) => new Date(now - ms).toISOString();
+    const MIN = 60_000;
+    expect(agoLong(back(20 * 1000), now)).toBe("just now");
+    expect(agoLong(back(1 * MIN), now)).toBe("1 minute ago");
+    expect(agoLong(back(59 * MIN), now)).toBe("59 minutes ago");
+    expect(agoLong(back(60 * MIN), now)).toBe("1 hour ago");
+    expect(agoLong(back(21 * 60 * MIN), now)).toBe("21 hours ago");
+    expect(agoLong(back(47 * 60 * MIN + 59 * MIN), now)).toBe("47 hours ago");
+    expect(agoLong(back(48 * 60 * MIN), now)).toBe("2 days ago");
+    expect(agoLong(back(10 * 24 * 60 * MIN), now)).toBe("10 days ago");
+  });
+
+  it("never prints a negative age when the clocks disagree", () => {
+    expect(agoLong(new Date(now + 5 * 60_000).toISOString(), now)).toBe("just now");
+  });
+
+  it("reads the engine's own timestamp, whole seconds and a Z", () => {
+    // The shape the real engine sent for a process it saw start.
+    expect(dayAndTime("2026-09-25T07:36:40Z")).toBe(
+      dayAndTime(new Date(Date.UTC(2026, 8, 25, 7, 36, 40)).toISOString()),
+    );
+    expect(agoLong("2026-09-25T07:36:40Z", Date.UTC(2026, 8, 25, 9, 0, 0))).toBe(
+      "1 hour ago",
+    );
   });
 });

@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onMount, type JSX } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { fmt, joinPath, leafOf } from "~/domain/format";
+import { driveOf, fmt, joinPath, leafOf } from "~/domain/format";
 import { folderNameError } from "~/domain/foldername";
 import {
   driveFor,
@@ -41,6 +41,8 @@ async function openPicker(
     replacing: extra.replacing ?? null,
     error: null,
     folderHasFiles: false,
+    added: 0,
+    lastAdded: null,
   });
 }
 
@@ -92,6 +94,11 @@ export function PickerModalView() {
         return "Add this install";
     }
   };
+
+  /** Only the install picker marks the installs already in the list. */
+  const isRegistered = (path: string) =>
+    modal()?.purpose === "install" &&
+    app.installs().some((i) => i.root.toLowerCase() === path.toLowerCase());
 
   /** Everything under a folder, for the prefix test. "C:\" has no extra slash. */
   const insideOf = (path: string) => (path.endsWith("\\") ? path : `${path}\\`);
@@ -321,11 +328,7 @@ export function PickerModalView() {
     const path = current.picked;
     try {
       if (current.purpose === "install") {
-        const root = current.candidate?.root ?? path;
-        await app.engine.registerInstall(root);
-        app.setModal(null);
-        await app.actions.refresh();
-        app.actions.showToast(`Added ${root} · run a scan to read it`);
+        await addInstalls(verdict()?.many ?? [current.candidate?.root ?? path]);
       } else if (current.purpose === "vault") {
         await app.engine.selectVault(path, true);
         app.setModal(null);
@@ -367,6 +370,34 @@ export function PickerModalView() {
       app.actions.showToast(message, "bad");
     } finally {
       setConfirming(false);
+    }
+  };
+
+  /**
+   * Registers each root in turn and keeps the picker open, with the tree as
+   * the person left it, so the next install is one click away. A refusal part
+   * way stops there: what was added stays added, and the list behind shows it.
+   */
+  const addInstalls = async (roots: readonly string[]) => {
+    const first = modal()?.added === 0;
+    const done: string[] = [];
+    try {
+      for (const root of roots) {
+        await app.engine.registerInstall(root);
+        done.push(root);
+      }
+    } finally {
+      if (done.length > 0) {
+        app.setFreshInstalls(first ? done : [...app.freshInstalls(), ...done]);
+        app.patchModal((m) => {
+          if (m.kind !== "picker") return;
+          m.added += done.length;
+          m.lastAdded = done.length === 1 ? done[0]! : `${done.length} installs`;
+          m.picked = null;
+          m.candidate = null;
+        });
+        await app.actions.refresh();
+      }
     }
   };
 
@@ -428,17 +459,33 @@ export function PickerModalView() {
               </button>
             </div>
             <div class="mb">
-              <div class="note" style={{ "margin-bottom": "9px" }}>
-                <Show
-                  when={current().purpose === "link"}
-                  fallback={
-                    <>Pick a folder. There is nowhere in ComfyVault to type a path.</>
-                  }
-                >
-                  Pick the folder inside an install where the link should appear.
-                  ComfyUI will find the model at that path.
-                </Show>
-              </div>
+              <Show
+                when={current().purpose === "install" && current().lastAdded}
+                fallback={
+                  <div class="note" style={{ "margin-bottom": "9px" }}>
+                    <Show
+                      when={current().purpose === "link"}
+                      fallback={
+                        <>Pick a folder. There is nowhere in ComfyVault to type a path.</>
+                      }
+                    >
+                      Pick the folder inside an install where the link should appear.
+                      ComfyUI will find the model at that path.
+                    </Show>
+                  </div>
+                }
+              >
+                {(what) => (
+                  <div class="added" role="status">
+                    <Icon name="check" size={12} />
+                    <span>
+                      Added <span class="emph">{what()}</span> &middot;{" "}
+                      {app.installs().length} registered. Pick the next install, or
+                      press Done.
+                    </span>
+                  </div>
+                )}
+              </Show>
 
               <div class="tree" role="tree">
                 <For each={current().nodes}>
@@ -456,7 +503,10 @@ export function PickerModalView() {
                         />
                         <button
                           class="tnode"
-                          classList={{ on: current().picked === node.path }}
+                          classList={{
+                            on: current().picked === node.path,
+                            reg: isRegistered(node.path),
+                          }}
                           data-path={node.path}
                           title={node.refusal ?? node.path}
                           onClick={() => void pick(node)}
@@ -471,6 +521,12 @@ export function PickerModalView() {
                           </Show>
                           <Show when={node.refusal}>
                             <span class="hint red">cannot be opened</span>
+                          </Show>
+                          <Show when={isRegistered(node.path)}>
+                            <span class="treg-tag">
+                              <Icon name="check" size={10} />
+                              registered
+                            </span>
                           </Show>
                         </button>
                       </div>
@@ -654,8 +710,12 @@ export function PickerModalView() {
                 </span>
               </Show>
               <span class="sp" />
-              <button class="btn" onClick={() => app.setModal(null)}>
-                Cancel
+              <button
+                class="btn"
+                classList={{ pri: current().added > 0 && current().picked === null }}
+                onClick={() => app.setModal(null)}
+              >
+                {current().added > 0 ? "Done" : "Cancel"}
               </button>
               <button
                 class="btn"
@@ -666,7 +726,11 @@ export function PickerModalView() {
                 disabled={!canConfirm()}
                 onClick={() => void confirm()}
               >
-                {verdict()?.warn === true ? "Use it anyway" : cta()}
+                {verdict()?.warn === true
+                  ? "Use it anyway"
+                  : verdict()?.many && verdict()!.many!.length > 1
+                    ? `Add these ${verdict()!.many!.length} installs`
+                    : cta()}
               </button>
             </div>
           </div>
@@ -713,6 +777,8 @@ export interface VerdictCopy {
    * stays available, and the button that takes it says so.
    */
   warn?: boolean;
+  /** Every install the button adds, when the folder holds several. */
+  many?: readonly string[];
 }
 
 /** Every sentence the picker says about a folder it looked into. */
@@ -883,7 +949,7 @@ export function verdictFor(
       return {
         ok: false,
         title: "Already registered",
-        body: <p>{already.label} is this folder. Nothing to add.</p>,
+        body: <p>{already.label} is in the list already. Nothing to add.</p>,
       };
     }
     return {
@@ -907,14 +973,83 @@ export function verdictFor(
     };
   }
 
-  const already = app
-    .installs()
-    .find((i) => i.root.toLowerCase() === (candidate.root ?? path).toLowerCase());
+  const registered = (root: string) =>
+    app.installs().find((i) => i.root.toLowerCase() === root.toLowerCase());
+
+  // Measured against the real engine: a folder that is not an install itself
+  // comes back with the first install found under it as the root and the rest
+  // as other candidates, registered or not.
+  const found = [candidate.root ?? path, ...candidate.otherCandidates];
+  if (candidate.nestedDepth > 0 && found.length > 1) {
+    const fresh = found.filter((root) => !registered(root));
+    const had = found.map(registered).filter((i) => i !== undefined);
+    if (fresh.length === 0) {
+      return {
+        ok: false,
+        title: "Already registered",
+        body: (
+          <p>
+            Every ComfyUI install inside <span class="emph">{path}</span> is in the
+            list already. Nothing to add.
+          </p>
+        ),
+      };
+    }
+    const vaultVolume = volumeLabel(app.vault()?.volume) || "C:";
+    const away = fresh.filter((root) => !sameVolume(root, app.vault()?.volume));
+    const awayVolumes = [...new Set(away.map((root) => driveOf(root)))];
+    return {
+      ok: true,
+      many: fresh,
+      title: `${fresh.length} ComfyUI ${fresh.length === 1 ? "install" : "installs"} inside this folder`,
+      body: (
+        <>
+          <p>
+            <span class="emph">{path}</span> is not an install itself. ComfyVault
+            found {fresh.length === 1 ? "this" : "these"} inside it:
+          </p>
+          <div class="cands">
+            <For each={fresh}>
+              {(root) => (
+                <div>
+                  <Icon name="folder" size={11} />
+                  <span>{root}</span>
+                </div>
+              )}
+            </For>
+          </div>
+          <p>
+            <Show when={had.length > 0}>
+              {had.map((i) => i!.label).join(", ")}{" "}
+              {had.length === 1 ? "is" : "are"} already registered.{" "}
+            </Show>
+            To add only one, pick it in the list above.
+          </p>
+          <Show when={away.length > 0}>
+            <p>
+              {away.length === fresh.length
+                ? fresh.length === 1
+                  ? "It is"
+                  : "They are"
+                : `${away.length} of them are`}{" "}
+              on {awayVolumes.join(" and ")} and the vault is on {vaultVolume}.{" "}
+              {away.length === 1 ? "Its" : "Their"} files are{" "}
+              <span class="emph">copied</span>, not moved, so {vaultVolume} pays for
+              them before {awayVolumes.join(" and ")} gives anything back.
+              ComfyVault checks the free space before it starts.
+            </p>
+          </Show>
+        </>
+      ),
+    };
+  }
+
+  const already = registered(candidate.root ?? path);
   if (already) {
     return {
       ok: false,
       title: "Already registered",
-      body: <p>{already.label} is this install. Nothing to add.</p>,
+      body: <p>{already.label} is in the list already. Nothing to add.</p>,
     };
   }
 

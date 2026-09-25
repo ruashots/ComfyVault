@@ -128,10 +128,19 @@ export function SettingsScreen() {
                       </Show>
                     </div>
                   </div>
-                  <div class="st">
-                    <div class="a">{fmt(view.bytes)}</div>
-                    <div class="b">{view.files} files</div>
-                  </div>
+                  <Show
+                    when={!app.nothingRead()}
+                    fallback={
+                      <div class="st">
+                        <div class="b">not read yet</div>
+                      </div>
+                    }
+                  >
+                    <div class="st">
+                      <div class="a">{fmt(view.bytes)}</div>
+                      <div class="b">{view.files} files</div>
+                    </div>
+                  </Show>
                   <button
                     class="btn sm"
                     onClick={() =>

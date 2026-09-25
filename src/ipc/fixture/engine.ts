@@ -1768,7 +1768,13 @@ export class FixtureEngine implements Engine {
 
   /** Close or start ComfyUI, which only the person can really do. */
   devSetComfyRunning(running: boolean): void {
-    this.world.running = running ? ["studio"] : [];
+    this.devSetRunningInstalls(running ? ["studio"] : []);
+  }
+
+  /** ComfyUI running out of each of these installs, one process each. */
+  devSetRunningInstalls(installIds: string[]): void {
+    const running = installIds.length > 0;
+    this.world.running = [...installIds];
     for (const content of this.world.contents) {
       for (const copy of content.copies) {
         if (copy.blocked === "fileLocked" && !running) copy.blocked = null;

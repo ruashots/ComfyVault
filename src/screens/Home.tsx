@@ -1,14 +1,23 @@
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 
 import { Icon, Mark, type IconName } from "~/components/Icon";
 import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
-import { fmt, fmtN, fmtU, relativeTime, usedPercent } from "~/domain/format";
+import {
+  driveOf,
+  fmt,
+  fmtN,
+  fmtU,
+  mid,
+  relativeTime,
+  usedPercent,
+} from "~/domain/format";
 import { driveFor, volumeLabel } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
-import { useApp } from "~/state/store";
-import type { DriveInfo } from "~/ipc/contract";
+import { processLine, processTooltip, processesFor } from "~/domain/running";
+import { messageOf, useApp } from "~/state/store";
+import type { DriveInfo, Install } from "~/ipc/contract";
 import { ScanScreen } from "~/screens/Scan";
 
 export function HomeScreen() {
@@ -26,25 +35,24 @@ export function HomeScreen() {
  * The two things a person sets before anything else works, each ticked when it
  * is done, and what happens after they are.
  *
- * Installs lead. Once one is registered the screen can say which drive it is
- * on, which is the fact that makes the vault-folder choice an informed one.
- */
-/**
- * The two things a person sets before anything else works, each ticked when it
- * is done, and what happens after they are.
- *
  * The vault comes first because the engine cannot record an install without
  * one, and because a tick that only lives in this window would be a promise
  * the disk is not keeping. Nothing here states a size: a size comes from a
  * scan, and a scan needs the vault that step one is choosing.
+ *
+ * Setup stays until the person starts the first scan, so every install goes
+ * into one list and one scan reads them all. The scan button in the header is
+ * the only way out.
  */
 function Setup() {
   const app = useApp();
   const vault = () => app.vault();
   const hasInstalls = () => app.hasInstalls();
   const hasVault = () => app.hasVault();
+  const count = () => app.installs().length;
   const vaultDrive = () =>
     vault() ? driveFor(vault()!.root, app.drives()) : null;
+  const [starting, setStarting] = createSignal(false);
 
   const vaultSub = () => {
     const info = vault();
@@ -57,14 +65,64 @@ function Setup() {
 
   const installSub = () =>
     hasInstalls()
-      ? app.installs().map((i) => i.root).join("  ·  ")
+      ? `${count()} registered`
       : hasVault()
         ? "none registered yet"
         : "waiting for the vault folder";
 
+  const sub = () =>
+    !hasVault()
+      ? "nothing set yet"
+      : !hasInstalls()
+        ? "1 of 2 done"
+        : "both set · scan when every install is in the list";
+
+  const scan = async () => {
+    if (starting()) return;
+    setStarting(true);
+    try {
+      await app.actions.run(() => app.engine.startScan());
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const remove = async (install: Install) => {
+    try {
+      await app.engine.unregisterInstall(install.id);
+    } catch (error) {
+      app.actions.showToast(messageOf(error), "bad");
+      return;
+    }
+    app.setFreshInstalls(app.freshInstalls().filter((root) => root !== install.root));
+    await app.actions.refresh();
+    app.actions.showToast(
+      `Removed ${install.root} from the list · nothing in it was touched`,
+    );
+  };
+
   return (
     <>
-      <Header title="Setup" sub={hasVault() ? "1 of 2 done" : "nothing set yet"} />
+      <Header title="Setup" sub={sub()}>
+        <button
+          class="btn"
+          classList={{ pri: hasVault() && hasInstalls() }}
+          disabled={
+            !hasVault() || !hasInstalls() || starting() || app.appState()?.busy != null
+          }
+          title={
+            !hasVault()
+              ? "Choose the vault folder first"
+              : !hasInstalls()
+                ? "Add an install first"
+                : undefined
+          }
+          onClick={() => void scan()}
+        >
+          <Icon name="scan" size={13} />
+          {hasVault() && hasInstalls() ? scanLabel(count()) : "Scan"}
+        </button>
+      </Header>
       <div class="screen">
         <div class="scroll">
           <div style={{ "text-align": "center", padding: "6px 0 0" }}>
@@ -105,35 +163,94 @@ function Setup() {
             </button>
           </StepRow>
 
-          <StepRow
-            number={2}
-            title="Your ComfyUI installs"
-            sub={installSub()}
-            done={hasInstalls()}
-          >
-            <Show
-              when={hasVault()}
-              fallback={
+          <div class="setup col" classList={{ done: hasInstalls() }}>
+            <div class="shd">
+              <span class="sn">
+                <Show when={hasInstalls()} fallback={2}>
+                  <Icon name="check" size={12} />
+                </Show>
+              </span>
+              <div style={{ flex: 1, "min-width": 0 }}>
+                <div class="stt">Your ComfyUI installs</div>
+                <div class="sts">{installSub()}</div>
+              </div>
+              <Show
+                when={hasVault()}
+                fallback={
+                  <button
+                    class="btn"
+                    disabled
+                    title="The vault has to exist before an install can point into it"
+                  >
+                    <Icon name="folder" size={13} />
+                    Choose an install folder
+                  </button>
+                }
+              >
                 <button
                   class="btn"
-                  disabled
-                  title="The vault has to exist before an install can point into it"
+                  classList={{ pri: !hasInstalls() }}
+                  onClick={() => void openInstallPicker(app)}
                 >
-                  <Icon name="folder" size={13} />
-                  Choose an install folder
+                  <Icon name={hasInstalls() ? "plus" : "folder"} size={13} />
+                  {hasInstalls() ? "Add another" : "Choose an install folder"}
                 </button>
-              }
-            >
-              <button
-                class="btn"
-                classList={{ pri: !hasInstalls() }}
-                onClick={() => void openInstallPicker(app)}
-              >
-                <Icon name="folder" size={13} />
-                {hasInstalls() ? "Add another" : "Choose an install folder"}
-              </button>
+              </Show>
+            </div>
+            <For each={app.installs()}>
+              {(install) => (
+                <>
+                  <div
+                    class="sreg"
+                    classList={{ fresh: app.freshInstalls().includes(install.root) }}
+                  >
+                    <Icon name="folder" size={12} />
+                    <span class="nm" title={install.label}>
+                      {install.label}
+                    </span>
+                    <span class="pp" title={install.root}>
+                      {mid(install.root, 64)}
+                    </span>
+                    <Show when={install.extraPaths.length > 0}>
+                      <span class="tg">+ extra_model_paths.yaml</span>
+                    </Show>
+                    <span class="tg">drive {driveOf(install.root)}</span>
+                    <button
+                      class="btn sm"
+                      aria-label={`Remove ${install.root} from the list`}
+                      onClick={() => void remove(install)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <For each={processesFor(install.id, app.running())}>
+                    {(p) => (
+                      <div class="srun">
+                        <span class="led up" />
+                        <span>
+                          running now &middot; {processLine(p)} &middot; scanning
+                          works, Apply waits until it is closed
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                </>
+              )}
+            </For>
+            <Show when={hasVault() && !hasInstalls()}>
+              <div class="sempty">
+                Add every ComfyUI install on this computer. The folder picker stays
+                open, so you can add one after another.
+              </div>
             </Show>
-          </StepRow>
+          </div>
+          <Show when={hasInstalls()}>
+            <div class="note up">
+              Add every install before you scan. One scan reads them all together,
+              which is how it finds the copies they share. When the list is
+              complete, press <span class="emph">{scanLabel(count())}</span>.
+            </div>
+          </Show>
 
           <div class="note up">
             <Show
@@ -182,6 +299,11 @@ function Setup() {
       </div>
     </>
   );
+}
+
+/** "Scan 1 install", "Scan 4 installs". */
+function scanLabel(n: number): string {
+  return `Scan ${n} ${n === 1 ? "install" : "installs"}`;
 }
 
 /** "C:" from a drive's root, which the engine writes as "C:\\". */
@@ -252,7 +374,7 @@ function HomeReport() {
       <Header
         title="Home"
         sub={
-          !app.scan()
+          app.nothingRead()
             ? "not scanned yet"
             : app.scanPredatesRun()
               ? "not scanned since the run"
@@ -273,7 +395,7 @@ function HomeReport() {
         <Warnbar />
         <div class="scroll">
           <DanglingLinks />
-          <Show when={totals()} fallback={<NotScannedYet />}>
+          <Show when={!app.nothingRead() && totals()} fallback={<NotScannedYet />}>
             {(t) => (
               <>
                 <Show when={app.scanPredatesRun()}>
@@ -405,7 +527,10 @@ function HomeReport() {
 
           <div class="sec secgap">
             <span class="t">Instances</span>
-            <Show when={totals()}>
+            <Show
+              when={!app.nothingRead() && totals()}
+              fallback={<span class="n">{app.installs().length} registered</span>}
+            >
               {(t) => (
                 <span class="n">
                   {fmt(t().movableBytes)} of models across {app.installs().length}{" "}
@@ -418,15 +543,29 @@ function HomeReport() {
             {(view) => (
               <div class="inst">
                 <span class="led" classList={{ up: view.running, idle: !view.running }} />
-                <span class="name nm">{view.install.label}</span>
+                <span class="name nm" title={view.install.label}>
+                  {view.install.label}
+                </span>
                 <span class="path pp">{view.install.root}</span>
                 <Show when={view.install.extraPaths.length > 0}>
                   <span class="faint yaml">+ extra_model_paths.yaml</span>
                 </Show>
-                <span class="num c1">{view.files}</span>
-                <span class="num c2">{fmt(view.bytes)}</span>
+                <Show
+                  when={!app.nothingRead()}
+                  fallback={<span class="faint notread">not read yet</span>}
+                >
+                  <span class="num c1">{view.files}</span>
+                  <span class="num c2">{fmt(view.bytes)}</span>
+                </Show>
                 <Show when={view.running} fallback={<span class="pill link">idle</span>}>
-                  <span class="pill up">running</span>
+                  <span
+                    class="pill up"
+                    title={processesFor(view.install.id, app.running())
+                      .map(processTooltip)
+                      .join("\n")}
+                  >
+                    running
+                  </span>
                 </Show>
               </div>
             )}
@@ -480,27 +619,42 @@ function HomeReport() {
   );
 }
 
+/**
+ * Nothing has been read: the only scan was cancelled. Adding an install is
+ * offered here as well, so finishing the list never needs another screen.
+ */
 function NotScannedYet() {
   const app = useApp();
+  const n = () => app.installs().length;
   return (
     <div class="hero">
       <div class="txt">
         <div class="l1">
-          {app.installs().length}{" "}
-          {app.installs().length === 1 ? "install is" : "installs are"} registered
-          and nothing has been read yet.
+          {n()} {n() === 1 ? "install is" : "installs are"} registered and nothing
+          has been read yet.
         </div>
         <div class="l2">
+          <Show when={app.scan()?.cancelled}>
+            The last scan was cancelled before it finished.{" "}
+          </Show>
           A scan reads every model file once to find the identical ones. Nothing
           moves until you say so.
         </div>
       </div>
       <button
+        class="btn"
+        disabled={!app.hasVault()}
+        onClick={() => void openInstallPicker(app)}
+      >
+        <Icon name="plus" size={13} />
+        Add an install
+      </button>
+      <button
         class="btn pri"
         onClick={() => void app.actions.run(() => app.engine.startScan())}
       >
         <Icon name="scan" size={13} />
-        Scan now
+        {scanLabel(n())}
       </button>
     </div>
   );
