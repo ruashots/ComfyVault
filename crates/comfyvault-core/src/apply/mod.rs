@@ -626,21 +626,16 @@ impl<'a> Applier<'a> {
                     continue;
                 }
 
+                // Named in the journal before the rename, so a crash at any
+                // point leaves the bytes where the journal says they are.
+                let stash_path = fsops::stash_name(&link.abs_path, &short_id(&run.apply_id))?;
                 let entry = self.step(run, group, JournalStep::StashOriginal {
                     path: link.abs_path.clone(),
-                    stash: PathBuf::new(),
+                    stash: stash_path.clone(),
                 })?;
-                let stash_path = match fsops::stash(&link.abs_path, &short_id(&run.apply_id)) {
-                    Ok(p) => p,
-                    Err(e) => return Err(self.failed(entry, e)),
-                };
-                let entry = JournalEntry {
-                    step: JournalStep::StashOriginal {
-                        path: link.abs_path.clone(),
-                        stash: stash_path.clone(),
-                    },
-                    ..entry
-                };
+                if let Err(e) = fsops::stash_to(&link.abs_path, &stash_path) {
+                    return Err(self.failed(entry, e));
+                }
                 done.push(self.finish(run, entry)?);
 
                 done.push(self.create_link_step(run, group, &link.abs_path, &vault_path)?);
@@ -648,22 +643,11 @@ impl<'a> Applier<'a> {
 
                 self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
                     Some(group), ApplyStep::Cleaning, Some(&link.abs_path), false);
-                // Proved, not assumed. This is the only irreversible step in
-                // the whole run, and until now the proof that these bytes were
-                // a duplicate was a hash from an earlier scan, which may have
-                // come from a cache row rather than from the file itself.
-                if run.verify_before_delete {
-                    let actual = crate::scan::hash::hash_file_cancellable(&stash_path, cancel)?;
-                    if !actual.eq_ignore_ascii_case(&group.sha256) {
-                        return Err(VaultError::new(
-                            ErrorCode::FileChanged,
-                            "This file is not the same as the copy being kept, so it was not deleted. It has been put back.",
-                        )
-                        .with_detail(format!("expected {}, the file is {actual}", group.sha256))
-                        .with_path(&link.abs_path));
-                    }
-                }
 
+                // Written before the check below, which reads the whole file.
+                // A crash during that read left no step for the delete, so a
+                // recovery took the group for finished and the duplicate's
+                // bytes stayed on disk for good under their set-aside name.
                 let entry = self.step(run, group, JournalStep::DeleteStash {
                     stash: stash_path.clone(),
                     original: link.abs_path.clone(),
@@ -672,6 +656,27 @@ impl<'a> Applier<'a> {
                     size_bytes: link.size_bytes,
                     mtime_nanos: Some(link.mtime_nanos),
                 })?;
+                // Proved, not assumed. This is the only irreversible step in
+                // the whole run, and until now the proof that these bytes were
+                // a duplicate was a hash from an earlier scan, which may have
+                // come from a cache row rather than from the file itself.
+                if run.verify_before_delete {
+                    let actual = match crate::scan::hash::hash_file_cancellable(&stash_path, cancel) {
+                        Ok(h) => h,
+                        Err(e) => return Err(self.failed(entry, e)),
+                    };
+                    if !actual.eq_ignore_ascii_case(&group.sha256) {
+                        return Err(self.failed(
+                            entry,
+                            VaultError::new(
+                                ErrorCode::FileChanged,
+                                "This file is not the same as the copy being kept, so it was not deleted. It has been put back.",
+                            )
+                            .with_detail(format!("expected {}, the file is {actual}", group.sha256))
+                            .with_path(&link.abs_path),
+                        ));
+                    }
+                }
                 if let Err(e) = std::fs::remove_file(&stash_path) {
                     return Err(self.failed(entry, VaultError::from_io(&e, &stash_path, "removing the duplicate")));
                 }
@@ -972,7 +977,17 @@ impl<'a> Applier<'a> {
             }
             JournalStep::StashOriginal { path, stash } => {
                 if stash.as_os_str().is_empty() {
-                    return Ok(());
+                    // Written by an older build, which recorded the name only
+                    // after the rename. If the place is empty, the bytes are
+                    // under the name that build would have chosen.
+                    if std::fs::symlink_metadata(path).is_ok() {
+                        return Ok(());
+                    }
+                    let tried = fsops::stash_names_tried(path, &short_id(&entry.apply_id));
+                    return match tried.last() {
+                        Some(found) if boundary::is_stash_of(path, found) => fsops::unstash(found, path),
+                        _ => Ok(()),
+                    };
                 }
                 if !stash.exists() {
                     return Ok(());
@@ -1471,7 +1486,19 @@ impl<'a> Applier<'a> {
         for gid in &groups_seen {
             let mine: Vec<&JournalEntry> = entries.iter().filter(|e| &e.group_id == gid).collect();
             let any_pending = mine.iter().any(|e| e.state == JournalState::Pending);
-            let finished = !any_pending && self.group_looks_finished(&plan, gid);
+            // Every duplicate's delete must be on record as done. Links at
+            // every place are not enough: a crash after the links and before
+            // a delete leaves the duplicate's bytes under their set-aside
+            // name, and calling that group finished hid them for good.
+            let deletes_done = plan.group(gid).is_some_and(|g| {
+                g.links.iter().filter(|l| !l.is_source).all(|l| {
+                    mine.iter().any(|e| {
+                        e.state == JournalState::Done
+                            && matches!(&e.step, JournalStep::DeleteStash { original, .. } if *original == l.abs_path)
+                    })
+                })
+            });
+            let finished = !any_pending && deletes_done && self.group_looks_finished(&plan, gid);
             if finished {
                 complete_groups.insert(gid.clone());
             } else {

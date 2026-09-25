@@ -2544,3 +2544,153 @@ fn a_recovery_keeps_the_only_copy_when_a_different_file_replaced_its_link() {
     assert_eq!(std::fs::read(&source).unwrap(), weights("other"));
     let _ = (pa, pb);
 }
+
+// ---------------------------------------------------------------------------
+// A crash at any step of a duplicate is recovered
+// ---------------------------------------------------------------------------
+
+/// A finished two-copy run, with the duplicate's place, its set-aside name and
+/// the journal index of each of its steps.
+fn two_copy_run(w: &TestWorld) -> (PathBuf, PathBuf, Vec<JournalEntry>) {
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(w, &plan);
+    let dup = if plan.groups[0].source.abs_path == pa { pb } else { pa };
+    let journal = w.store.journal("ap-1").unwrap();
+    let stash = journal
+        .iter()
+        .find_map(|e| match &e.step {
+            JournalStep::StashOriginal { stash, .. } => Some(stash.clone()),
+            _ => None,
+        })
+        .unwrap();
+    (dup, stash, journal)
+}
+
+/// Puts the duplicate's bytes back under a name, with the time they had, the
+/// way a rename that a crash cut off would have left them.
+fn leave_set_aside(journal: &[JournalEntry], stash: &Path) {
+    std::fs::write(stash, weights("m")).unwrap();
+    let nanos = journal
+        .iter()
+        .find_map(|e| match &e.step {
+            JournalStep::DeleteStash { mtime_nanos, .. } => *mtime_nanos,
+            _ => None,
+        })
+        .unwrap();
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(nanos as u64);
+    std::fs::File::options().write(true).open(stash).unwrap().set_modified(t).unwrap();
+}
+
+fn index_of(journal: &[JournalEntry], kind: fn(&JournalStep) -> bool) -> usize {
+    journal.iter().position(|e| kind(&e.step)).unwrap()
+}
+
+#[test]
+fn a_crash_while_a_duplicate_is_read_again_before_its_delete_is_recovered() {
+    // The re-read before the delete reads the whole duplicate, minutes for a
+    // large model, and no step was on record while it ran. A crash there left
+    // links everywhere and the bytes under the set-aside name, and recovery
+    // called the group finished and counted the space as returned.
+    let w = TestWorld::new();
+    let (dup, stash, journal) = two_copy_run(&w);
+    // The delete step is written first now, so the crash leaves it pending.
+    let delete = index_of(&journal, |s| matches!(s, JournalStep::DeleteStash { .. }));
+    simulate_crash_after(&w, "ap-1", delete);
+    leave_set_aside(&journal, &stash);
+
+    let record = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.state, ApplyState::Completed);
+    assert!(!stash.exists(), "the duplicate's bytes are still on disk under their set-aside name");
+    assert!(w.is_link(&dup));
+    assert_eq!(std::fs::read(&dup).unwrap(), weights("m"));
+}
+
+#[test]
+fn a_crash_right_after_a_duplicate_is_set_aside_is_recovered() {
+    // The set-aside name was recorded only after the rename, so a crash in
+    // between left the place empty and the bytes under a name nothing knew.
+    let w = TestWorld::new();
+    let (dup, stash, journal) = two_copy_run(&w);
+    let set_aside = index_of(&journal, |s| matches!(s, JournalStep::StashOriginal { .. }));
+    simulate_crash_after(&w, "ap-1", set_aside);
+    std::fs::remove_file(&dup).unwrap();
+    leave_set_aside(&journal, &stash);
+
+    let record = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.state, ApplyState::Completed);
+    assert!(w.is_link(&dup) && !stash.exists());
+    assert_eq!(std::fs::read(&dup).unwrap(), weights("m"));
+}
+
+#[test]
+fn a_set_aside_duplicate_an_older_build_did_not_name_is_found_and_put_back() {
+    // A journal from before the name was recorded first: the step has no
+    // name, and the bytes are under the name that build chose.
+    let w = TestWorld::new();
+    let (dup, stash, journal) = two_copy_run(&w);
+    let set_aside = index_of(&journal, |s| matches!(s, JournalStep::StashOriginal { .. }));
+    simulate_crash_after(&w, "ap-1", set_aside);
+    let unnamed = JournalEntry {
+        step: JournalStep::StashOriginal { path: dup.clone(), stash: PathBuf::new() },
+        ..w.store.journal("ap-1").unwrap()[set_aside].clone()
+    };
+    w.store.update_journal(&unnamed).unwrap();
+    std::fs::remove_file(&dup).unwrap();
+    std::fs::write(&stash, weights("m")).unwrap();
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!w.is_link(&dup), "the duplicate's place was left empty or linked");
+    assert_eq!(std::fs::read(&dup).unwrap(), weights("m"));
+    assert!(!stash.exists());
+}
+
+#[test]
+fn a_group_whose_duplicate_was_never_deleted_is_not_called_finished() {
+    // Links at every place and nothing pending, but no delete on record: the
+    // state a crash during the re-read left before the delete step was
+    // written first. The group must be redone, not credited.
+    let w = TestWorld::new();
+    let (dup, stash, journal) = two_copy_run(&w);
+    let delete = index_of(&journal, |s| matches!(s, JournalStep::DeleteStash { .. }));
+    simulate_crash_after(&w, "ap-1", journal.len());
+    let gone = JournalEntry { state: JournalState::Reverted, ..journal[delete].clone() };
+    w.store.update_journal(&gone).unwrap();
+    leave_set_aside(&journal, &stash);
+
+    let record = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!stash.exists(), "the duplicate's bytes stayed under their set-aside name");
+    assert_eq!(record.groups_applied, 1);
+    assert!(w.is_link(&dup));
+}
+
+#[test]
+fn the_delete_is_on_record_before_the_duplicate_is_read_again() {
+    // Stopped during the re-read: the delete step exists, closed as failed,
+    // so a crash at the same moment would have left it pending.
+    let mut content = weights("m");
+    content.resize(3 * 1024 * 1024, 1);
+    for n in 1.. {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        w.write_model(&a, "models/loras/m.safetensors", &content);
+        w.write_model(&b, "models/loras/m.safetensors", &content);
+        let plan = w.plan(&[a, b]);
+        applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::stopping_at_check(n), &NullSink).unwrap();
+        let journal = w.store.journal("ap-1").unwrap();
+        let linked = journal.iter().filter(|e| matches!(e.step, JournalStep::CreateLink { .. })).count();
+        if linked < 2 {
+            continue;
+        }
+        // The first stop after both links is inside the re-read.
+        assert!(
+            journal.iter().any(|e| matches!(e.step, JournalStep::DeleteStash { .. }) && e.state == JournalState::Failed),
+            "stopped while the duplicate was read again, and no delete step was on record"
+        );
+        break;
+    }
+}

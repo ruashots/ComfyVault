@@ -210,11 +210,15 @@ fn copy_with_cancel(
     Ok(total)
 }
 
-/// Renames a file aside so its link can take its place.
+/// Chooses the name a file is renamed aside to, so its link can take its
+/// place. Nothing is renamed yet.
 ///
-/// Returns the path it was renamed to. The name is unique, so an existing file
-/// is never overwritten.
-pub fn stash(path: &Path, tag: &str) -> Result<PathBuf> {
+/// The name is chosen first so it can be written to the journal before the
+/// rename. A crash between the rename and a later journal write used to leave
+/// the model's place empty, with its bytes under a name nothing recorded.
+///
+/// The name is unique, so an existing file is never overwritten.
+pub fn stash_name(path: &Path, tag: &str) -> Result<PathBuf> {
     let name = path
         .file_name()
         .ok_or_else(|| VaultError::invalid("That path has no file name."))?
@@ -226,7 +230,7 @@ pub fn stash(path: &Path, tag: &str) -> Result<PathBuf> {
 
     let mut candidate = parent.join(format!("{name}{STASH_SUFFIX}-{tag}"));
     let mut n = 1;
-    while candidate.exists() {
+    while std::fs::symlink_metadata(&candidate).is_ok() {
         candidate = parent.join(format!("{name}{STASH_SUFFIX}-{tag}-{n}"));
         n += 1;
         if n > 1000 {
@@ -237,8 +241,38 @@ pub fn stash(path: &Path, tag: &str) -> Result<PathBuf> {
             .with_path(path));
         }
     }
-    std::fs::rename(path, &candidate).ctx(path, "setting the old file aside")?;
     Ok(candidate)
+}
+
+/// Renames a file aside, to the name [`stash_name`] chose.
+pub fn stash_to(path: &Path, stash: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(stash).is_ok() {
+        return Err(VaultError::new(
+            ErrorCode::Conflict,
+            "Could not set the old file aside, because something already has that name.",
+        )
+        .with_path(stash));
+    }
+    std::fs::rename(path, stash).ctx(path, "setting the old file aside")
+}
+
+/// Chooses a name and renames the file aside to it.
+pub fn stash(path: &Path, tag: &str) -> Result<PathBuf> {
+    let stash = stash_name(path, tag)?;
+    stash_to(path, &stash)?;
+    Ok(stash)
+}
+
+/// The names [`stash_name`] could have given `path` for this tag, newest
+/// attempt last. A journal written by an older build recorded the name only
+/// after the rename, so a crash in between left the name unrecorded.
+pub fn stash_names_tried(path: &Path, tag: &str) -> Vec<PathBuf> {
+    let (Some(name), Some(parent)) = (path.file_name(), path.parent()) else { return Vec::new() };
+    let name = name.to_string_lossy();
+    std::iter::once(parent.join(format!("{name}{STASH_SUFFIX}-{tag}")))
+        .chain((1..=1000).map(|n| parent.join(format!("{name}{STASH_SUFFIX}-{tag}-{n}"))))
+        .filter(|p| p.is_file())
+        .collect()
 }
 
 /// Puts a stashed file back where it came from.
