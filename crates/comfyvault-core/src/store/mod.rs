@@ -272,6 +272,16 @@ impl Store {
         self.put(META, key, value)
     }
 
+    /// How a run was asked to check its files and to handle a failure, kept
+    /// apart from its record so a recovery finishes it the same way.
+    pub fn put_apply_choices<T: Serialize>(&self, apply_id: &str, choices: &T) -> Result<()> {
+        self.put_meta(&format!("applyChoices:{apply_id}"), choices)
+    }
+
+    pub fn apply_choices<T: DeserializeOwned>(&self, apply_id: &str) -> Result<Option<T>> {
+        self.get(META, &format!("applyChoices:{apply_id}"))
+    }
+
     fn meta_u32(&self, key: &str) -> Result<Option<u32>> {
         self.get(META, key)
     }

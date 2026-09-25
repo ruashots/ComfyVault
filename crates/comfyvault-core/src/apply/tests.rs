@@ -2771,3 +2771,47 @@ fn an_undo_leaves_a_link_the_person_made_where_the_run_made_one() {
     assert!(w.is_link(&alias), "the person's link was removed");
     assert_eq!(std::fs::read(&alias).unwrap(), b"theirs");
 }
+
+#[test]
+fn a_recovery_checks_files_the_way_the_run_was_asked_to() {
+    // A run asked to read every file again was finished, after a cut, with
+    // only the size-and-time check. An edit that kept both then went through.
+    let w = TestWorld::new();
+    let mut settings = w.store.settings().unwrap();
+    settings.verify_before_delete = false;
+    w.store.put_settings(&settings).unwrap();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    for tag in ["one", "two"] {
+        w.write_model(&a, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+        w.write_model(&b, &format!("models/loras/{tag}.safetensors"), &weights(tag));
+    }
+    let plan = w.plan(&[a, b]);
+    let req = ApplyRequest { verify: VerifyModeArg::Rehash, ..request(&plan) };
+
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    let stop = move |p: &ApplyProgress| {
+        if p.group_index >= 1 {
+            trigger.cancel();
+        }
+    };
+    let first = applier(&w).apply("ap-1", &plan, &req, &cancel, &stop).unwrap();
+    assert_eq!(first.groups_applied, 1);
+    w.store.put_apply(&ApplyRecord { state: ApplyState::Running, finished_at: None, ..first }).unwrap();
+
+    // The group left over: one copy edited, size and time kept.
+    let left = plan.groups.iter().find(|g| !w.is_link(&g.source.abs_path)).unwrap();
+    let copy = left.links.iter().find(|l| !l.is_source).unwrap().abs_path.clone();
+    let mut edited = std::fs::read(&copy).unwrap();
+    let last = edited.len() - 1;
+    edited[last] ^= 0xFF;
+    let mtime = std::fs::metadata(&copy).unwrap().modified().unwrap();
+    std::fs::write(&copy, &edited).unwrap();
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(mtime).unwrap();
+
+    let resumed = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(resumed.failures.len(), 1, "the edit went through the weaker check");
+    assert_eq!(resumed.failures[0].reason, BlockReason::FileChanged);
+    assert_eq!(std::fs::read(&copy).unwrap(), edited, "the edited file was deleted");
+}

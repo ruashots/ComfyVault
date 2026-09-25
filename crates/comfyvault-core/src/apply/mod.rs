@@ -79,6 +79,14 @@ impl From<VerifyModeArg> for VerifyMode {
     }
 }
 
+/// What a run was asked, besides its groups.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunChoices {
+    verify: VerifyModeArg,
+    stop_on_error: bool,
+}
+
 /// Which part of an apply is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -425,6 +433,9 @@ impl<'a> Applier<'a> {
         };
         // Written before any work, so a crash leaves a record to recover from.
         self.store.put_apply(&record)?;
+        if carry.is_none() {
+            self.store.put_apply_choices(apply_id, &RunChoices { verify: req.verify, stop_on_error: req.stop_on_error })?;
+        }
 
         let installs = self.store.installs()?;
         let mut cancelled = false;
@@ -1493,6 +1504,11 @@ impl<'a> Applier<'a> {
             .ok_or_else(|| VaultError::not_found("The plan for that run is no longer in this vault."))?;
 
         let entries = self.store.journal(apply_id)?;
+        // A run recorded by an older build kept no choices: the defaults.
+        let choices: RunChoices = self.store.apply_choices(apply_id)?.unwrap_or(RunChoices {
+            verify: VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        });
 
         // The journal and the plan are read from the vault's database. Every
         // place they name is proved before a file is touched.
@@ -1611,8 +1627,11 @@ impl<'a> Applier<'a> {
             &ApplyRequest {
                 plan_id: plan.plan_id.clone(),
                 group_ids: remaining,
-                verify: VerifyModeArg::SizeAndMtime,
-                stop_on_error: false,
+                // The run's own choices. A recovery that always used the
+                // weaker check gave a person who asked for a full re-read the
+                // size-and-time check on every file the cut left untouched.
+                verify: choices.verify,
+                stop_on_error: choices.stop_on_error,
             },
             next_seq,
             Some(carry),
