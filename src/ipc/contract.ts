@@ -1007,6 +1007,8 @@ export interface Engine {
 
   // the window itself
   openExternal(target: string): Promise<void>;
+  /** Starts Windows Task Manager. Rejects when Windows does not start it. */
+  openTaskManager(): Promise<void>;
   revealInFileManager(path: string): Promise<void>;
   windowMinimize(): Promise<void>;
   windowToggleMaximize(): Promise<void>;

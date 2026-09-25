@@ -172,6 +172,7 @@ export function createTauriEngine(): Engine {
     checkLockedFiles: (paths) => call<LockState[]>("check_locked_files", { paths }),
 
     openExternal: (target) => openUrl(target),
+    openTaskManager: () => callNoArgs<void>("open_task_manager"),
     revealInFileManager: (path) => revealItemInDir(path),
     windowMinimize: () => appWindow.minimize(),
     windowToggleMaximize: () => appWindow.toggleMaximize(),

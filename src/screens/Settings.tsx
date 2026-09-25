@@ -8,6 +8,7 @@ import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { Boundary } from "~/components/Boundary";
+import { labelsOf, openTaskManager, pidAndStart } from "~/domain/running";
 import { useApp } from "~/state/store";
 import { cacheDirsOf, type Install } from "~/ipc/contract";
 
@@ -50,7 +51,9 @@ export function SettingsScreen() {
         ? "Checked · nothing is in the way"
         : !links
           ? "Checked · Windows still will not create links"
-          : `Checked · ${running} ComfyUI ${running === 1 ? "process is" : "processes are"} still running`,
+          : running === 1
+            ? `Checked · ${labelsOf(app.running()[0]!, app.installs())} is still running, pid ${app.running()[0]!.pid}`
+            : `Checked · ${running} ComfyUI processes are still running`,
       links && running === 0 ? "ok" : "bad",
     );
   };
@@ -371,9 +374,18 @@ export function SettingsScreen() {
                     }}
                   >
                     {app.running().length > 0
-                      ? `${app.running().map((p) => `${p.name} (pid ${p.pid})`).join(", ")} · files they hold open cannot move`
+                      ? `${app
+                          .running()
+                          .map((p) => `${labelsOf(p, app.installs())} is running · ${pidAndStart(p)}`)
+                          .join(" · ")} · its open files cannot move`
                       : "none running · every file can move"}
                   </span>
+                  <Show when={app.running().length > 0}>
+                    <button class="btn sm" onClick={() => void openTaskManager(app)}>
+                      <Icon name="external" size={11} />
+                      Open Task Manager
+                    </button>
+                  </Show>
                   <button
                     class="btn sm"
                     classList={{ pri: app.running().length > 0 }}

@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { EmptyScreen, Header } from "~/components/Shell";
@@ -18,7 +18,18 @@ import { ApplyDone } from "~/screens/ApplyDone";
 import { openUndoBox } from "~/modals/undo";
 import { RunCutOff } from "~/screens/RunCutOff";
 import { UndoStopped } from "~/screens/UndoStopped";
-import type { BlockedRow, PlanGroup } from "~/ipc/contract";
+import {
+  NO_ANSWER,
+  commandText,
+  holdsFact,
+  labelsOf,
+  listeningFact,
+  matchText,
+  onlyPort,
+  openTaskManager,
+  startedFact,
+} from "~/domain/running";
+import type { BlockedRow, PlanGroup, RunningComfy } from "~/ipc/contract";
 
 export function ConsolidateScreen() {
   const app = useApp();
@@ -654,32 +665,9 @@ function BlockerPanel() {
             fallback={
               <Show when={blocker.kind === "comfy_running" ? blocker : null}>
                 {(comfy) => (
-                  <div class="blkrow">
-                    <div class="bl">
-                      <div class="bt">
-                        {comfy()
-                          .processes.map(
-                            (p) =>
-                              `ComfyUI-${p.matchedInstallIds.map(labelOf(app)).join(", ")}`,
-                          )
-                          .join(" and ")}{" "}
-                        {comfy().processes.length === 1 ? "is" : "are"} running
-                      </div>
-                      <div class="bd">
-                        {comfy()
-                          .processes.map((p) => `${p.name}, pid ${p.pid}`)
-                          .join("; ")}
-                        . Windows will not move a file while a program has it open.
-                        Closing it lets every file it is holding move too.
-                      </div>
-                    </div>
-                    <div class="ba">
-                      <button class="btn sm pri" onClick={() => void recheck()}>
-                        <Icon name="refresh" size={11} />
-                        Check again
-                      </button>
-                    </div>
-                  </div>
+                  <For each={comfy().processes}>
+                    {(p) => <RunningRow process={p} />}
+                  </For>
                 )}
               </Show>
             }
@@ -724,8 +712,125 @@ function BlockerPanel() {
   );
 }
 
-function labelOf(app: ReturnType<typeof useApp>) {
-  return (id: string) => app.installs().find((i) => i.id === id)?.label ?? id;
+/**
+ * One running ComfyUI, told in facts Windows gave and the person can find
+ * again in Task Manager. ComfyVault never ends it: the buttons open the page it
+ * serves, so the person can see it is real, and Task Manager, where they can
+ * end it themselves.
+ */
+function RunningRow(props: { process: RunningComfy }) {
+  const app = useApp();
+  const p = () => props.process;
+  const roots = () =>
+    p()
+      .matchedInstallIds.map((id) => app.installs().find((i) => i.id === id)?.root ?? id)
+      .join(", ");
+
+  const recheck = async () => {
+    await app.actions.refresh();
+    const still = app.running().find((r) => r.pid === p().pid);
+    if (still) {
+      app.actions.showToast(
+        `Checked · ${labelsOf(still, app.installs())} is still running, pid ${still.pid}`,
+        "bad",
+      );
+      return;
+    }
+    const left = gateBlockers(app.gate());
+    app.actions.showToast(
+      left.length === 0
+        ? `Checked · nothing is in the way, ${fmt(app.plan()?.totals.bytesFreed ?? 0)} can come back`
+        : `Checked · ${left.length} ${left.length === 1 ? "thing is" : "things are"} still in the way`,
+      left.length === 0 ? "ok" : "bad",
+    );
+  };
+
+  return (
+    <div class="blkrow">
+      <div class="bl">
+        <div class="bt">{labelsOf(p(), app.installs())} is running</div>
+        <div class="bd">
+          Windows will not move a file while a program has it open. Closing it lets
+          every file it is holding move too.
+        </div>
+        <div class="proc">
+          <Fact label="Process">
+            {p().name} <span class="dim">&middot;</span> pid {p().pid}
+          </Fact>
+          <Fact label="Started">
+            <Show when={startedFact(p())} fallback={<Unknown />}>
+              {(s) => (
+                <>
+                  {s().when} <span class="dim">&middot; {s().ago}</span>
+                </>
+              )}
+            </Show>
+          </Fact>
+          <Fact label="Listening on">
+            <Show when={listeningFact(p())} fallback={<Unknown />}>
+              {(l) => (
+                <>
+                  {l().value} <span class="dim">&middot; {l().note}</span>
+                </>
+              )}
+            </Show>
+          </Fact>
+          <Fact label="Model files">
+            <Show when={holdsFact(p())} fallback={<Unknown />}>
+              {(h) => h()}
+            </Show>
+          </Fact>
+          <Show when={p().exePath}>
+            {(exe) => <Fact label="Program">{exe()}</Fact>}
+          </Show>
+          <Show when={commandText(p())}>
+            {(cmd) => <Fact label="Command">{cmd()}</Fact>}
+          </Show>
+          <Fact label="Why this install">{matchText(p(), roots())}</Fact>
+        </div>
+        <div class="how">
+          Closing the browser tab leaves ComfyUI running. Stop it where you started
+          it, or open Task Manager, go to the Details tab and end{" "}
+          <span class="emph">pid {p().pid}</span>. ComfyVault does not stop programs
+          itself.
+        </div>
+      </div>
+      <div class="ba stack">
+        <Show when={onlyPort(p())}>
+          {(port) => (
+            <button
+              class="btn sm"
+              onClick={() => void app.engine.openExternal(`http://127.0.0.1:${port()}/`)}
+            >
+              <Icon name="external" size={11} />
+              Open 127.0.0.1:{port()}
+            </button>
+          )}
+        </Show>
+        <button class="btn sm" onClick={() => void openTaskManager(app)}>
+          <Icon name="external" size={11} />
+          Open Task Manager
+        </button>
+        <button class="btn sm pri" onClick={() => void recheck()}>
+          <Icon name="refresh" size={11} />
+          Check again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Fact(props: { label: string; children: JSX.Element }) {
+  return (
+    <div class="pr">
+      <span class="pk">{props.label}</span>
+      <span class="pv">{props.children}</span>
+    </div>
+  );
+}
+
+function Unknown() {
+  return <span class="dim">{NO_ANSWER}</span>;
 }
 
 function CommitBar() {

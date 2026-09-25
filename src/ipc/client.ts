@@ -36,6 +36,10 @@ export async function createEngine(): Promise<Engine> {
     breakLinks: (count = 1) => engine.devBreakLinks(count),
     forgetVersions: () => engine.devForgetVersions(),
     noWorkflows: () => engine.devSetWorkflowsOnDisk(0),
+    runningIn: (...installIds: string[]) => engine.devSetRunningInstalls(installIds),
+    processFacts: (facts: Parameters<typeof engine.devSetProcessFacts>[0]) =>
+      engine.devSetProcessFacts(facts),
+    taskManagerStarts: (starts: boolean) => engine.devSetTaskManagerStarts(starts),
   };
   return engine;
 }

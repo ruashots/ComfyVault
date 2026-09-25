@@ -5,7 +5,7 @@
  * is guessed in its place.
  */
 
-import type { Install, RunningComfy } from "~/ipc/contract";
+import type { Engine, Install, RunningComfy } from "~/ipc/contract";
 import { agoLong, dayAndTime, startedShort } from "~/domain/format";
 
 export const NO_ANSWER = "Windows did not say";
@@ -69,6 +69,24 @@ export function pidAndStart(p: RunningComfy, now: number = Date.now()): string {
 /** "python.exe, pid 18244, started yesterday at 18:42", for the setup list. */
 export function processLine(p: RunningComfy, now: number = Date.now()): string {
   return `${p.name}, ${pidAndStart(p, now)}`;
+}
+
+/**
+ * Starts Task Manager, where the person ends the process themselves. When
+ * Windows does not start it, the person is told the keys that do.
+ */
+export async function openTaskManager(app: {
+  engine: Pick<Engine, "openTaskManager">;
+  actions: { showToast(message: string, tone?: "ok" | "bad"): void };
+}): Promise<void> {
+  try {
+    await app.engine.openTaskManager();
+  } catch {
+    app.actions.showToast(
+      "Windows did not open Task Manager. Press Ctrl+Shift+Esc to open it.",
+      "bad",
+    );
+  }
 }
 
 /** "python.exe, pid 18244, started Thu 24 Sep at 18:42", for a tooltip. */

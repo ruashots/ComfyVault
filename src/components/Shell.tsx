@@ -3,6 +3,7 @@ import { For, Show, createMemo, type JSX } from "solid-js";
 import { Icon, Mark, type IconName } from "~/components/Icon";
 import { driveKindShort, isReadable, volumeLabel } from "~/domain/drives";
 import { fmt, usedPercent } from "~/domain/format";
+import { warnbarRunning } from "~/domain/running";
 import { gateBlockers } from "~/domain/selection";
 import { useApp, type Screen } from "~/state/store";
 
@@ -278,33 +279,40 @@ export function Header(props: {
 }
 
 /**
- * The strip that says Apply is held back. It names the first thing to fix and
- * sends the person to the screen that explains all of them.
+ * The strip that says Apply is held back. It names every thing in the way, each
+ * with the facts a person can check for themselves, and sends them to the
+ * screen that explains what to do. Too long for the window, it ends in an
+ * ellipsis.
  */
 export function Warnbar() {
   const app = useApp();
   const blockers = () => gateBlockers(app.gate());
 
-  const message = createMemo(() => {
+  const parts = createMemo((): { lead: string; detail: string }[] => {
     const dangling = app.danglingLinks().length;
     if (dangling > 0) {
-      return `${dangling} ${dangling === 1 ? "link points" : "links point"} at a file that is not there`;
+      return [
+        {
+          lead: `${dangling} ${dangling === 1 ? "link points" : "links point"} at a file that is not there`,
+          detail: "",
+        },
+      ];
     }
-    const list = blockers();
-    if (list.length > 1) return `${list.length} things block Apply`;
-    const first = list[0];
-    if (!first) return "";
-    switch (first.kind) {
-      case "interrupted_apply":
-        return "A run stopped part way through";
-      case "symlinks_unsupported":
-        return "Windows will not let this app create links";
-      case "comfy_running":
-        return first.processes.length === 1
-          ? "ComfyUI is running"
-          : `${first.processes.length} ComfyUI processes are running`;
-    }
+    return blockers().map((blocker) => {
+      switch (blocker.kind) {
+        case "interrupted_apply":
+          return { lead: "A run stopped part way through", detail: "" };
+        case "symlinks_unsupported":
+          return { lead: "Windows will not let this app create links", detail: "" };
+        case "comfy_running":
+          return warnbarRunning(blocker.processes, app.installs());
+      }
+    });
   });
+  const message = () =>
+    parts()
+      .map((p) => p.lead + p.detail)
+      .join(" · ");
 
   const showing = () =>
     app.hasInstalls() && (blockers().length > 0 || app.danglingLinks().length > 0);
@@ -315,7 +323,21 @@ export function Warnbar() {
     <Show when={showing()}>
       <div class="warnbar" role="status">
         <Icon name="warn" size={13} />
-        <span>{message()}</span>
+        <span class="wt" title={message()}>
+          <For each={parts()}>
+            {(part, i) => (
+              <>
+                <Show when={i() > 0}>
+                  <i> &middot; </i>
+                </Show>
+                <b>{part.lead}</b>
+                <Show when={part.detail}>
+                  <i>{part.detail}</i>
+                </Show>
+              </>
+            )}
+          </For>
+        </span>
         <span class="sp" />
         <Show when={app.screen() !== goesTo()}>
           <button class="btn sm dng" onClick={() => app.actions.go(goesTo())}>

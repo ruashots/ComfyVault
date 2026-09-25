@@ -296,6 +296,18 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   color:var(--red-br);
 }
 .warnbar .sp{flex:1}
+.warnbar .wt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.warnbar .wt b{font-weight:500;color:var(--red-br)}
+.warnbar .wt i{font-style:normal;color:color-mix(in srgb,var(--red-br) 72%,var(--t-dim))}
+/* a running process, told in facts a person can find in Task Manager */
+.proc{margin:8px 0 6px;border:1px solid var(--div);border-radius:var(--r2);background:var(--bg-inset);padding:4px 9px}
+.proc .pr{display:flex;align-items:baseline;gap:10px;padding:3px 0;font-size:10px;line-height:1.45}
+.proc .pk{width:118px;flex:none;font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--t-faint)}
+.proc .pv{flex:1;min-width:0;color:var(--t-cream);overflow-wrap:anywhere}
+.proc .pv .dim{color:var(--t-dim)}
+.blkrow .how{font-size:10px;line-height:1.55;color:var(--t-muted);max-width:620px}
+.blkrow .how .emph{color:var(--t-cream)}
+.blkrow .ba.stack{flex-direction:column;align-items:stretch}
 
 /* ── consolidate groups ───────────────────────────────────── */
 .grp{border-bottom:1px solid var(--div);padding:7px 0 8px}

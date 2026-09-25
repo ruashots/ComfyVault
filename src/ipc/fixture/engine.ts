@@ -1753,7 +1753,28 @@ export class FixtureEngine implements Engine {
 
   // ── the window ────────────────────────────────────────────────────────────
 
-  async openExternal(): Promise<void> {}
+  /** Every address the app asked the system to open, in order. */
+  opened: string[] = [];
+
+  async openExternal(target: string): Promise<void> {
+    this.opened.push(target);
+  }
+
+  /** Whether Windows starts Task Manager when asked. */
+  private taskManagerStarts = true;
+  /** How many times Task Manager was asked for, so a test can see it. */
+  taskManagerOpened = 0;
+
+  devSetTaskManagerStarts(starts: boolean): void {
+    this.taskManagerStarts = starts;
+  }
+
+  async openTaskManager(): Promise<void> {
+    if (!this.taskManagerStarts) {
+      throw error("ioError", "Windows did not start taskmgr.exe.");
+    }
+    this.taskManagerOpened += 1;
+  }
   async revealInFileManager(): Promise<void> {}
   async windowMinimize(): Promise<void> {}
   async windowToggleMaximize(): Promise<void> {}
