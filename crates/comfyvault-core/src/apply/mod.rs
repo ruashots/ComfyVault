@@ -567,57 +567,71 @@ impl<'a> Applier<'a> {
             }
         }
 
+        // Content already in the vault: its vault file becomes the only copy
+        // once these are gone, so it is read and proved to be this content
+        // first, whatever the settings say about re-reading.
+        if group.already_in_vault && !holds(&vault_path, &group.sha256, group.size_bytes, cancel)? {
+            return Err(VaultError::new(
+                ErrorCode::FileChanged,
+                "The model in the vault is not the file this plan expected, so none of its copies was touched.",
+            )
+            .with_path(&vault_path));
+        }
+
         // --- do the work, remembering how to undo it ----------------------
         let mut done: Vec<JournalEntry> = Vec::new();
 
         let outcome = (|| -> Result<()> {
-            if let Some(parent) = vault_path.parent() {
-                if !parent.is_dir() {
-                    let entry = self.step(run, group, JournalStep::CreateDir { path: parent.to_path_buf() })?;
-                    if let Err(e) = fsops::ensure_dir(parent) {
-                        return Err(self.failed(entry, e));
+            // 1. Content new to the vault: the chosen copy becomes the vault
+            //    file. Content already there moves nothing.
+            if !group.already_in_vault {
+                if let Some(parent) = vault_path.parent() {
+                    if !parent.is_dir() {
+                        let entry = self.step(run, group, JournalStep::CreateDir { path: parent.to_path_buf() })?;
+                        if let Err(e) = fsops::ensure_dir(parent) {
+                            return Err(self.failed(entry, e));
+                        }
+                        done.push(self.finish(run, entry)?);
                     }
-                    done.push(self.finish(run, entry)?);
                 }
-            }
 
-            // 1. The chosen copy becomes the vault file.
-            self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
-                Some(group), ApplyStep::Moving, Some(&group.source.abs_path), false);
+                self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
+                    Some(group), ApplyStep::Moving, Some(&group.source.abs_path), false);
 
-            let entry = self.step(run, group, JournalStep::MoveToVault {
-                from: group.source.abs_path.clone(),
-                to: vault_path.clone(),
-                copied: false,
-                sha256: group.sha256.clone(),
-                size_bytes: group.size_bytes,
-            })?;
-            let kind = match fsops::move_file(
-                self.platform, &group.source.abs_path, &vault_path, &group.sha256, &temp_dir, cancel,
-                &mut |_| {},
-            ) {
-                Ok(kind) => kind,
-                // Refused before anything moved: something already sits at
-                // the vault path. The step is closed as failed, so no undo
-                // later takes it for a move that happened and deletes that
-                // file, and no later run is told this run owns the path.
-                Err(e) if e.code == ErrorCode::Conflict => return Err(self.failed(entry, e)),
-                Err(e) => return Err(e),
-            };
-            let entry = JournalEntry {
-                step: JournalStep::MoveToVault {
+                let entry = self.step(run, group, JournalStep::MoveToVault {
                     from: group.source.abs_path.clone(),
                     to: vault_path.clone(),
-                    copied: kind == MoveKind::Copied,
+                    copied: false,
                     sha256: group.sha256.clone(),
                     size_bytes: group.size_bytes,
-                },
-                ..entry
-            };
-            done.push(self.finish(run, entry)?);
-            run.files_moved += 1;
-            if group.cross_volume {
-                run.bytes_moved += group.size_bytes;
+                })?;
+                let kind = match fsops::move_file(
+                    self.platform, &group.source.abs_path, &vault_path, &group.sha256, &temp_dir, cancel,
+                    &mut |_| {},
+                ) {
+                    Ok(kind) => kind,
+                    // Refused before anything moved: something already sits at
+                    // the vault path. The step is closed as failed, so no undo
+                    // later takes it for a move that happened and deletes that
+                    // file, and no later run is told this run owns the path.
+                    Err(e) if e.code == ErrorCode::Conflict => return Err(self.failed(entry, e)),
+                    Err(e) => return Err(e),
+                };
+                let entry = JournalEntry {
+                    step: JournalStep::MoveToVault {
+                        from: group.source.abs_path.clone(),
+                        to: vault_path.clone(),
+                        copied: kind == MoveKind::Copied,
+                        sha256: group.sha256.clone(),
+                        size_bytes: group.size_bytes,
+                    },
+                    ..entry
+                };
+                done.push(self.finish(run, entry)?);
+                run.files_moved += 1;
+                if group.cross_volume {
+                    run.bytes_moved += group.size_bytes;
+                }
             }
 
             // 2. Every copy's old place gets a link.
@@ -631,7 +645,9 @@ impl<'a> Applier<'a> {
                 self.emit(sink, run, ApplyPhase::Applying, index as u64, total as u64,
                     Some(group), ApplyStep::Linking, Some(&link.abs_path), false);
 
-                if link.is_source {
+                // Content already in the vault moved nothing, so its source
+                // is a copy like the others and goes the same way.
+                if link.is_source && !group.already_in_vault {
                     done.push(self.create_link_step(run, group, &link.abs_path, &vault_path)?);
                     run.links_created += 1;
                     continue;
@@ -1295,12 +1311,15 @@ impl<'a> Applier<'a> {
         apply_id: &str,
         to_undo: &[JournalEntry],
     ) -> Result<()> {
+        // What this run made: the vault files it moved in, and its links. A
+        // vault file an earlier run moved in is not this run's, even when
+        // this run linked copies to it, so links to it from elsewhere do not
+        // stand in the way of undoing this run.
         let mine: std::collections::HashSet<PathBuf> = to_undo
             .iter()
             .flat_map(|e| match &e.step {
                 JournalStep::MoveToVault { to, .. } => vec![to.clone()],
-                JournalStep::CreateLink { link, target } => vec![link.clone(), target.clone()],
-                JournalStep::DeleteStash { vault_path, .. } => vec![vault_path.clone()],
+                JournalStep::CreateLink { link, .. } => vec![link.clone()],
                 _ => Vec::new(),
             })
             .collect();
@@ -1552,7 +1571,7 @@ impl<'a> Applier<'a> {
             // a delete leaves the duplicate's bytes under their set-aside
             // name, and calling that group finished hid them for good.
             let deletes_done = plan.group(gid).is_some_and(|g| {
-                g.links.iter().filter(|l| !l.is_source).all(|l| {
+                g.links.iter().filter(|l| g.already_in_vault || !l.is_source).all(|l| {
                     mine.iter().any(|e| {
                         e.state == JournalState::Done
                             && matches!(&e.step, JournalStep::DeleteStash { original, .. } if *original == l.abs_path)

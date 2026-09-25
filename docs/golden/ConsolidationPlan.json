@@ -13,6 +13,7 @@
   "createdAt": "2025-09-22T00:03:32Z",
   "groups": [
     {
+      "alreadyInVault": false,
       "bytesFreed": 151119872,
       "category": "loras",
       "clashesWith": null,

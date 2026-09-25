@@ -166,6 +166,11 @@ pub struct PlanGroup {
     /// One copy only. It moves into the vault and frees nothing.
     pub single_copy: bool,
     pub cross_volume: bool,
+    /// The vault already holds this content, from an earlier run. Nothing
+    /// moves into the vault: every copy here, the one marked as the source
+    /// included, becomes a link to the vault file and its bytes are removed.
+    #[serde(default)]
+    pub already_in_vault: bool,
 }
 
 /// A file that cannot move, and why.
@@ -346,7 +351,20 @@ impl<'a> Planner<'a> {
         for (sha, mut members) in ordered {
             members.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
             let size_bytes = members[0].size_bytes;
-            let category = members[0].category.clone();
+
+            // Content the vault already holds, with its file in place. Without
+            // this, the vault file itself sat at the plain name, the group was
+            // blocked as "a different file already sits at the vault path",
+            // and every copy found after the first run stayed a real file for
+            // good. A record whose file is missing or is not a real file of
+            // this size is not trusted with this: its copies are moved in as
+            // for any new content.
+            let in_vault = self.store.vault_file(sha)?.filter(|r| {
+                std::fs::symlink_metadata(vault_root.join(r.vault_rel_path()))
+                    .map(|m| m.file_type().is_file() && m.len() == size_bytes)
+                    .unwrap_or(false)
+            });
+            let category = in_vault.as_ref().map(|r| r.category.clone()).unwrap_or_else(|| members[0].category.clone());
 
             let source_idx = choose_source(&members, self.platform, vault_volume.as_ref());
             let source_entry = members[source_idx];
@@ -355,7 +373,9 @@ impl<'a> Planner<'a> {
             // Settle the vault name. A name already held by different content
             // forces an adjusted name, so both survive.
             let key = (category.clone(), source_name.to_lowercase());
-            let (vault_name, adjusted, clashes_with) = match taken_names.get(&key) {
+            let (vault_name, adjusted, clashes_with) = match (&in_vault, taken_names.get(&key)) {
+                (Some(r), _) => (r.canonical_name.clone(), false, None),
+                (None, owner) => match owner {
                 Some(owner) if owner != sha => {
                     // Widen the hash fragment until the adjusted name is free
                     // too. Claiming a name another content owns would only
@@ -375,15 +395,20 @@ impl<'a> Planner<'a> {
                     (candidate, true, Some(owner.clone()))
                 }
                 _ => (source_name.clone(), false, None),
+                },
             };
             taken_names.insert((category.clone(), vault_name.to_lowercase()), sha.to_string());
 
             // Every other name this content carries becomes a link beside the
             // vault file, unless that name is already taken by other content.
             let mut aliases: Vec<String> = Vec::new();
+            let known_names: Vec<String> = in_vault.as_ref().map(|r| r.all_names()).unwrap_or_default();
             for m in &members {
                 let n = file_name_of(&m.abs_path);
-                if n.eq_ignore_ascii_case(&vault_name) || aliases.iter().any(|a| a.eq_ignore_ascii_case(&n)) {
+                if n.eq_ignore_ascii_case(&vault_name)
+                    || aliases.iter().any(|a| a.eq_ignore_ascii_case(&n))
+                    || known_names.iter().any(|k| k.eq_ignore_ascii_case(&n))
+                {
                     continue;
                 }
                 let k = (category.clone(), n.to_lowercase());
@@ -493,7 +518,7 @@ impl<'a> Planner<'a> {
             // not know about, left by an earlier crash or copied in by hand.
             // Apply would refuse it, so the plan must not promise it.
             let settled = vault_root.join(&vault_rel_path);
-            if std::fs::symlink_metadata(&settled).is_ok() {
+            if in_vault.is_none() && std::fs::symlink_metadata(&settled).is_ok() {
                 blocked.push(row(source_entry, install_label, BlockReason::TargetExistsNotLink));
                 continue;
             }
@@ -511,9 +536,12 @@ impl<'a> Planner<'a> {
                 links,
                 occurrences,
                 distinct_files,
-                bytes_freed: size_bytes * (distinct_files - 1),
-                single_copy: occurrences == 1,
-                cross_volume: !same_volume,
+                // Already in the vault: every distinct copy goes, the source
+                // included, since the vault file is the one kept.
+                bytes_freed: if in_vault.is_some() { size_bytes * distinct_files } else { size_bytes * (distinct_files - 1) },
+                single_copy: in_vault.is_none() && occurrences == 1,
+                cross_volume: in_vault.is_none() && !same_volume,
+                already_in_vault: in_vault.is_some(),
             });
         }
 
@@ -678,8 +706,8 @@ fn totals_for(groups: &[PlanGroup], blocked: &[BlockedRow], free_now: Option<u64
         name_clashes: groups.iter().filter(|g| g.vault_name_adjusted).count() as u64,
         cross_volume_groups: groups.iter().filter(|g| g.cross_volume).count() as u64,
         bytes_freed,
-        bytes_moved: groups.iter().map(|g| g.size_bytes).sum(),
-        files_moved: groups.len() as u64,
+        bytes_moved: groups.iter().filter(|g| !g.already_in_vault).map(|g| g.size_bytes).sum(),
+        files_moved: groups.iter().filter(|g| !g.already_in_vault).count() as u64,
         links_created: groups.iter().map(|g| g.links.len() as u64 + g.vault_aliases.len() as u64).sum(),
         blocked_rows: blocked.len() as u64,
         blocked_bytes: blocked.iter().map(|b| b.size_bytes).sum(),

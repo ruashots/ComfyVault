@@ -850,6 +850,7 @@ type PlanGroup = {
   bytesFreed: number
   singleCopy: boolean
   crossVolume: boolean
+  alreadyInVault: boolean        // the vault holds this content already
 }
 
 type PlanSource = {
@@ -893,6 +894,21 @@ type PlanTotals = {
 ```
 
 ### 5.3 How the plan decides
+
+**Content the vault already holds.** A copy of a model an earlier run put in
+the vault is not moved in again. Its group has `alreadyInVault: true`:
+
+- nothing moves into the vault, and `vaultRelPath` is the existing vault file;
+- every copy in `links`, the one marked `isSource` included, becomes a link to
+  that file, and its bytes are removed;
+- `bytesFreed` counts every distinct copy, `singleCopy` and `crossVolume` are
+  false, and the totals' `filesMoved` and `bytesMoved` leave the group out.
+
+Before any copy is touched, the apply reads the vault file and proves it is
+this content. A record whose vault file is missing, or is not a real file of
+the right size, is not treated this way: its copies move in as for new content.
+Undoing such a run puts every copy back and leaves the vault file where it is,
+since the earlier run owns it.
 
 **One group per unique content.** Every file with the same SHA-256 belongs to
 one group, whatever its name and whatever folder it sits in. The common case:

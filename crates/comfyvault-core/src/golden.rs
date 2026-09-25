@@ -307,6 +307,7 @@ fn plan_group() -> PlanGroup {
         bytes_freed: 151_119_872,
         single_copy: false,
         cross_volume: false,
+        already_in_vault: false,
     }
 }
 

@@ -2842,3 +2842,177 @@ fn an_undo_while_comfyui_holds_the_model_says_so_and_can_be_finished() {
     Applier::new(&w.store, &native).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
     every_place_loads(&[pa, pb], &weights("m"), "after closing");
 }
+
+// ---------------------------------------------------------------------------
+// Copies of content the vault already holds
+// ---------------------------------------------------------------------------
+
+/// A vault that already holds `m` from run ap-1, and a new install holding
+/// copies of it. Returns the new copies and the vault file.
+fn copies_of_a_model_already_in_the_vault(w: &TestWorld, content: &[u8]) -> (Vec<PathBuf>, PathBuf, ConsolidationPlan) {
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/m.safetensors", content);
+    let first = w.plan(&[a.clone()]);
+    run_apply(w, &first);
+    let vault_file = w.vault_root.join("loras/m.safetensors");
+    assert!(vault_file.is_file());
+
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let copies = vec![
+        w.write_model(&b, "models/loras/m.safetensors", content),
+        w.write_model(&c, "models/loras/renamed.safetensors", content),
+    ];
+    let plan = w.plan(&[a, b, c]);
+    (copies, vault_file, plan)
+}
+
+#[test]
+fn a_new_copy_of_a_model_already_in_the_vault_becomes_a_link() {
+    // It was blocked as "a different file already sits at the vault path",
+    // which was false, and it stayed a real file for good.
+    let w = TestWorld::new();
+    let (copies, vault_file, plan) = copies_of_a_model_already_in_the_vault(&w, &weights("m"));
+    assert!(plan.blocked.is_empty(), "blocked: {:?}", plan.blocked);
+    assert_eq!(plan.groups.len(), 1);
+    let g = &plan.groups[0];
+    assert!(g.already_in_vault);
+    assert_eq!(g.links.len(), 2);
+    assert_eq!(g.bytes_freed, 2 * weights("m").len() as u64, "both copies go");
+    assert!(!g.single_copy && !g.cross_volume);
+    assert_eq!(plan.totals.files_moved, 0);
+
+    let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.state, ApplyState::Completed);
+    assert_eq!(record.files_moved, 0);
+    assert_eq!(record.bytes_freed, 2 * weights("m").len() as u64);
+    every_place_loads(&copies, &weights("m"), "after the run");
+    assert!(copies.iter().all(|p| w.is_link(p)));
+    assert_eq!(std::fs::read(&vault_file).unwrap(), weights("m"));
+    let names = &w.store.vault_file(&weights_hash("m")).unwrap().unwrap().aliases;
+    assert!(names.iter().any(|n| n == "renamed.safetensors"), "the second name was not recorded");
+
+    // The earlier run cannot be undone while these copies are links to its
+    // vault file.
+    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+
+    // Undone, every copy comes back and the earlier run's vault file stays.
+    applier(&w).revert("ap-2", &CancelToken::new(), &NullSink).unwrap();
+    for p in &copies {
+        assert!(!w.is_link(p));
+        assert_eq!(std::fs::read(p).unwrap(), weights("m"));
+    }
+    assert_eq!(std::fs::read(&vault_file).unwrap(), weights("m"));
+    assert!(w.store.vault_file(&weights_hash("m")).unwrap().is_some(), "the earlier run's record went");
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+}
+
+#[test]
+fn copies_are_kept_when_the_vault_file_is_not_the_model_it_claims_to_be() {
+    // Once the copies go, the vault file is the only one. It is read first.
+    let w = TestWorld::new();
+    let (copies, vault_file, plan) = copies_of_a_model_already_in_the_vault(&w, &weights("m"));
+    let mut other = weights("m");
+    let last = other.len() - 1;
+    other[last] ^= 0xFF;
+    std::fs::write(&vault_file, &other).unwrap();
+
+    let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.groups_applied, 0);
+    assert_eq!(record.failures[0].reason, BlockReason::FileChanged);
+    for p in &copies {
+        assert!(!w.is_link(p));
+        assert_eq!(std::fs::read(p).unwrap(), weights("m"));
+    }
+}
+
+#[test]
+fn a_vault_record_whose_file_is_gone_does_not_make_a_link_only_group() {
+    let w = TestWorld::new();
+    let (copies, vault_file, _) = copies_of_a_model_already_in_the_vault(&w, &weights("m"));
+    std::fs::remove_file(&vault_file).unwrap();
+    let installs = w.store.installs().unwrap();
+    let plan = w.plan(&installs);
+    let g = plan.groups.iter().find(|g| g.sha256 == weights_hash("m")).expect("a group");
+    assert!(!g.already_in_vault, "copies would be deleted with no vault file to keep");
+    let record = applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    assert_eq!(record.groups_applied, 1);
+    assert!(vault_file.is_file());
+    every_place_loads(&copies, &weights("m"), "after the run");
+}
+
+#[test]
+fn a_link_only_group_stopped_at_any_point_is_whole_or_untouched_and_undoes_cleanly() {
+    let mut content = weights("big");
+    content.resize(3 * 1024 * 1024 + 17, 0x5A);
+    let mut stops = 0;
+    for n in 1.. {
+        let w = TestWorld::new();
+        assert!(n < 5000, "the apply never finished");
+        let (copies, vault_file, plan) = copies_of_a_model_already_in_the_vault(&w, &content);
+        let when = format!("stopped at check {n}");
+        let record = applier(&w)
+            .apply("ap-2", &plan, &request(&plan), &CancelToken::stopping_at_check(n), &NullSink)
+            .unwrap();
+        every_place_loads(&copies, &content, &when);
+        let linked = copies.iter().filter(|p| w.is_link(p)).count();
+        assert!(linked == 0 || linked == copies.len(), "{when}: half consolidated");
+        assert_eq!(std::fs::read(&vault_file).unwrap(), content, "{when}: the vault file changed");
+        for p in &copies {
+            assert_eq!(w.store.link_at_path(p).unwrap().is_some(), w.is_link(p), "{when}: record and disk disagree");
+        }
+        if record.state == ApplyState::Completed {
+            // And the undo, stopped at every point too.
+            for u in 1.. {
+                assert!(u < 5000, "the undo never finished");
+                let result = applier(&w).revert("ap-2", &CancelToken::stopping_at_check(u), &NullSink);
+                every_place_loads(&copies, &content, &format!("undo stopped at check {u}"));
+                assert_eq!(std::fs::read(&vault_file).unwrap(), content);
+                if result.is_ok() {
+                    break;
+                }
+            }
+            assert!(copies.iter().all(|p| !w.is_link(p)));
+            break;
+        }
+        stops += 1;
+    }
+    assert!(stops > 5, "the apply was stopped only {stops} times");
+}
+
+#[test]
+fn a_link_only_group_is_finished_only_when_every_copy_is_deleted() {
+    // The source of such a group is a copy too. A crash before its delete
+    // must not leave its bytes under a set-aside name for good.
+    let w = TestWorld::new();
+    let (copies, _, plan) = copies_of_a_model_already_in_the_vault(&w, &weights("m"));
+    applier(&w).apply("ap-2", &plan, &request(&plan), &CancelToken::new(), &NullSink).unwrap();
+    let journal = w.store.journal("ap-2").unwrap();
+    let source = plan.groups[0].source.abs_path.clone();
+    let (i, stash) = journal
+        .iter()
+        .enumerate()
+        .find_map(|(i, e)| match &e.step {
+            JournalStep::DeleteStash { original, stash, .. } if *original == source => Some((i, stash.clone())),
+            _ => None,
+        })
+        .unwrap();
+    simulate_crash_after(&w, "ap-2", journal.len());
+    w.store.update_journal(&JournalEntry { state: JournalState::Reverted, ..journal[i].clone() }).unwrap();
+    std::fs::write(&stash, weights("m")).unwrap();
+    let nanos = match &journal[i].step {
+        JournalStep::DeleteStash { mtime_nanos, .. } => mtime_nanos.unwrap(),
+        _ => unreachable!(),
+    };
+    std::fs::File::options()
+        .write(true)
+        .open(&stash)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(nanos as u64))
+        .unwrap();
+
+    applier(&w).resume("ap-2", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!stash.exists(), "the source copy's bytes stayed under their set-aside name");
+    every_place_loads(&copies, &weights("m"), "after recovery");
+}
