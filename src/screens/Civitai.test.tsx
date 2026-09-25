@@ -153,6 +153,16 @@ describe("the Civitai picture", () => {
     unmount();
   });
 
+  it("asks for the picture with no credentials and no referrer", () => {
+    const { unmount } = render(() => (
+      <CivitaiPicture meta={meta({ previewImages: [pic(1, 1)] })} />
+    ));
+    const img = screen.getByRole("img");
+    expect(img.getAttribute("crossorigin")).toBe("anonymous");
+    expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
+    unmount();
+  });
+
   it("skips adult, unrated and video entries to the first safe picture", () => {
     const { unmount } = render(() => (
       <CivitaiPicture

@@ -829,6 +829,13 @@ export function safePicture(meta: ModelMetadata): string | null {
   return picture?.url ?? null;
 }
 
+/**
+ * The picture is fetched with no credentials and no referrer, so the image
+ * host cannot keep a cookie that ties one request to the last, and learns
+ * nothing about the page asking. Measured on the live service: the image host
+ * answers with a redirect to Civitai's file host, and both allow an anonymous
+ * cross-origin load, the file host for the "null" origin a redirect leaves.
+ */
 export function CivitaiPicture(props: { meta: ModelMetadata }) {
   const [broken, setBroken] = createSignal(false);
   return (
@@ -850,6 +857,7 @@ export function CivitaiPicture(props: { meta: ModelMetadata }) {
             src={url()}
             alt={`A picture of ${props.meta.modelName ?? "this model"} from Civitai`}
             loading="lazy"
+            crossorigin="anonymous"
             referrerpolicy="no-referrer"
             onError={() => setBroken(true)}
           />
