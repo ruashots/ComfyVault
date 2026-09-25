@@ -232,16 +232,28 @@ fn safe_download_url(url: &str) -> Option<String> {
     (host == "civitai.com" || host.ends_with(".civitai.com")).then(|| url.to_string())
 }
 
-/// Keeps a picture address only when it is Civitai's image host over HTTPS.
+/// The only places a Civitai picture is loaded from: the image host, and the
+/// file host it redirects every picture to.
+///
+/// The window's content rules (`img-src` in `src-tauri/tauri.conf.json`) allow
+/// exactly these, and a test holds the two lists to each other. Chromium
+/// checks the rules again after a redirect, so the redirect target has to be
+/// allowed too, or no picture loads at all.
+pub const PICTURE_ORIGINS: [&str; 2] = ["https://image.civitai.com", "https://blobs-b2.civitai.com"];
+
+/// Keeps a picture address only when it is on one of [`PICTURE_ORIGINS`].
 ///
 /// The answer comes from the network, and the window loads these addresses.
-/// The window's own rules allow only this host today, but a check that lives
-/// only there opens the moment those rules are widened. Anything with a user
-/// part, a port, or another host is dropped.
+/// A check that lives only in the window's rules opens the moment those rules
+/// are widened. Anything with a user part, a port, plain http, or another host
+/// is dropped.
 fn safe_image_url(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://")?;
     let authority = rest.split(['/', '?', '#']).next()?;
-    authority.eq_ignore_ascii_case("image.civitai.com").then(|| url.to_string())
+    PICTURE_ORIGINS
+        .iter()
+        .any(|o| o.strip_prefix("https://").is_some_and(|host| authority.eq_ignore_ascii_case(host)))
+        .then(|| url.to_string())
 }
 
 /// Splits the trigger words into usable tokens.

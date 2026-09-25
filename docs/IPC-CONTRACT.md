@@ -1875,7 +1875,10 @@ type PreviewImage = {
 each with the rating and kind Civitai gives it. Civitai rates every picture on
 its own, and a version whose own `nsfwLevel` is high can still show pictures
 that are fine for anyone. A picture Civitai sent without a URL is left out of
-both lists, and so is one whose address is not `https://image.civitai.com/...`. An answer cached by an older build has an empty `previewImages`.
+both lists, and so is one whose address is not on `https://image.civitai.com`
+or `https://blobs-b2.civitai.com`, the file host the image host redirects every
+picture to. The window's content rules allow pictures from exactly those two
+places, and a test holds the two lists to each other. An answer cached by an older build has an empty `previewImages`.
 
 ### 10.2 `fetch_metadata_batch`
 

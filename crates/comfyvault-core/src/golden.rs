@@ -1410,3 +1410,29 @@ fn the_sample_values_that_come_from_the_operating_system_have_the_shape_it_gives
         "the sample says a drive root is {sampled_root:?}, with no separator"
     );
 }
+
+#[test]
+fn the_window_loads_pictures_from_exactly_the_places_the_engine_keeps() {
+    // Two lists of the same thing drift. The engine drops a picture address
+    // that is not on one of its origins, and the window's content rules
+    // refuse to load from anywhere else, redirects included. If the window
+    // allows less, no picture loads; if it allows more, the engine's check is
+    // the only one left.
+    let conf: serde_json::Value = serde_json::from_str(&read_repo_file("src-tauri/tauri.conf.json")).unwrap();
+    let csp = conf["app"]["security"]["csp"].as_str().expect("the window has content rules");
+    let img_src = csp
+        .split(';')
+        .map(str::trim)
+        .find_map(|d| d.strip_prefix("img-src "))
+        .expect("the rules name where pictures load from");
+    // The app's own local protocol, http://asset.localhost, is not a place
+    // on the network.
+    let mut remote: Vec<&str> = img_src
+        .split_whitespace()
+        .filter(|t| t.starts_with("https:") || (t.starts_with("http:") && !t.ends_with(".localhost")))
+        .collect();
+    remote.sort_unstable();
+    let mut engine: Vec<&str> = crate::metadata::civitai::PICTURE_ORIGINS.to_vec();
+    engine.sort_unstable();
+    assert_eq!(remote, engine, "img-src: {img_src}");
+}

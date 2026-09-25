@@ -411,10 +411,19 @@ fn only_pictures_on_civitais_image_host_over_https_are_kept() {
         {"url":"https://image.civitai.com@evil.example/5.jpeg","nsfwLevel":1,"type":"image"},
         {"url":"https://image.civitai.com:8443/6.jpeg","nsfwLevel":1,"type":"image"},
         {"url":"https://civitai.com/7.jpeg","nsfwLevel":1,"type":"image"},
-        {"url":"https://IMAGE.civitai.com/a/8.jpeg","nsfwLevel":2,"type":"image"}
+        {"url":"https://IMAGE.civitai.com/a/8.jpeg","nsfwLevel":2,"type":"image"},
+        {"url":"https://blobs-b2.civitai.com/a/9.jpeg","nsfwLevel":1,"type":"image"},
+        {"url":"https://blobs-b3.civitai.com/a/10.jpeg","nsfwLevel":1,"type":"image"}
     ]}"#;
     let m = convert(&parse_version(json), SHA_A, false);
     let kept: Vec<&str> = m.preview_images.iter().map(|p| p.url.as_str()).collect();
-    assert_eq!(kept, vec!["https://image.civitai.com/a/1.jpeg", "https://IMAGE.civitai.com/a/8.jpeg"]);
+    assert_eq!(
+        kept,
+        vec![
+            "https://image.civitai.com/a/1.jpeg",
+            "https://IMAGE.civitai.com/a/8.jpeg",
+            "https://blobs-b2.civitai.com/a/9.jpeg",
+        ]
+    );
     assert_eq!(m.preview_image_urls, kept);
 }
