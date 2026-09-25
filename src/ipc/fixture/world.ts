@@ -600,6 +600,9 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
     // Paths that are second names for bytes already counted free nothing when
     // they go, so the space this group returns counts real files, not paths.
     const distinctFiles = sorted.filter((c) => c.sharesBytes !== true).length;
+    // A model an earlier run put in the vault: nothing moves in, and every
+    // copy, the one marked as source included, becomes a link and is freed.
+    const alreadyInVault = world.vault.has(content.sha256);
 
     groups.push({
       groupId: `g-${content.sha256.slice(0, 12)}`,
@@ -616,9 +619,10 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       links,
       occurrences: sorted.length,
       distinctFiles,
-      bytesFreed: (distinctFiles - 1) * content.bytes,
-      singleCopy: sorted.length === 1,
-      crossVolume: sorted.some((c) => c.volume !== VAULT_VOLUME),
+      bytesFreed: (alreadyInVault ? distinctFiles : distinctFiles - 1) * content.bytes,
+      singleCopy: !alreadyInVault && sorted.length === 1,
+      crossVolume: !alreadyInVault && sorted.some((c) => c.volume !== VAULT_VOLUME),
+      alreadyInVault,
     });
   }
 
@@ -675,8 +679,9 @@ export function planOf(world: World, planId: string, scanId: string): Consolidat
       nameClashes: groups.filter((g) => g.vaultNameAdjusted).length,
       crossVolumeGroups: groups.filter((g) => g.crossVolume).length,
       bytesFreed,
-      bytesMoved: groups.reduce((s, g) => s + g.sizeBytes, 0),
-      filesMoved: groups.length,
+      // A model the vault already holds moves nothing in.
+      bytesMoved: groups.filter((g) => !g.alreadyInVault).reduce((s, g) => s + g.sizeBytes, 0),
+      filesMoved: groups.filter((g) => !g.alreadyInVault).length,
       linksCreated: groups.reduce((s, g) => s + g.occurrences, 0),
       blockedRows: listed.length,
       blockedBytes: listed.reduce((s, b) => s + b.sizeBytes, 0),

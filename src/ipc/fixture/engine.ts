@@ -766,7 +766,7 @@ export class FixtureEngine implements Engine {
     // Read from the drive before anything moves, the way the engine reads it.
     const freeBefore = this.world.freeBytes;
 
-    const bytesToMove = groups.reduce((s, g) => s + g.sizeBytes, 0);
+    const bytesToMove = groups.filter((g) => !g.alreadyInVault).reduce((s, g) => s + g.sizeBytes, 0);
     const started = Date.now();
     // One file is written to between the report and the run, as really happens.
     const changesAt = groups.length > 7 ? 6 : -1;
@@ -796,7 +796,7 @@ export class FixtureEngine implements Engine {
             bytesFreed: done.reduce((sum, g) => sum + g.bytesFreed, 0),
             vaultFreeBytesBefore: freeBefore,
             vaultFreeBytesAfter: null,
-            filesMoved: done.length,
+            filesMoved: done.filter((g) => !g.alreadyInVault).length,
             linksCreated: done.reduce((sum, g) => sum + g.occurrences, 0),
             failures: [],
             revertible: true,
@@ -834,10 +834,10 @@ export class FixtureEngine implements Engine {
         currentGroupId: current?.groupId ?? null,
         currentPath: current?.source.absPath ?? null,
         step: "moving",
-        bytesMoved: done.reduce((s, g) => s + g.sizeBytes, 0),
+        bytesMoved: done.filter((g) => !g.alreadyInVault).reduce((s, g) => s + g.sizeBytes, 0),
         bytesToMove,
         bytesFreed: done.reduce((s, g) => s + g.bytesFreed, 0),
-        filesMoved: done.length,
+        filesMoved: done.filter((g) => !g.alreadyInVault).length,
         linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
         failures: changesAt >= 0 && reached > changesAt ? 1 : 0,
         elapsedMs: elapsed,
@@ -872,7 +872,7 @@ export class FixtureEngine implements Engine {
           bytesFreed: done.reduce((sum, g) => sum + g.bytesFreed, 0),
           vaultFreeBytesBefore: freeBefore,
           vaultFreeBytesAfter: this.world.freeBytes,
-          filesMoved: done.length,
+          filesMoved: done.filter((g) => !g.alreadyInVault).length,
           linksCreated: done.reduce((s, g) => s + g.occurrences, 0),
           failures: failed
             ? [
@@ -1009,7 +1009,7 @@ export class FixtureEngine implements Engine {
         bytesMoved: 0,
         bytesToMove: 0,
         bytesFreed: all.reduce((sum, g) => sum + g.bytesFreed, 0),
-        filesMoved: all.length,
+        filesMoved: all.filter((g) => !g.alreadyInVault).length,
         linksCreated: all.reduce((sum, g) => sum + g.occurrences, 0),
         failures: 0,
         elapsedMs: reached * TICK_MS,
@@ -1029,7 +1029,7 @@ export class FixtureEngine implements Engine {
               state: "completed" as const,
               finishedAt: this.stamp(),
               groupsApplied: all.length,
-              filesMoved: all.length,
+              filesMoved: all.filter((g) => !g.alreadyInVault).length,
               linksCreated: all.reduce((sum, g) => sum + g.occurrences, 0),
               bytesFreed: all.reduce((sum, g) => sum + g.bytesFreed, 0),
               vaultFreeBytesAfter: this.world.freeBytes,
@@ -1685,6 +1685,29 @@ export class FixtureEngine implements Engine {
     if (this.busy?.kind !== "apply") throw new Error("devCutOffApply: no run is going");
     this.cuttingOff = true;
     this.tick?.();
+  }
+
+  /**
+   * A model is downloaded again into an install, as a real file, after an
+   * earlier run already put it in the vault.
+   */
+  devDownloadAgain(sha256: string, installId: string, folder: string): string {
+    const content = this.world.contents.find((c) => c.sha256 === sha256);
+    const install = this.world.installs.find((i) => i.id === installId);
+    if (!content || !install) throw new Error("devDownloadAgain: no such model or install");
+    const absPath = `${install.root}\\${folder}${content.filename}`;
+    content.copies.push({
+      installId,
+      folder,
+      name: content.filename,
+      absPath,
+      relPath: `${folder}${content.filename}`,
+      volume: absPath.slice(0, 2).toUpperCase(),
+      isLink: false,
+      blocked: null,
+      sharesBytes: false,
+    });
+    return absPath;
   }
 
   /** The copies an undo makes occupy this much, as sparse files would. */

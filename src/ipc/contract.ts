@@ -404,6 +404,12 @@ export interface PlanGroup {
   bytesFreed: number;
   singleCopy: boolean;
   crossVolume: boolean;
+  /**
+   * The vault holds this model from an earlier run. Nothing moves in: every
+   * copy in `links`, the one marked `isSource` included, becomes a link to the
+   * existing vault file, and `bytesFreed` counts every distinct copy.
+   */
+  alreadyInVault: boolean;
 }
 
 export type BlockReason =

@@ -60,4 +60,37 @@ describe("a second run after a finished one", () => {
     expect((await engine.listApplies()).length).toBe(2);
     expect(text()).toContain("Undo this run");
   });
+
+  it("links a new copy of a model the vault already holds, and says nothing moves in", async () => {
+    const engine = new FixtureEngine({ manual: true });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const h = await renderWithApp(() => <App />, { engine });
+    harness = h;
+    await waitFor(() => h.app.plan() !== null);
+    h.app.actions.go("consolidate");
+    await waitFor(() => h.app.gate().can);
+    await userEvent.click(applyButton());
+    engine.devFinish();
+    await waitFor(() => h.app.runOnScreen() !== null && h.app.applyProgress() === null);
+
+    // One model from that run is downloaded again into an install.
+    const held = (await engine.listVaultFiles({ offset: 0, limit: 1000 })).files[0]!;
+    const again = engine.devDownloadAgain(held.sha256, "sandbox", "models\\downloads\\");
+    await engine.startScan();
+    engine.devFinish();
+    await h.app.actions.refresh();
+    await waitFor(() => text().includes("The plan"));
+
+    const group = h.app.plan()!.groups.find((g) => g.sha256 === held.sha256)!;
+    expect(group.alreadyInVault).toBe(true);
+    expect(group.links.map((l) => l.absPath)).toContain(again);
+    // The engine still names a source ("onlyCopy"), which read as "kept".
+    expect(text()).toContain("the vault already holds this model from an earlier run");
+    expect(text()).not.toContain(`kept the copy in ${group.source.installLabel}, the only one there is`);
+    const row = [...document.querySelectorAll(".cp")].find((el) =>
+      (el.textContent ?? "").includes("downloads"),
+    )!;
+    expect(row.querySelector(".role")!.textContent).toBe("link");
+  });
 });

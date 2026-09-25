@@ -216,6 +216,7 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
     bytesFreed: 0,
     singleCopy: true,
     crossVolume: false,
+    alreadyInVault: false,
     ...over,
   };
 }
@@ -260,6 +261,15 @@ describe("every place one content is reachable from", () => {
     expect(places.find((p) => p.kind === "source")!.absPath).toBe(
       group.source.absPath,
     );
+  });
+
+  it("marks no copy as moving when the vault already holds the model", async () => {
+    const { plan } = await readyPlan();
+    const base = plan.groups.find((g) => g.occurrences > 1)!;
+    const held = { ...base, alreadyInVault: true };
+    const places = placesOf(held.sha256, { ...plan, groups: [held] }, [], new Map());
+    expect(places).toHaveLength(held.occurrences);
+    expect(places.every((p) => p.kind === "willLink")).toBe(true);
   });
 
   it("adds the places that cannot move, with the reason", async () => {

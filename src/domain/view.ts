@@ -135,6 +135,11 @@ export function chosenBecauseText(
   group: PlanGroup,
   vaultVolume: string,
 ): string {
+  // Nothing is kept: the vault already holds the file, and the engine still
+  // names a source, "onlyCopy" when there is one copy, which read as "kept".
+  if (group.alreadyInVault) {
+    return `the vault already holds this model from an earlier run, so nothing moves in and every copy here becomes a link to it`;
+  }
   switch (group.source.chosenBecause) {
     case "sameVolume":
       return `kept the copy in ${group.source.installLabel}, which is already on drive ${vaultVolume}, so moving it is a rename and takes no time`;
@@ -196,7 +201,7 @@ export function placesOf(
         absPath: link.absPath,
         relPath: link.relPath,
         name: link.linkName,
-        kind: link.isSource ? "source" : "willLink",
+        kind: link.isSource && !group.alreadyInVault ? "source" : "willLink",
         blocked: null,
       });
     }

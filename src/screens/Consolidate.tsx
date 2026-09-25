@@ -514,7 +514,8 @@ function DuplicateGroup(props: { group: PlanGroup }) {
       <div class="grp-b">
         <For each={props.group.links}>
           {(link) => {
-            const isSource = () => link.absPath === props.group.source.absPath;
+            const isSource = () =>
+              !props.group.alreadyInVault && link.absPath === props.group.source.absPath;
             return (
               <div class="cp">
                 <span class="role" classList={{ keep: isSource(), link: !isSource() }}>
