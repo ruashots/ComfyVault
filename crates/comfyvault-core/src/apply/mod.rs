@@ -743,6 +743,11 @@ impl<'a> Applier<'a> {
         })?;
 
         let record_link = |install_id: &str, abs: &Path, name: &str| -> Result<()> {
+            // Once per place. A resumed run records again the groups a crash
+            // cut off between their last step and their records.
+            if self.store.link_at_path(abs)?.is_some() {
+                return Ok(());
+            }
             let rel = installs
                 .iter()
                 .find(|i| i.id == install_id)
@@ -1371,6 +1376,34 @@ impl<'a> Applier<'a> {
 
         self.undo_entries(&mut incomplete)?;
 
+        // The groups finished before the cut are part of this run, but the
+        // record written when the run began holds none of them: its totals
+        // are written only when a pass ends. Counted from the plan, the way
+        // the pass that did them counts, so the finished run describes all of
+        // itself rather than only what was done after the cut. Their records
+        // are written too, in case the cut fell between a group's last step
+        // and its records.
+        let installs = self.store.installs()?;
+        let mut carry = ApplyRecord {
+            groups_applied: 0,
+            bytes_freed: 0,
+            files_moved: 0,
+            links_created: 0,
+            ..record.clone()
+        };
+        for gid in &record.group_ids {
+            if !complete_groups.contains(gid) {
+                continue;
+            }
+            let Some(g) = plan.group(gid) else { continue };
+            let vault_path = self.store.vault_root().join(&g.vault_rel_path);
+            self.record_group(g, &vault_path, &installs, apply_id)?;
+            carry.groups_applied += 1;
+            carry.files_moved += 1;
+            carry.links_created += g.links.len() as u64;
+            carry.bytes_freed += g.links.iter().filter(|l| !l.is_source).map(|l| l.size_bytes).sum::<u64>();
+        }
+
         // Only what the person originally ticked, and only what is not done.
         //
         // Taking every group in the plan here was the worst defect in the
@@ -1401,7 +1434,7 @@ impl<'a> Applier<'a> {
                 stop_on_error: false,
             },
             next_seq,
-            Some(record),
+            Some(carry),
             cancel,
             sink,
         )

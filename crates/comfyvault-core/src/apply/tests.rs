@@ -2071,3 +2071,86 @@ fn an_apply_stopped_at_any_point_leaves_each_model_whole_or_untouched() {
         assert!(stops > 10, "the apply was stopped only {stops} times, the test proves little");
     }
 }
+
+#[test]
+fn a_run_resumed_after_a_crash_is_recorded_as_the_whole_run() {
+    // Measured before this: cut after three of nine groups and resumed, a run
+    // that finished all nine was recorded as six, with the first three groups'
+    // files, links and bytes missing. The record written when a run begins
+    // holds no totals, and the resume added only its own.
+    fn world() -> (TestWorld, Vec<Vec<PathBuf>>, ConsolidationPlan) {
+        let w = TestWorld::new();
+        let installs: Vec<_> = ["A", "B", "C"].iter().map(|l| w.add_install(l)).collect();
+        let places = ["one", "two", "three"]
+            .iter()
+            .map(|tag| {
+                installs
+                    .iter()
+                    .map(|i| w.write_model(i, &format!("models/loras/{tag}.safetensors"), &weights(tag)))
+                    .collect()
+            })
+            .collect();
+        let plan = w.plan(&installs);
+        (w, places, plan)
+    }
+
+    // What the same run records when nothing goes wrong.
+    let (clean, _, clean_plan) = world();
+    let whole = applier(&clean)
+        .apply("ap-1", &clean_plan, &request(&clean_plan), &CancelToken::new(), &NullSink)
+        .unwrap();
+    assert_eq!(whole.groups_applied, 3);
+
+    let (w, places, plan) = world();
+    const BEFORE: u64 = 10_000_000_000;
+    w.platform.set_free_bytes(BEFORE);
+
+    // Let the first group finish, then cut the power: the process stops
+    // before it writes any totals, and before the first group's records.
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    let stop = move |p: &ApplyProgress| {
+        if p.group_index >= 1 {
+            trigger.cancel();
+        }
+    };
+    applier(&w).apply("ap-1", &plan, &request(&plan), &cancel, &stop).unwrap();
+    let mut cut = w.store.apply("ap-1").unwrap().unwrap();
+    assert_eq!(cut.groups_applied, 1, "the cut must come after exactly one group");
+    cut.state = ApplyState::Running;
+    cut.finished_at = None;
+    cut.groups_applied = 0;
+    cut.bytes_freed = 0;
+    cut.files_moved = 0;
+    cut.links_created = 0;
+    cut.vault_free_bytes_after = None;
+    w.store.put_apply(&cut).unwrap();
+    // The cut fell part way through the first group's records: one link was
+    // recorded, two were not, and the vault file was not.
+    let recorded = w.store.links().unwrap();
+    assert_eq!(recorded.len(), 3);
+    for link in &recorded[1..] {
+        w.store.delete_link(&link.id).unwrap();
+    }
+    assert_eq!(w.store.vault_files().unwrap().len(), 1);
+    w.store.delete_vault_file(&w.store.vault_files().unwrap()[0].sha256).unwrap();
+
+    w.platform.set_free_bytes(30_000_000_000);
+    let resumed = applier(&w).resume("ap-1", &CancelToken::new(), &NullSink).unwrap();
+
+    assert_eq!(resumed.state, ApplyState::Completed);
+    assert_eq!(resumed.groups_requested, whole.groups_requested);
+    assert_eq!(resumed.groups_applied, whole.groups_applied, "groups");
+    assert_eq!(resumed.files_moved, whole.files_moved, "files moved");
+    assert_eq!(resumed.links_created, whole.links_created, "links");
+    assert_eq!(resumed.bytes_freed, whole.bytes_freed, "bytes freed");
+    assert_eq!(resumed.vault_free_bytes_before, Some(BEFORE), "before means before the run began");
+
+    // The database knows every link and every vault file on the disk.
+    for p in places.iter().flatten() {
+        assert!(w.is_link(p), "{} was not consolidated", p.display());
+        assert!(w.store.link_at_path(p).unwrap().is_some(), "{} has no record", p.display());
+    }
+    assert_eq!(w.store.links().unwrap().len(), 9, "a link was recorded twice");
+    assert_eq!(w.store.vault_files().unwrap().len(), 3);
+}
