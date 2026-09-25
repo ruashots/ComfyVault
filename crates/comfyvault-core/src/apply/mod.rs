@@ -995,11 +995,15 @@ impl<'a> Applier<'a> {
                 // Renamed over the link, if one still stands there.
                 fsops::unstash(stash, path)
             }
-            JournalStep::CreateLink { link, .. } => {
+            JournalStep::CreateLink { link, target } => {
                 if refilled.contains(link) {
                     return Ok(());
                 }
-                if self.platform.is_symlink(link) {
+                // Only the link this step made: one that leads to its target.
+                // A link the person put there since, leading anywhere else,
+                // is theirs and stays. The step that puts a file back at such
+                // a place refuses on its own, so nothing is put over it.
+                if self.platform.is_symlink(link) && leads_to(link, target) {
                     self.platform.remove_symlink(link)?;
                 }
                 Ok(())
@@ -1372,8 +1376,13 @@ impl<'a> Applier<'a> {
             // A link record goes when its link is gone from the disk, not
             // before: a link left for a later step to replace is still one a
             // partly undone run's installs load through.
-            JournalStep::CreateLink { link: path, .. }
-            | JournalStep::StashOriginal { path, .. }
+            JournalStep::CreateLink { link, target } => {
+                if leads_to(link, target) {
+                    return Ok(());
+                }
+                self.forget_link_record(link, &entry.apply_id)
+            }
+            JournalStep::StashOriginal { path, .. }
             | JournalStep::DeleteStash { original: path, .. } => self.forget_link_if_gone(path),
             JournalStep::MoveToVault { from, sha256, .. } => {
                 self.forget_link_if_gone(from)?;
@@ -1408,6 +1417,17 @@ impl<'a> Applier<'a> {
         }
         if let Some(record) = self.store.link_at_path(path)? {
             self.store.delete_link(&record.id)?;
+        }
+        Ok(())
+    }
+
+    /// Forgets this run's record of a link at `path`, when the link there now
+    /// is someone else's. A record the person made for it stays.
+    fn forget_link_record(&self, path: &Path, apply_id: &str) -> Result<()> {
+        if let Some(record) = self.store.link_at_path(path)? {
+            if record.apply_id.as_deref() == Some(apply_id) {
+                self.store.delete_link(&record.id)?;
+            }
         }
         Ok(())
     }
@@ -1660,6 +1680,15 @@ impl<'a> Applier<'a> {
             eta_ms: estimate_remaining_ms(elapsed_ms, run.bytes_moved, run.bytes_to_move),
         });
     }
+}
+
+/// Does the link at `link` lead to `target`? Both are resolved, so two
+/// spellings of one place agree, and a link that leads nowhere does not.
+fn leads_to(link: &Path, target: &Path) -> bool {
+    matches!(
+        (std::fs::canonicalize(link), std::fs::canonicalize(target)),
+        (Ok(a), Ok(b)) if a == b
+    )
 }
 
 /// Does the real file at `path` hold these bytes? The size is compared first,

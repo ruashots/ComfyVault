@@ -2736,3 +2736,38 @@ fn opening_a_vault_removes_the_half_written_copies_in_its_own_folder() {
     e.select_vault(&root, false).unwrap();
     assert!(!part.exists());
 }
+
+#[test]
+fn an_undo_leaves_a_link_the_person_made_where_the_run_made_one() {
+    // A second name beside the vault file is a link the run made. The person
+    // pointed that name at another model since. The undo removed any link at
+    // the place, whatever it led to.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/other-name.safetensors", &weights("m"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+    let alias = w
+        .store
+        .journal("ap-1")
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e.step {
+            JournalStep::CreateLink { link, .. } if link.starts_with(&w.vault_root) => Some(link),
+            _ => None,
+        })
+        .expect("the run made a second name in the vault");
+
+    let theirs = w.write_file("ComfyVault/loras/their-model.safetensors", b"theirs");
+    std::fs::remove_file(&alias).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&theirs, &alias).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&theirs, &alias).unwrap();
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(w.is_link(&alias), "the person's link was removed");
+    assert_eq!(std::fs::read(&alias).unwrap(), b"theirs");
+}
