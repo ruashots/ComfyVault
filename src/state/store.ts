@@ -131,9 +131,12 @@ export interface ConfirmModal {
   kind: "confirm";
   title: string;
   body: ConfirmLine[];
-  cta: string;
+  /** Null when the action is refused before it starts, so none is offered. */
+  cta: string | null;
   action: () => Promise<void> | void;
   running: boolean;
+  /** The heading over `error`. */
+  errorHead: string;
   error: string | null;
   /** What the engine named as being in the way. One entry per line. */
   errorDetail: readonly string[];

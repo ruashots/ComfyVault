@@ -120,7 +120,7 @@ describe("stopping a run", () => {
 });
 
 describe("a run that cannot be undone any more", () => {
-  it("keeps the modal open and lists the paths that are in the way", { timeout: 15000 }, async () => {
+  it("says so before the person confirms, and lists the paths in the way", { timeout: 15000 }, async () => {
     const h = await runApply();
     const { app, engine } = h;
     await finish(h);
@@ -134,11 +134,13 @@ describe("a run that cannot be undone any more", () => {
     await engine.setCanonicalName(renamed.sha256, "renamed-by-hand.safetensors");
 
     await userEvent.click(screen.getByRole("button", { name: /Undo this run/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Undo the run/ }));
 
+    // The engine's cost check refuses exactly where the undo would, so the box
+    // opens already refused and offers nothing to confirm.
     const dialog = await waitForDialog();
-    expect(dialog.textContent).toContain("That did not happen");
+    expect(dialog.textContent).toContain("This run cannot be undone now");
     expect(dialog.textContent).toContain("renamed since");
+    expect(screen.queryByRole("button", { name: /Undo the run/ })).toBeNull();
     // The paths, so the person knows what to undo first.
     const paths = dialog.querySelectorAll(".paths li");
     expect(paths.length).toBeGreaterThan(0);

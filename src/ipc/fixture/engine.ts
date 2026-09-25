@@ -32,6 +32,7 @@ import type {
   NameGroup,
   PlanGroup,
   PlatformReport,
+  RevertPreview,
   RevertProgress,
   RunningComfy,
   ScanEntryPage,
@@ -228,6 +229,11 @@ export class FixtureEngine implements Engine {
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private applyTimer: ReturnType<typeof setInterval> | null = null;
   private applyCancelling = false;
+  /**
+   * The room an undo's copies take, when it is not their size. A sparse or
+   * compressed model occupies far less than its size, and so does its copy.
+   */
+  private revertRoomBytes: number | null = null;
   /** The groups each run finished, which are what undoing it puts back. */
   private appliedGroups = new Map<string, PlanGroup[]>();
   /** Vault files this run created that were renamed after it finished. */
@@ -932,29 +938,31 @@ export class FixtureEngine implements Engine {
     return { applyId };
   }
 
-  async revertApply(applyId: string): Promise<{ applyId: string }> {
-    this.requireVault();
-    if (this.busy) throw error("vaultBusy", "Something is already running.");
-    const before = this.worldBeforeApply;
-    if (!before) throw error("conflict", "There is nothing to put back.");
+  /** Why an undo would refuse before it starts, or null when it would not. */
+  private revertRefusal(): VaultError | null {
+    if (!this.worldBeforeApply) return error("conflict", "There is nothing to put back.");
     if (this.renamedSinceApply.size > 0) {
       const paths = vaultFilesOf(this.world)
         .filter((f) => this.renamedSinceApply.has(f.sha256))
         .map((f) => `${VAULT_ROOT}\\${f.vaultRelPath}`);
-      throw error(
+      return error(
         "conflict",
         "Files this run created have been renamed since, so putting them back would lose the new names.",
         paths.join("\n"),
       );
     }
-    this.busy = { kind: "revert", id: applyId };
+    return null;
+  }
 
-    // Undone in reverse, the way the engine walks its journal: for each group,
-    // newest first, the links come out and the removed copies are copied back
-    // out of the vault, and the file that moved into the vault is renamed back
-    // last. Only the copies take time, so time here follows their bytes.
-    type Step = { action: RevertProgress["action"]; path: string; bytes: number };
-    const steps: Step[] = [];
+  /**
+   * An undo's steps, newest first, the way the engine walks its journal: for
+   * each group the links come out and the removed copies are copied back out
+   * of the vault, and the file that moved into the vault is renamed back last.
+   */
+  private revertSteps(
+    applyId: string,
+  ): Array<{ action: RevertProgress["action"]; path: string; bytes: number }> {
+    const steps: Array<{ action: RevertProgress["action"]; path: string; bytes: number }> = [];
     for (const g of this.appliedGroups.get(applyId) ?? []) {
       steps.push({ action: "renamingBack", path: g.source.absPath, bytes: 0 });
       for (const link of g.links) {
@@ -965,7 +973,45 @@ export class FixtureEngine implements Engine {
         steps.push({ action: "copyingBack", path: copy.absPath, bytes: g.sizeBytes });
       }
     }
-    steps.reverse();
+    return steps.reverse();
+  }
+
+  async previewRevert(applyId: string): Promise<RevertPreview> {
+    this.requireVault();
+    const refusal = this.revertRefusal();
+    if (refusal) throw refusal;
+    const steps = this.revertSteps(applyId);
+    const bytesToCopy = steps.reduce((sum, st) => sum + st.bytes, 0);
+    return {
+      applyId,
+      filesRenamedBack: steps.filter((st) => st.action === "renamingBack").length,
+      filesCopiedBack: steps.filter((st) => st.action === "copyingBack").length,
+      bytesToCopy,
+      // Every install sits on the vault's drive here, so one drive takes it.
+      drives:
+        bytesToCopy > 0
+          ? [
+              {
+                volume: `${VAULT_VOLUME}\\`,
+                predictedRoomBytes: this.revertRoomBytes ?? bytesToCopy,
+                freeBytes: this.world.driveReadable ? this.world.freeBytes : null,
+              },
+            ]
+          : [],
+    };
+  }
+
+  async revertApply(applyId: string): Promise<{ applyId: string }> {
+    this.requireVault();
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
+    const refusal = this.revertRefusal();
+    if (refusal) throw refusal;
+    const before = this.worldBeforeApply!;
+    this.busy = { kind: "revert", id: applyId };
+
+    // Only the copies take time, so time here follows their bytes.
+    type Step = ReturnType<FixtureEngine["revertSteps"]>[number];
+    const steps = this.revertSteps(applyId);
     const bytesToCopy = steps.reduce((sum, st) => sum + st.bytes, 0);
     const filesToPutBack = steps.filter((st) => st.action !== "removingLink").length;
     const ticks = REVERT_MS / TICK_MS;
@@ -1445,6 +1491,11 @@ export class FixtureEngine implements Engine {
       step();
     }
     throw new Error(`devFinish: still running after ${limit} steps`);
+  }
+
+  /** The copies an undo makes occupy this much, as sparse files would. */
+  devSetRevertRoom(bytes: number | null): void {
+    this.revertRoomBytes = bytes;
   }
 
   /** The running undo stops on an error, the way the engine reports one. */

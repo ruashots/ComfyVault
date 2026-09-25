@@ -517,6 +517,31 @@ export interface RevertProgress {
   etaMs: number | null;
 }
 
+/** What undoing a run will cost, read before it starts. */
+export interface RevertPreview {
+  applyId: string;
+  /** Put back by a rename. Instant, and they take no room. */
+  filesRenamedBack: number;
+  /** Put back by copying the vault file. These take the time and the room. */
+  filesCopiedBack: number;
+  /** The size of the files the copies write. This sets the time. */
+  bytesToCopy: number;
+  /** Empty when nothing is copied. */
+  drives: RevertDrive[];
+}
+
+/** The room an undo takes on one drive. */
+export interface RevertDrive {
+  volume: string;
+  /**
+   * A prediction. A sparse or compressed file is copied as one, so this can be
+   * far below the size of the files. Show room from this, never from sizes.
+   */
+  predictedRoomBytes: number;
+  /** Read off the drive. Null when it did not answer, which is not zero. */
+  freeBytes: number | null;
+}
+
 export interface ApplyFailure {
   groupId: string;
   absPath: string;
@@ -862,6 +887,8 @@ export interface Engine {
   getInterruptedApplies(): Promise<InterruptedApply[]>;
   resumeApply(applyId: string): Promise<{ applyId: string }>;
   revertApply(applyId: string): Promise<{ applyId: string }>;
+  /** Refuses exactly where `revertApply` would refuse before it starts. */
+  previewRevert(applyId: string): Promise<RevertPreview>;
   onApplyProgress(fn: (p: ApplyProgress) => void): Unsubscribe;
   onApplyDone(fn: (r: ApplyRecord) => void): Unsubscribe;
   onApplyError(fn: (e: VaultError) => void): Unsubscribe;

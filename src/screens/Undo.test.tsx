@@ -1,4 +1,4 @@
-import { screen } from "@solidjs/testing-library";
+import { screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -153,5 +153,69 @@ describe("the plan after an undo, before anything has scanned again", () => {
 
     expect(text()).not.toContain("Your installs changed since the last scan");
     expect(text()).toContain("The plan");
+  });
+});
+
+/** A finished run, with the Undo box opened on it. */
+async function openUndoBox(prepare?: (engine: FixtureEngine) => void): Promise<Harness> {
+  const engine = new FixtureEngine({ manual: true });
+  engine.devSetSymlinksSupported(true);
+  engine.devSetComfyRunning(false);
+  prepare?.(engine);
+  const h = await renderWithApp(() => <App />, { engine });
+  harness = h;
+  await waitFor(() => h.app.plan() !== null);
+  h.app.actions.go("consolidate");
+  await waitFor(() => h.app.gate().can);
+  await userEvent.click(
+    screen.getAllByRole("button").find((b) => /^Apply/.test(b.textContent ?? ""))!,
+  );
+  engine.devFinish();
+  await waitFor(() => h.app.lastApply() !== null && h.app.applyProgress() === null);
+  await userEvent.click(screen.getByRole("button", { name: /Undo this run/ }));
+  await waitFor(() => document.querySelector('[role="dialog"]') !== null);
+  return h;
+}
+
+const dialogText = () =>
+  (document.querySelector('[role="dialog"]')?.textContent ?? "").replace(/\s+/g, " ");
+
+describe("the Undo box", () => {
+  it("states the engine's own cost check, not the run's sizes", async () => {
+    // Sparse models: their copies take a sliver of their size.
+    const room = 196_608;
+    const h = await openUndoBox((e) => e.devSetRevertRoom(room));
+    const preview = await h.engine.previewRevert(h.app.lastApply()!.applyId);
+    expect(preview.filesCopiedBack).toBeGreaterThan(0);
+
+    const text = dialogText();
+    expect(text).toContain(`${preview.filesRenamedBack} files come back at once, by a rename`);
+    expect(text).toContain(`${preview.filesCopiedBack} files have to be copied back out of the vault`);
+    expect(text).toContain(`${fmt(preview.bytesToCopy)} in all`);
+    expect(text).toContain("The copying is what takes the time");
+    expect(text).toContain("Drive C: is expected to need less than 1 MB for the copies");
+    expect(text).toContain(`and has ${fmt(preview.drives[0]!.freeBytes!)} free.`);
+    // The old line: the room the drive "takes back", from nominal size.
+    expect(text).not.toContain("takes back");
+    expect(screen.getByRole("button", { name: /Undo the run/ })).toBeTruthy();
+  });
+
+  it("offers no confirm when a drive is short of room, and says which", async () => {
+    await openUndoBox((e) => e.devSetRevertRoom(10 * 1024 ** 4));
+    const text = dialogText();
+    expect(text).toContain("That is not enough.");
+    expect(text).toContain("There is not enough room to undo this run");
+    expect(text).toContain("Free some space on drive C:");
+    expect(screen.queryByRole("button", { name: /Undo the run/ })).toBeNull();
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+    expect(within(dialog).getByRole("button", { name: /^Close$/ })).toBeTruthy();
+  });
+
+  it("does not claim room it could not read", async () => {
+    await openUndoBox((e) => e.devSetDriveReadable(false));
+    const text = dialogText();
+    expect(text).toContain("It did not answer when asked how much room it has.");
+    expect(text).not.toContain("0 B free");
+    expect(screen.getByRole("button", { name: /Undo the run/ })).toBeTruthy();
   });
 });

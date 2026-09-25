@@ -13,9 +13,12 @@ export function openConfirm(
   app: AppStore,
   options: {
     title: string;
-    cta: string;
+    /** Null when the engine already refused, so there is nothing to confirm. */
+    cta: string | null;
     body: ConfirmLine[];
     action: () => Promise<void> | void;
+    /** Why the action cannot happen, known before the person presses it. */
+    refusal?: { head: string; message: string; detail: readonly string[] };
   },
 ): void {
   app.setModal({
@@ -25,8 +28,9 @@ export function openConfirm(
     body: options.body,
     action: options.action,
     running: false,
-    error: null,
-    errorDetail: [],
+    errorHead: options.refusal?.head ?? "That did not happen",
+    error: options.refusal?.message ?? null,
+    errorDetail: options.refusal?.detail ?? [],
   });
 }
 
@@ -59,6 +63,7 @@ export function ConfirmModalView() {
       app.patchModal((m) => {
         if (m.kind === "confirm") {
           m.running = false;
+          m.errorHead = "That did not happen";
           m.error = messageOf(error);
           m.errorDetail = detailOf(error);
         }
@@ -114,7 +119,7 @@ export function ConfirmModalView() {
                   <div class="verdict no" role="alert">
                     <h4>
                       <Icon name="x" size={12} />
-                      That did not happen
+                      {current().errorHead}
                     </h4>
                     <p>{message()}</p>
                     <Show when={current().errorDetail.length > 0}>
@@ -135,15 +140,19 @@ export function ConfirmModalView() {
                 disabled={current().running}
                 onClick={() => app.setModal(null)}
               >
-                Cancel
+                {current().cta ? "Cancel" : "Close"}
               </button>
-              <button
-                class="btn dng"
-                disabled={current().running}
-                onClick={() => void run()}
-              >
-                {current().running ? "Working…" : current().cta}
-              </button>
+              <Show when={current().cta}>
+                {(cta) => (
+                  <button
+                    class="btn dng"
+                    disabled={current().running}
+                    onClick={() => void run()}
+                  >
+                    {current().running ? "Working…" : cta()}
+                  </button>
+                )}
+              </Show>
             </div>
           </div>
         </div>
