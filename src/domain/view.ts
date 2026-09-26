@@ -130,24 +130,128 @@ export function fileNameOf(relPath: string): string {
   return at < 0 ? relPath : relPath.slice(at + 1);
 }
 
-/** Why the engine chose this copy to become the vault file. */
-export function chosenBecauseText(
-  group: PlanGroup,
-  vaultVolume: string,
-): string {
-  // Nothing is kept: the vault already holds the file, and the engine still
-  // names a source, "onlyCopy" when there is one copy, which read as "kept".
-  if (group.alreadyInVault) {
-    return `the vault already holds this model from an earlier run, so nothing moves in and every copy here becomes a link to it`;
+/** "loras/x.safetensors" -> "loras/" */
+export function folderOf(path: string): string {
+  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return at < 0 ? "" : path.slice(0, at + 1);
+}
+
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six"];
+
+/** 2 -> "two". Past six, the digits read better than the word. */
+export function numberWord(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
+}
+
+/** "3 copies of the same 659 MB file", or "1 copy of a 659 MB file". */
+export function copiesOf(group: PlanGroup, size: string): string {
+  return group.occurrences === 1
+    ? `1 copy of a ${size} file`
+    : `${group.occurrences} copies of the same ${size} file`;
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** The names the installs use for this model, each once, in engine order. */
+export function linkNamesOf(group: PlanGroup): string[] {
+  return [...new Set(group.links.map((l) => l.linkName))];
+}
+
+/**
+ * The name a model is listed under: the vault's name, unless the vault had to
+ * add a code to it, which is not a name the person knows.
+ */
+export function modelTitleOf(group: PlanGroup): string {
+  return group.vaultNameAdjusted && group.links[0]
+    ? group.links[0].linkName
+    : fileNameOf(group.vaultRelPath);
+}
+
+/** One sentence under a model, and whether it is the one to notice. */
+export interface WhyPart {
+  text: string;
+  alt: boolean;
+}
+
+/**
+ * What is worth knowing about one model with more than one copy, one sentence
+ * per condition, in a fixed order. Empty when there is nothing to say.
+ */
+export function duplicateWhy(group: PlanGroup): WhyPart[] {
+  const parts: WhyPart[] = [];
+  const names = linkNamesOf(group);
+  if (names.length > 1) {
+    parts.push({ text: `${capital(numberWord(names.length))} names for one model.`, alt: true });
+    parts.push({
+      text: "Each install keeps the name it uses now, so its workflows still open. After the run, pick one name in Cleanup.",
+      alt: false,
+    });
   }
-  switch (group.source.chosenBecause) {
-    case "sameVolume":
-      return `kept the copy in ${group.source.installLabel}, which is already on drive ${vaultVolume}, so moving it is a rename and takes no time`;
-    case "onlyCopy":
-      return `kept the copy in ${group.source.installLabel}, the only one there is`;
-    case "firstByPath":
-      return `kept the copy in ${group.source.installLabel}, the first by path, because no copy is on drive ${vaultVolume} yet`;
+  if (group.vaultNameAdjusted) {
+    parts.push({
+      text: `Another model already has this name, so the vault file carries the start of this one's fingerprint in its name. The installs keep ${names[0] ?? fileNameOf(group.vaultRelPath)}. See Different files with the same name, below.`,
+      alt: false,
+    });
   }
+  const second = group.occurrences - group.distinctFiles;
+  if (second > 0) {
+    parts.push({
+      text:
+        second === 1
+          ? "One of these copies is a second name for another one above, so it frees no space."
+          : `${second} of these copies are second names for others above, so they free no space.`,
+      alt: false,
+    });
+  }
+  if (
+    !group.alreadyInVault &&
+    (group.source.chosenBecause === "firstByPath" || group.crossVolume)
+  ) {
+    parts.push({
+      text: "No copy is on the vault drive, so one copy will be copied across and checked before anything is deleted.",
+      alt: false,
+    });
+  }
+  return parts;
+}
+
+/** "Both copies will be" or "All 3 copies will be", then where they will point. */
+export function duplicateAfter(group: PlanGroup): string {
+  const to = group.alreadyInVault
+    ? "the file the vault already holds"
+    : "one file in the vault";
+  // A copy that turned up after an earlier run can be the only one.
+  if (group.occurrences === 1) return `The copy will be replaced by a link to ${to}:`;
+  const who =
+    group.occurrences === 2 ? "Both copies will be" : `All ${group.occurrences} copies will be`;
+  return `${who} replaced by links to ${to}:`;
+}
+
+/**
+ * The code the vault added to a name that was taken, found by comparing the
+ * vault's name with the plain one: "model__4898C16F.safetensors" against
+ * "model.safetensors" gives "__4898C16F". Null when nothing was added.
+ */
+export function addedCode(
+  vaultName: string,
+  plainName: string,
+): { before: string; code: string; after: string } | null {
+  const dot = plainName.lastIndexOf(".");
+  const stem = dot > 0 ? plainName.slice(0, dot) : plainName;
+  const ext = dot > 0 ? plainName.slice(dot) : "";
+  if (
+    vaultName === plainName ||
+    !vaultName.startsWith(stem) ||
+    !vaultName.endsWith(ext) ||
+    vaultName.length <= stem.length + ext.length
+  ) {
+    return null;
+  }
+  return {
+    before: stem,
+    code: vaultName.slice(stem.length, vaultName.length - ext.length),
+    after: ext,
+  };
 }
 
 // ── the Library drawer ──────────────────────────────────────────────────────
@@ -273,7 +377,11 @@ export function buildInstallViews(
     // out of included, so the links are the whole list. Counting the source as
     // well would count it twice.
     for (const group of plan.groups) {
-      for (const link of group.links) bump(moving, link.installId, group.sizeBytes);
+      // A second name for one file frees nothing when it goes, so its bytes
+      // do not leave the folder twice.
+      for (const link of group.links) {
+        bump(moving, link.installId, link.sharesBytesWithAnother ? 0 : group.sizeBytes);
+      }
     }
     for (const row of plan.blocked) {
       if (isSkippedByDesign(row.reason)) continue;

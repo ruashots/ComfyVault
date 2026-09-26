@@ -193,6 +193,7 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .secgap{margin-top:22px}
 .note{font-size:10px;line-height:1.5;color:var(--t-dim)}
 .note.up{margin-top:8px}
+.note.lead{margin:-4px 0 8px;max-width:720px}
 
 /* ── stat tiles ───────────────────────────────────────────── */
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
@@ -222,7 +223,7 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .kv{display:flex;align-items:baseline;gap:10px;padding:5px 0;font-size:11px;border-bottom:1px solid var(--div)}
 .kv:last-child{border-bottom:none}
 .kv .k{width:132px;flex:none;font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--t-faint)}
-.kv .v{color:var(--t-body);overflow-wrap:anywhere;flex:1}
+.kv .v{color:var(--t-body);overflow-wrap:anywhere;flex:1;min-width:0}
 .kv .v b{color:var(--t-emph);font-weight:500}
 .kv.st{display:block;padding:6px 0}
 .kv.st .k{width:auto;display:block;margin-bottom:3px}
@@ -230,6 +231,8 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .kv .k.w150{width:150px}
 .kv .k.w210{width:210px}
 .kv .k.w96{width:96px}
+/* an install's name as a key: a name, not a label, so not in capitals */
+.kv .k.install{text-transform:none;letter-spacing:.2px;font-size:10.5px;color:var(--t-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .row{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:var(--r2);font-size:11px}
 .row:nth-child(odd){background:rgba(172,163,138,.022)}
@@ -313,7 +316,7 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .grp-s{font-size:11px;color:var(--t-emph);font-variant-numeric:tabular-nums;flex:none}
 .grp-s em{font-style:normal;color:var(--t-faint);font-size:9.5px;margin-left:4px}
 .grp.off .grp-n,.grp.off .grp-s{color:var(--t-off)}
-.grp.off .cp{opacity:.4}
+.grp.off .grp-b,.grp.off .grp-sub,.grp.off .grp-after,.grp.off .grp-why{opacity:.4}
 .grp.dead .grp-n,.grp.dead .grp-s{color:var(--t-muted)}
 .grp-b{margin:5px 0 0 21px;display:flex;flex-direction:column;gap:2px}
 .grp-b.tight{gap:3px}
@@ -334,6 +337,33 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .grp-why{margin:4px 0 0 21px;font-size:9.5px;color:var(--t-faint)}
 .grp-why.wide{color:var(--t-dim);max-width:640px;line-height:1.5}
 .grp-fix{margin:6px 0 0 21px}
+.more{padding:9px 0 2px;display:flex;gap:10px;align-items:center}
+
+/* the one line that says what the copies have in common */
+.grp-sub{margin:3px 0 0 21px;font-size:9.5px;color:var(--t-faint);display:flex;gap:6px;flex-wrap:wrap}
+.grp-sub .h{color:var(--t-muted);font-variant-numeric:tabular-nums}
+/* a copy's path: the folder shrinks first, the file name holds on longest */
+.cp .pp.split{display:flex}
+.cp .pd{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--t-faint)}
+.cp .pf{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--t-dim)}
+.cp .pf.alt{color:var(--amber-text)}
+/* what every copy of one model will become, said once */
+.grp-after{margin:6px 0 0 21px;display:flex;align-items:baseline;gap:7px;font-size:10px;color:var(--t-body);min-width:0}
+.grp-after svg{color:var(--t-muted);align-self:center;flex:none}
+.grp-after .vp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t-cream)}
+.grp-after .vp .faint{color:var(--t-faint)}
+.grp-after ~ .grp-why{line-height:1.5;max-width:720px}
+.grp-why .alt{color:var(--amber-text)}
+/* different files with one name: a line per model, then its copies */
+.grp-s.clash-n{color:var(--t-dim);font-size:10px}
+.cm{margin-top:7px}
+.cm .grp-b{margin-top:3px}
+.cm .grp-s{color:var(--t-body)}
+.cm-to{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--t-dim)}
+.cm-to .vn{font-size:11px;color:var(--t-cream)}
+.cm-to .vn .tag{color:var(--amber)}
+.cm.off .cm-to,.cm.off .grp-s,.cm.off .cm-to .vn,.cm.off .cm-to .tag{color:var(--t-off)}
+.cm.off .grp-b{opacity:.4}
 .grp-fix.up{margin-top:7px}
 
 /* checkbox */
@@ -353,9 +383,17 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   flex:none;height:46px;display:flex;align-items:center;gap:12px;padding:0 14px;
   border-top:1px solid var(--div2);background:var(--bg-chrome);
 }
-.commit .n{font-size:11px;color:var(--t-body)}
+.commit .n{font-size:11px;color:var(--t-body);flex:none;white-space:nowrap}
+/* the sentence takes the free width, the figure and the button never shrink */
+.commit .n.say{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.commit .btn{flex:none}
 .commit .n b{color:var(--t-emph);font-weight:600}
-.commit .g{font-size:15px;font-weight:600;color:var(--amber);letter-spacing:-.3px}
+.commit .g{font-size:15px;font-weight:600;color:var(--amber);letter-spacing:-.3px;flex:none;white-space:nowrap}
+@media (max-width:999.98px){
+  .commit{height:auto;min-height:46px;padding:7px 14px}
+  .commit .drv{display:none}
+  .commit .n.say{white-space:normal;line-height:1.4}
+}
 .commit .sp{flex:1}
 
 /* ── progress ─────────────────────────────────────────────── */

@@ -8,9 +8,20 @@ import {
   blockedWhy,
   isFixable,
 } from "~/domain/blocked";
-import { fmt, relativeTime } from "~/domain/format";
+import { fmt, joinPath, relativeTime, shortHash } from "~/domain/format";
 import { installName, installNameOf } from "~/domain/installname";
-import { chosenBecauseText, fileNameOf } from "~/domain/view";
+import {
+  addedCode,
+  copiesOf,
+  duplicateAfter,
+  duplicateWhy,
+  fileNameOf,
+  folderOf,
+  linkNamesOf,
+  modelTitleOf,
+  numberWord,
+  type ClashView,
+} from "~/domain/view";
 import { gateBlockers } from "~/domain/selection";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { useApp } from "~/state/store";
@@ -155,14 +166,14 @@ function DryRun() {
     if (crossVolume === 0) {
       const n = app.installs().length;
       const how = n === 1 ? "the install" : n === 2 ? "both installs" : `all ${n} installs`;
-      return `drive ${volume()}, same drive as ${how}`;
+      return `on drive ${volume()}, the same drive as ${how}`;
     }
-    return `drive ${volume()} · ${crossVolume} ${crossVolume === 1 ? "file comes" : "files come"} from another drive`;
+    return `on drive ${volume()}, and ${crossVolume} ${crossVolume === 1 ? "file" : "files"} will be copied across from another drive`;
   });
 
   return (
     <>
-      <Header title="Consolidate" sub="dry run · read it before anything moves">
+      <Header title="Consolidate" sub="A dry run. Nothing moves until you apply it.">
         <button
           class="btn"
           onClick={() => void app.actions.run(() => app.engine.startScan())}
@@ -193,20 +204,23 @@ function DryRun() {
           </Show>
 
           <div class="sec">
-            <span class="t">The plan</span>
-            <span class="n">dry run &middot; nothing has moved</span>
+            <span class="t">What this run will do</span>
+            <span class="n">nothing has moved yet</span>
           </div>
           <div class="kv">
-            <span class="k">Space returned</span>
+            <span class="k w150">Space to be freed</span>
             <span class="v">
               <b>{fmt(totals().bytesFreed)}</b>{" "}
               <span class="dim">
-                once {totals().linksCreated} copies become links
+                once{" "}
+                {totals().linksCreated === 1
+                  ? "1 copy is replaced by a link"
+                  : `${totals().linksCreated} copies are replaced by links`}
               </span>
             </span>
           </div>
           <div class="kv">
-            <span class="k">Vault folder</span>
+            <span class="k w150">Vault folder</span>
             <span class="v">
               {view().plan.vaultRoot} <span class="dim">{vaultNote()}</span>
             </span>
@@ -214,45 +228,78 @@ function DryRun() {
           <For each={app.installViews()}>
             {(install) => (
               <div class="kv">
-                <span class="k" title={install.install.root}>{installName(install.install, app.installs())}</span>
+                <span class="k w150 install" title={install.install.root}>
+                  {installName(install.install, app.installs())}
+                </span>
                 <span class="v">
-                  <b>{install.moving}</b> of {install.files} files become links{" "}
-                  <span class="dim">
-                    &middot; {fmt(install.movingBytes)} leaves the folder
-                  </span>
-                  <Show when={install.stuck > 0}>
-                    <span class="red"> &middot; {install.stuck} stay put</span>
+                  <Show
+                    when={install.moving > 0 || install.stuck > 0}
+                    fallback={
+                      <span class="dim">
+                        no copy in {install.install.root} will be replaced by a link
+                      </span>
+                    }
+                  >
+                    <b>{install.moving}</b>
+                    <Show
+                      when={install.stuck > 0}
+                      fallback={
+                        install.moving === 1
+                          ? " copy will be replaced by a link"
+                          : " copies will be replaced by links"
+                      }
+                    >
+                      {" "}
+                      of {install.files} copies will be replaced by links
+                    </Show>
+                    ,{" "}
+                    <span class="dim">
+                      and {fmt(install.movingBytes)} will leave {install.install.root}
+                    </span>
+                    <Show when={install.stuck > 0}>
+                      <span class="red">, and {install.stuck} will stay where they are</span>
+                    </Show>
                   </Show>
                 </span>
               </div>
             )}
           </For>
           <div class="kv">
-            <span class="k">The vault holds</span>
+            <span class="k w150">The vault will hold</span>
             <span class="v">
               <b>{fmt(totals().bytesMoved)}</b>{" "}
               <span class="dim">
-                &middot; {totals().filesMoved} files, one copy of each
+                in {totals().filesMoved} {totals().filesMoved === 1 ? "file" : "files"}, one
+                copy of each model
               </span>
             </span>
           </div>
           <div class="kv">
-            <span class="k">Stays where it is</span>
+            <span class="k w150">Will not move</span>
             <span class="v">
-              {fmt(totals().blockedBytes)}{" "}
-              <span class="dim">
-                &middot; {totals().blockedRows} files ComfyVault cannot move right
-                now
-              </span>
+              <Show
+                when={totals().blockedRows > 0}
+                fallback={
+                  <>
+                    nothing <span class="dim">ComfyVault can move every file</span>
+                  </>
+                }
+              >
+                {fmt(totals().blockedBytes)}{" "}
+                <span class="dim">
+                  in {totals().blockedRows} {totals().blockedRows === 1 ? "file" : "files"}{" "}
+                  ComfyVault cannot move right now
+                </span>
+              </Show>
             </span>
           </div>
           <Show when={view().countedNeverMoved.length > 0}>
             <div class="kv">
-              <span class="k">Never touched</span>
+              <span class="k w150">Left alone</span>
               <span class="v">
                 {fmt(view().countedNeverMoved.reduce((s, c) => s + c.bytes, 0))}{" "}
                 <span class="dim">
-                  &middot; weights inside custom_nodes and the Hugging Face cache
+                  of weights inside custom_nodes and the Hugging Face cache
                 </span>
               </span>
             </div>
@@ -264,30 +311,33 @@ function DryRun() {
           <ThumbnailNote where="plan" />
 
           <div class="sec secgap">
-            <span class="t">Duplicates: this is your easy win</span>
+            <span class="t">Same file, in more than one place</span>
             <span class="n">
-              {view().duplicates.length} models &middot; {fmt(totals().bytesFreed)}
+              {view().duplicates.length} {view().duplicates.length === 1 ? "model" : "models"},{" "}
+              {fmt(totals().bytesFreed)} to be freed
             </span>
           </div>
           <Show
             when={view().duplicates.length > 0}
             fallback={
               <div class="note">
-                No model is held twice. Every file already exists once, so this run
-                returns nothing to the drive.
+                No model has more than one copy, so this run will free no space.
               </div>
             }
           >
-            <div class="note" style={{ margin: "-4px 0 8px" }}>
-              One copy moves into the vault. Every other copy becomes a link
-              pointing at it. ComfyUI reads a link exactly as it reads the file,
-              from the same path it used before.
+            <div class="note lead">
+              Each model below has copies in more than one folder, and every copy has
+              the same SHA-256 fingerprint, so they are the same file, byte for byte.
+              The vault will get one copy, and{" "}
+              <span class="emph">each copy listed will be replaced by a link to it</span>,
+              with the same name, in the same folder. ComfyUI will load the model as
+              before, and the space of the extra copies will be freed.
             </div>
             <For each={shownDuplicates()}>
               {(group) => <DuplicateGroup group={group} />}
             </For>
             <Show when={view().duplicates.length > 10}>
-              <div style={{ padding: "9px 0 2px" }}>
+              <div class="more">
                 <Show
                   when={app.showAllDuplicates()}
                   fallback={
@@ -295,7 +345,7 @@ function DryRun() {
                       class="btn sm"
                       onClick={() => app.actions.setShowAllDuplicates(true)}
                     >
-                      Show all {view().duplicates.length} groups
+                      Show all {view().duplicates.length} models
                     </button>
                   }
                 >
@@ -311,85 +361,53 @@ function DryRun() {
           </Show>
 
           <div class="sec secgap">
-            <span class="t">Same name, different file</span>
-            <span class="n">{view().clashes.length} names</span>
+            <span class="t">Different files with the same name</span>
+            <span class="n">
+              {view().clashes.length} {view().clashes.length === 1 ? "name" : "names"}
+            </span>
           </div>
           <Show
             when={view().clashes.length > 0}
             fallback={
               <div class="note">
-                No two different files share a filename. Nothing has to be renamed
-                inside the vault.
+                No two different files share a name. Every model will go into the
+                vault under the name it has now.
               </div>
             }
           >
-            <div class="note" style={{ margin: "-4px 0 8px" }}>
-              These files share a filename but hold different bytes. Every one is
-              kept. All but the first get part of their fingerprint added to the
-              name inside the vault, so nothing is lost, and each install keeps the
-              name it already uses.
+            <div class="note lead">
+              Each name below is used by different models: the files have the same
+              name but different content. Every one of them will go into the vault.
+              Two files cannot have the same name in the vault, so the second one will
+              get a short code added to its name there.{" "}
+              <span class="emph">
+                Each file listed will be replaced by a link with its current name
+              </span>
+              , so each ComfyUI install will still load its model under the name it
+              uses now.
             </div>
-            <For each={view().clashes}>
-              {(clash) => (
-                <div class="grp">
-                  <div class="grp-h static">
-                    <span style={{ width: "13px" }} />
-                    <span class="grp-n">{clash.filename}</span>
-                    <span class="grp-s">{clash.groups.length} different files</span>
-                  </div>
-                  <div class="grp-b tight">
-                    <For each={clash.groups}>
-                      {(group) => (
-                        <div class="cp mid">
-                          <Checkbox
-                            on={!app.unticked().has(group.groupId)}
-                            label={`Include ${fileNameOf(group.source.relPath)} from ${installNameOf(group.source.installId, app.installs())}`}
-                            onToggle={() => app.actions.toggleGroup(group.groupId)}
-                          />
-                          <span class="who wide">{installNameOf(group.source.installId, app.installs())}</span>
-                          <span class="pp">{group.source.relPath}</span>
-                          <span class="num" style={{ width: "62px" }}>
-                            {fmt(group.sizeBytes)}
-                          </span>
-                          <span class="to vault">
-                            &rarr; vault\
-                            <span
-                              classList={{
-                                amb: group.vaultNameAdjusted,
-                                faint: !group.vaultNameAdjusted,
-                              }}
-                            >
-                              {group.vaultRelPath}
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              )}
-            </For>
+            <For each={view().clashes}>{(clash) => <ClashBlock clash={clash} />}</For>
           </Show>
 
           <div class="sec secgap">
-            <span class="t">Moves, but frees nothing</span>
+            <span class="t">One copy only, so nothing will be freed yet</span>
             <span class="n">
-              {view().singles.length} files &middot; {fmt(singlesBytes())}
+              {view().singles.length} {view().singles.length === 1 ? "file" : "files"},{" "}
+              {fmt(singlesBytes())}
             </span>
           </div>
           <Show
             when={view().singles.length > 0}
             fallback={
               <div class="note">
-                Every model here exists more than once, so nothing falls into this
-                group.
+                No model has only one copy.
               </div>
             }
           >
-            <div class="note" style={{ margin: "-4px 0 8px" }}>
-              Each of these exists once. It still goes into the vault, so every
-              model lives in one place and each install reads it through a link.
-              The drive gains nothing from these, and nothing is lost either.
+            <div class="note lead">
+              Each of these exists once, so moving it into the vault will free
+              nothing yet. After the run, you can delete the ones you no longer need
+              in <span class="emph">Cleanup</span>.
             </div>
             <Show
               when={app.showSingles()}
@@ -412,11 +430,13 @@ function DryRun() {
                       <button
                         class="grp-h"
                         aria-pressed={on()}
-                        aria-label={`Include ${fileNameOf(group.vaultRelPath)}`}
+                        aria-label={`Include ${modelTitleOf(group)}`}
                         onClick={() => app.actions.toggleGroup(group.groupId)}
                       >
                         <Checkbox on={on()} decorative />
-                        <span class="grp-n">{fileNameOf(group.vaultRelPath)}</span>
+                        <span class="grp-n" title={group.source.absPath}>
+                          {modelTitleOf(group)}
+                        </span>
                         <span
                           class="who wide"
                           style={{ color: "var(--t-muted)", "font-size": "10px" }}
@@ -443,9 +463,12 @@ function DryRun() {
           </Show>
 
           <div class="sec secgap">
-            <span class="t">Cannot move</span>
+            <span class="t">Files that cannot move</span>
             <span class="n">
-              {view().blocked.length} files &middot; {fmt(totals().blockedBytes)}
+              <Show when={view().blocked.length > 0} fallback="none">
+                {view().blocked.length} {view().blocked.length === 1 ? "file" : "files"},{" "}
+                {fmt(totals().blockedBytes)}
+              </Show>
             </span>
           </div>
           <Show
@@ -512,85 +535,147 @@ export function Checkbox(props: {
 function DuplicateGroup(props: { group: PlanGroup }) {
   const app = useApp();
   const on = () => !app.unticked().has(props.group.groupId);
-  const name = () => fileNameOf(props.group.vaultRelPath);
-  const volume = () => app.vaultVolume();
+  const title = () => modelTitleOf(props.group);
+  const vaultName = () => fileNameOf(props.group.vaultRelPath);
+  const manyNames = () => linkNamesOf(props.group).length > 1;
+  const why = () => duplicateWhy(props.group);
 
   return (
     <div class="grp" classList={{ off: !on() }}>
       <button
         class="grp-h"
         aria-pressed={on()}
-        aria-label={`Include ${name()}`}
+        aria-label={`Include ${title()}`}
         onClick={() => app.actions.toggleGroup(props.group.groupId)}
       >
         <Checkbox on={on()} decorative />
-        <span class="grp-n" title={name()}>
-          {name()}
+        <span class="grp-n" title={title()}>
+          {title()}
         </span>
         <span class="grp-s">
           {fmt(props.group.bytesFreed)}
-          <em>back</em>
+          <em>to be freed</em>
         </span>
       </button>
+      <div class="grp-sub">
+        {copiesOf(props.group, fmt(props.group.sizeBytes))}, SHA-256{" "}
+        <span class="h">{shortHash(props.group.sha256)}</span>
+      </div>
       <div class="grp-b">
         <For each={props.group.links}>
-          {(link) => {
-            const isSource = () =>
-              !props.group.alreadyInVault && link.absPath === props.group.source.absPath;
-            return (
-              <div class="cp">
-                <span class="role" classList={{ keep: isSource(), link: !isSource() }}>
-                  {isSource() ? "keep" : "link"}
-                </span>
-                <span class="who">{installNameOf(link.installId, app.installs())}</span>
-                <span class="pp">
-                  {link.relPath}
-                  <Show when={link.nameDiffersFromVault}>
-                    {" "}
-                    <span class="amb">{link.linkName}</span>
-                  </Show>
-                </span>
-                <span class="to" classList={{ none: link.sharesBytesWithAnother }}>
-                  {isSource()
-                    ? props.group.vaultNameAdjusted
-                      ? `→ vault\\${props.group.vaultRelPath}`
-                      : `→ vault\\${props.group.category}\\`
-                    : link.sharesBytesWithAnother
-                      ? "frees nothing"
-                      : `${fmt(props.group.sizeBytes)} back`}
-                </span>
-              </div>
-            );
-          }}
+          {(link) => (
+            <div class="cp">
+              <CopyPath path={link.absPath} alt={manyNames() && link.nameDiffersFromVault} />
+              <Show when={link.sharesBytesWithAnother}>
+                <span class="to">frees nothing</span>
+              </Show>
+            </div>
+          )}
         </For>
       </div>
-      <div class="grp-why">
-        {chosenBecauseText(props.group, volume())}
-        <Show when={props.group.occurrences > props.group.distinctFiles}>
-          {" "}
-          &middot; {sharedNames(props.group)}
-        </Show>
-        <Show when={props.group.crossVolume}>
-          {" "}
-          &middot; one copy is on another drive, so it is copied across and checked
-          before the original goes
-        </Show>
+      <div class="grp-after">
+        <Icon name="link" size={11} />
+        <span class="vp" title={joinPath(app.plan()?.vaultRoot ?? "", props.group.vaultRelPath)}>
+          {duplicateAfter(props.group)}{" "}
+          <span class="faint">{"vault\\"}{folderOf(props.group.vaultRelPath)}</span>
+          {vaultName()}
+        </span>
       </div>
+      <Show when={why().length > 0}>
+        <div class="grp-why">
+          <For each={why()}>
+            {(part, i) => (
+              <>
+                {i() > 0 ? " " : ""}
+                <Show when={part.alt} fallback={part.text}>
+                  <span class="alt">{part.text}</span>
+                </Show>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 }
 
 /**
- * Why the figure counts fewer files than there are paths. Windows lets two
- * names point at one set of bytes, and removing one of them returns nothing
- * while the other name remains. Without this the total quietly disagrees with
- * the paths listed right above it.
+ * A copy's full path. The folder gives way first, so the file name, which is
+ * what tells two copies apart, stays readable longest.
  */
-function sharedNames(group: PlanGroup): string {
-  const extra = group.occurrences - group.distinctFiles;
-  return extra === 1
-    ? "one of these paths is a second name for a file already listed, so removing it returns no space"
-    : `${extra} of these paths are extra names for files already listed, so removing them returns no space`;
+function CopyPath(props: { path: string; alt?: boolean }) {
+  return (
+    <span class="pp split" title={props.path}>
+      <span class="pd">{folderOf(props.path)}</span>
+      <span class="pf" classList={{ alt: props.alt }}>
+        {fileNameOf(props.path)}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * One name that different models want. Each model says the name it gets in
+ * the vault, then lists the copies that will link to it.
+ */
+function ClashBlock(props: { clash: ClashView }) {
+  const app = useApp();
+  return (
+    <div class="grp cgrp">
+      <div class="grp-h static">
+        <span class="grp-n">{props.clash.filename}</span>
+        <span class="grp-s clash-n">
+          {numberWord(props.clash.groups.length)} different models
+        </span>
+      </div>
+      <For each={props.clash.groups}>
+        {(group) => {
+          const on = () => !app.unticked().has(group.groupId);
+          const vaultName = () => fileNameOf(group.vaultRelPath);
+          const code = () => addedCode(vaultName(), props.clash.filename);
+          return (
+            <div class="cm" classList={{ off: !on() }}>
+              <button
+                class="grp-h"
+                aria-pressed={on()}
+                aria-label={`Include the ${fmt(group.sizeBytes)} ${props.clash.filename}`}
+                onClick={() => app.actions.toggleGroup(group.groupId)}
+              >
+                <Checkbox on={on()} decorative />
+                <span
+                  class="cm-to"
+                  title={joinPath(app.plan()?.vaultRoot ?? "", group.vaultRelPath)}
+                >
+                  into the vault as{" "}
+                  <span class="vn">
+                    <Show when={code()} fallback={vaultName()}>
+                      {(c) => (
+                        <>
+                          {c().before}
+                          <span class="tag">{c().code}</span>
+                          {c().after}
+                        </>
+                      )}
+                    </Show>
+                  </span>
+                </span>
+                <span class="grp-s">{fmt(group.sizeBytes)}</span>
+              </button>
+              <div class="grp-b">
+                <For each={group.links}>
+                  {(link) => (
+                    <div class="cp">
+                      <CopyPath path={link.absPath} />
+                    </div>
+                  )}
+                </For>
+              </div>
+            </div>
+          );
+        }}
+      </For>
+    </div>
+  );
 }
 
 function BlockedRowView(props: { row: BlockedRow }) {
@@ -647,7 +732,7 @@ function BlockerPanel() {
     const left = gateBlockers(app.gate());
     app.actions.showToast(
       left.length === 0
-        ? `Checked · nothing is in the way, ${fmt(app.plan()?.totals.bytesFreed ?? 0)} can come back`
+        ? `Checked · nothing is in the way, ${fmt(app.plan()?.totals.bytesFreed ?? 0)} can be freed`
         : `Checked · ${left.length} ${left.length === 1 ? "thing is" : "things are"} still in the way`,
       left.length === 0 ? "ok" : "bad",
     );
@@ -741,7 +826,7 @@ function RunningRow(props: { process: RunningComfy }) {
     const left = gateBlockers(app.gate());
     app.actions.showToast(
       left.length === 0
-        ? `Checked · nothing is in the way, ${fmt(app.plan()?.totals.bytesFreed ?? 0)} can come back`
+        ? `Checked · nothing is in the way, ${fmt(app.plan()?.totals.bytesFreed ?? 0)} can be freed`
         : `Checked · ${left.length} ${left.length === 1 ? "thing is" : "things are"} still in the way`,
       left.length === 0 ? "ok" : "bad",
     );
@@ -882,16 +967,15 @@ function CommitBar() {
 
   return (
     <div class="commit">
-      <span class="n">
-        <b>{selection().moves}</b> files move
+      <span class="n say">
+        <b>{selection().links}</b> {selection().links === 1 ? "copy" : "copies"} will be
+        replaced by {selection().links === 1 ? "a link" : "links"} to{" "}
+        <b>{selection().moves}</b> vault {selection().moves === 1 ? "file" : "files"}
       </span>
-      <span class="n dim">&middot;</span>
-      <span class="n">
-        <b>{selection().links}</b> links go back where they were
-      </span>
-      <span class="sp" />
       <span class="g">{fmt(selection().bytes)}</span>
-      <span class="n dim">back on drive {volume()}</span>
+      <span class="n dim">
+        to be freed<span class="drv"> on drive {volume()}</span>
+      </span>
       <Show
         when={gate().can}
         fallback={

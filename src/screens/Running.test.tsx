@@ -208,7 +208,7 @@ describe("the Apply blocker for a running ComfyUI", () => {
     (h.engine as FixtureEngine).devSetComfyRunning(false);
     await userEvent.click(button("Check again"));
     await waitFor(() => toast() !== "");
-    expect(toast()).toMatch(/^Checked · nothing is in the way, .+ can come back$/);
+    expect(toast()).toMatch(/^Checked · nothing is in the way, .+ can be freed$/);
   });
 });
 

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
+import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
 
@@ -44,7 +45,7 @@ describe("a second run after a finished one", () => {
 
     // The new scan's plan replaces the finished screen.
     await waitFor(() => h.app.runOnScreen() === null);
-    await waitFor(() => text().includes("The plan"));
+    await waitFor(() => text().includes("What this run will do"));
     const planned = h.app.plan()!.groups.map((g) => g.groupId);
     for (const id of later) expect(planned).toContain(id);
     expect(text()).toContain("Undo the last run");
@@ -80,17 +81,23 @@ describe("a second run after a finished one", () => {
     await engine.startScan();
     engine.devFinish();
     await h.app.actions.refresh();
-    await waitFor(() => text().includes("The plan"));
+    await waitFor(() => text().includes("What this run will do"));
 
     const group = h.app.plan()!.groups.find((g) => g.sha256 === held.sha256)!;
     expect(group.alreadyInVault).toBe(true);
     expect(group.links.map((l) => l.absPath)).toContain(again);
     // The engine still names a source ("onlyCopy"), which read as "kept".
-    expect(text()).toContain("the vault already holds this model from an earlier run");
+    expect(text()).toContain("replaced by a link to the file the vault already holds");
     expect(text()).not.toContain(`kept the copy in ${group.source.installLabel}, the only one there is`);
     const row = [...document.querySelectorAll(".cp")].find((el) =>
       (el.textContent ?? "").includes("downloads"),
     )!;
-    expect(row.querySelector(".role")!.textContent).toBe("link");
+    expect(row.querySelector(".pp")!.getAttribute("title")).toBe(again);
+    expect(row.closest(".grp")!.querySelector(".grp-after")!.textContent).toContain(
+      "The copy will be replaced by a link to the file the vault already holds:",
+    );
+    expect(row.closest(".grp")!.querySelector(".grp-sub")!.textContent).toContain(
+      `1 copy of a ${fmt(group.sizeBytes)} file`,
+    );
   });
 });

@@ -125,8 +125,8 @@ describe("the plan after an undo, before anything has scanned again", () => {
     // Measured against the real engine: an undo does not scan.
     expect(h.app.scan()!.scanId).toBe(scanned.scanId);
     expect(text()).toContain("Your installs changed since the last scan");
-    expect(text()).not.toContain("The plan");
-    expect(text()).not.toContain("copies become links");
+    expect(text()).not.toContain("What this run will do");
+    expect(text()).not.toContain("copies are replaced by links");
     expect(screen.getByRole("button", { name: /Scan now/ })).toBeTruthy();
 
     // Nothing is built from that scan, so no screen can print it: not the
@@ -154,7 +154,7 @@ describe("the plan after an undo, before anything has scanned again", () => {
     await waitFor(() => !h.app.scanPredatesUndo());
 
     expect(text()).not.toContain("Your installs changed since the last scan");
-    expect(text()).toContain("The plan");
+    expect(text()).toContain("What this run will do");
   });
 });
 
@@ -342,7 +342,7 @@ describe("the figures after an undo that stopped part way", () => {
 
     // The scan after the run brings its plan up, and the run is undone from
     // there.
-    await waitFor(() => text().includes("The plan"));
+    await waitFor(() => text().includes("What this run will do"));
     await userEvent.click(screen.getByRole("button", { name: /Undo the last run/ }));
     await userEvent.click(screen.getByRole("button", { name: /Undo the run/ }));
     await waitFor(() => document.querySelector('[role="dialog"]') === null);

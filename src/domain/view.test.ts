@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addedCode,
   buildInstallViews,
   buildNameGroupView,
   buildPlanView,
-  chosenBecauseText,
+  duplicateAfter,
+  duplicateWhy,
   fileNameOf,
   isAtLeast,
+  modelTitleOf,
   placesOf,
   thumbnailStateOf,
 } from "~/domain/view";
@@ -16,6 +19,7 @@ import type {
   Install,
   NameGroup,
   PlanGroup,
+  PlanLink,
   ScanTotals,
 } from "~/ipc/contract";
 
@@ -221,26 +225,138 @@ function group(over: Partial<PlanGroup> = {}): PlanGroup {
   };
 }
 
-describe("why the engine kept that copy", () => {
-  it("says so in words, never in the engine's own token", () => {
-    const sameVolume = chosenBecauseText(group(), "C:");
-    expect(sameVolume).toContain("Studio");
-    expect(sameVolume).toContain("drive C:");
-    expect(sameVolume).not.toContain("sameVolume");
+function link(name: string, over: Partial<PlanLink> = {}): PlanLink {
+  return {
+    installId: "a",
+    installLabel: "Studio",
+    absPath: `C:\\a\\models\\loras\\${name}`,
+    relPath: `loras\\${name}`,
+    linkName: name,
+    nameDiffersFromVault: name !== "x.safetensors",
+    isSource: false,
+    sharesBytesWithAnother: false,
+    sizeBytes: 100,
+    mtimeNanos: "1757491200000000000",
+    ...over,
+  };
+}
 
-    const only = chosenBecauseText(
-      group({ source: { ...group().source, chosenBecause: "onlyCopy" } }),
-      "C:",
-    );
-    expect(only).toContain("the only one there is");
-    expect(only).not.toContain("onlyCopy");
+function pair(over: Partial<PlanGroup> = {}): PlanGroup {
+  return group({
+    links: [link("x.safetensors", { isSource: true }), link("x.safetensors")],
+    occurrences: 2,
+    distinctFiles: 2,
+    bytesFreed: 100,
+    singleCopy: false,
+    ...over,
+  });
+}
 
-    const byPath = chosenBecauseText(
-      group({ source: { ...group().source, chosenBecause: "firstByPath" } }),
-      "C:",
+describe("what the plan says under a model with more than one copy", () => {
+  const text = (g: PlanGroup) => duplicateWhy(g).map((p) => p.text).join(" ");
+
+  it("says nothing when the copies share a name on the vault's drive", () => {
+    expect(duplicateWhy(pair())).toEqual([]);
+  });
+
+  it("names how many names one model has, and marks that sentence", () => {
+    const g = pair({
+      links: [
+        link("x.safetensors", { isSource: true }),
+        link("y.safetensors"),
+        link("z.safetensors"),
+      ],
+      occurrences: 3,
+      distinctFiles: 3,
+    });
+    const parts = duplicateWhy(g);
+    expect(parts[0]).toEqual({ text: "Three names for one model.", alt: true });
+    expect(text(g)).toContain(
+      "Each install keeps the name it uses now, so its workflows still open. After the run, pick one name in Cleanup.",
     );
-    expect(byPath).toContain("first by path");
-    expect(byPath).not.toContain("firstByPath");
+  });
+
+  it("says the vault name carries a code, and which name the installs keep", () => {
+    const g = pair({
+      vaultNameAdjusted: true,
+      vaultRelPath: "loras\\x__AAAAAAAA.safetensors",
+    });
+    expect(text(g)).toContain("The installs keep x.safetensors.");
+    expect(text(g)).toContain("See Different files with the same name, below.");
+  });
+
+  it("counts second names for one file, in the singular and the plural", () => {
+    expect(text(pair({ occurrences: 3, distinctFiles: 2 }))).toBe(
+      "One of these copies is a second name for another one above, so it frees no space.",
+    );
+    expect(text(pair({ occurrences: 4, distinctFiles: 2 }))).toBe(
+      "2 of these copies are second names for others above, so they free no space.",
+    );
+  });
+
+  it("says a copy crosses drives only when no copy is on the vault drive", () => {
+    const across =
+      "No copy is on the vault drive, so one copy will be copied across and checked before anything is deleted.";
+    const byPath = pair({ source: { ...pair().source, chosenBecause: "firstByPath" } });
+    expect(text(byPath)).toBe(across);
+    expect(text(pair({ crossVolume: true }))).toBe(across);
+    expect(text(pair({ crossVolume: true, alreadyInVault: true }))).toBe("");
+    // Never the engine's own word.
+    expect(text(byPath)).not.toContain("firstByPath");
+  });
+});
+
+describe("the line that says where the copies will point", () => {
+  it("says both for two copies and all for more", () => {
+    expect(duplicateAfter(pair())).toBe(
+      "Both copies will be replaced by links to one file in the vault:",
+    );
+    expect(duplicateAfter(pair({ occurrences: 3 }))).toBe(
+      "All 3 copies will be replaced by links to one file in the vault:",
+    );
+  });
+
+  it("speaks of one copy when a later download is the only one", () => {
+    expect(duplicateAfter(pair({ occurrences: 1, alreadyInVault: true }))).toBe(
+      "The copy will be replaced by a link to the file the vault already holds:",
+    );
+  });
+
+  it("points at the file the vault already holds after an earlier run", () => {
+    expect(duplicateAfter(pair({ alreadyInVault: true }))).toBe(
+      "Both copies will be replaced by links to the file the vault already holds:",
+    );
+  });
+});
+
+describe("the name a model is listed under", () => {
+  it("is the vault's name, or the installs' name when the vault added a code", () => {
+    expect(modelTitleOf(pair())).toBe("x.safetensors");
+    expect(
+      modelTitleOf(
+        pair({ vaultNameAdjusted: true, vaultRelPath: "loras\\x__AAAAAAAA.safetensors" }),
+      ),
+    ).toBe("x.safetensors");
+  });
+});
+
+describe("the code the vault adds to a name that was taken", () => {
+  it("is found between the plain name and its extension", () => {
+    expect(addedCode("model__4898C16F.safetensors", "model.safetensors")).toEqual({
+      before: "model",
+      code: "__4898C16F",
+      after: ".safetensors",
+    });
+    expect(addedCode("noext__4898C16F", "noext")).toEqual({
+      before: "noext",
+      code: "__4898C16F",
+      after: "",
+    });
+  });
+
+  it("is nothing when the name was not changed", () => {
+    expect(addedCode("model.safetensors", "model.safetensors")).toBeNull();
+    expect(addedCode("other.safetensors", "model.safetensors")).toBeNull();
   });
 });
 
@@ -318,6 +434,21 @@ describe("what each install gives up", () => {
     for (const view of views) {
       expect(view.moving, view.install.label).toBeLessThanOrEqual(view.files);
     }
+  });
+
+  it("counts the bytes of a second name for one file once", async () => {
+    const { engine, plan } = await readyPlan();
+    expect(
+      plan.groups.some((g) => g.links.some((l) => l.sharesBytesWithAnother)),
+      "the fixture must hold this case",
+    ).toBe(true);
+    const installs = await engine.listInstalls();
+    const views = buildInstallViews(installs, plan, new Set());
+    const leaving = views.reduce((s, v) => s + v.movingBytes, 0);
+    // Removing a second name frees nothing, so nothing more leaves the folder.
+    expect(leaving).toBe(
+      plan.groups.reduce((s, g) => s + g.sizeBytes * g.distinctFiles, 0),
+    );
   });
 
   it("marks a running install as running", async () => {
