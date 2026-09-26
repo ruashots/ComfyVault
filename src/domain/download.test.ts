@@ -12,8 +12,7 @@ import {
   rowView,
   speedOf,
 } from "~/domain/download";
-import type { Install } from "~/ipc/contract";
-import type { Download } from "~/ipc/draft";
+import type { Download, Install } from "~/ipc/contract";
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -50,7 +49,6 @@ const record = (over: Partial<Download> = {}): Download => ({
   state: "running",
   category: "diffusion_models",
   vaultRelPath: "diffusion_models\\flux1-dev-fp8.safetensors",
-  sha256: null,
   installIds: ["a", "c"],
   linkedInstallIds: [],
   notLinked: [],
@@ -103,7 +101,7 @@ describe("what a row of the Downloads list says", () => {
     expect(say(record({ state: "stopped" }))).toBe(
       "Stopped at 6.2 GB of 16 GB. The part already downloaded is kept, so it can continue from there.",
     );
-    const dropped = record({ state: "failed", error: { kind: "connection", message: "The connection dropped.", serviceMessage: null } });
+    const dropped = record({ state: "failed", error: { kind: "connection", message: "The connection dropped.", serviceMessage: null, detail: null } });
     expect(say(dropped)).toBe(
       "The connection to Hugging Face dropped at 6.2 GB of 16 GB. The part already downloaded is kept.",
     );
@@ -125,6 +123,7 @@ describe("what a row of the Downloads list says", () => {
         kind: "refused",
         message: "The site refused the download.",
         serviceMessage: "Access to model x is restricted.",
+        detail: null,
       },
     });
     expect(say(r)).toBe(
@@ -135,7 +134,7 @@ describe("what a row of the Downloads list says", () => {
   it("says the vault drive filled up, and what to do", () => {
     const r = record({
       state: "failed",
-      error: { kind: "noSpace", message: "The vault drive is full.", serviceMessage: null },
+      error: { kind: "noSpace", message: "The vault drive is full.", serviceMessage: null, detail: null },
     });
     expect(say(r)).toBe(
       "Drive C: ran out of space at 6.2 GB of 16 GB. The part already downloaded is kept. Free some space, then continue.",
@@ -145,8 +144,14 @@ describe("what a row of the Downloads list says", () => {
   it("says any other stop in the engine's own sentence", () => {
     const disk = record({
       state: "failed",
-      error: { kind: "disk", message: "Windows could not write the part file.", serviceMessage: null },
+      error: {
+        kind: "disk",
+        message: "Windows could not write the part file. The part already downloaded is kept.",
+        serviceMessage: null,
+        detail: "os error 112",
+      },
     });
+    // The engine's sentence is whole: nothing is added to it, and no detail.
     expect(say(disk)).toBe(
       "Windows could not write the part file. The part already downloaded is kept.",
     );
@@ -156,6 +161,7 @@ describe("what a row of the Downloads list says", () => {
         kind: "changedOnSite",
         message: "The file on Hugging Face changed since this download started.",
         serviceMessage: null,
+        detail: null,
       },
     });
     expect(say(changed)).toBe("The file on Hugging Face changed since this download started.");

@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createResource, createSignal } from "solid-js
 import { openConfirm } from "~/modals/confirm";
 import { isVaultError } from "~/ipc/contract";
 import { messageOf, useApp } from "~/state/store";
-import type { TokenService, TokenStatus } from "~/ipc/draft";
+import type { TokenService, TokenStatus } from "~/ipc/contract";
 
 const SERVICES: readonly { service: TokenService; name: string; placeholder: string; where: string }[] = [
   {

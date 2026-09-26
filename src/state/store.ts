@@ -34,8 +34,6 @@ import {
 import { volumeLabel } from "~/domain/drives";
 import { runLookups } from "~/domain/lookup";
 import { createDownloadState, type DownloadState } from "~/state/download";
-import type { Download } from "~/ipc/draft";
-import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
   ApplyRecord,
@@ -43,6 +41,7 @@ import type {
   ConsolidationPlan,
   ContentRow,
   DirectoryEntry,
+  Download,
   DriveInfo,
   Engine,
   Install,
@@ -59,6 +58,7 @@ import type {
   VaultHealth,
   VaultInfo,
 } from "~/ipc/contract";
+import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 
 export type Screen =
   | "home"

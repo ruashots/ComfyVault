@@ -14,11 +14,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { AddressReading, Download, TokenStatus } from "~/ipc/draft";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-
 import type {
+  AddressReading,
   ApplyProgress,
   ApplyRecord,
   AppState,
@@ -26,6 +23,7 @@ import type {
   ContentPage,
   Deleted,
   DirectoryListing,
+  Download,
   DriveInfo,
   Engine,
   Install,
@@ -45,6 +43,7 @@ import type {
   ScanProgress,
   ScanRecord,
   Settings,
+  TokenStatus,
   Unsubscribe,
   UsageResult,
   VaultError,
@@ -53,6 +52,9 @@ import type {
   VaultHealth,
   VaultInfo,
 } from "~/ipc/contract";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+
 
 function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, { args });

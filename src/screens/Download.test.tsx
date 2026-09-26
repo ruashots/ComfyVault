@@ -422,7 +422,7 @@ describe("the list of downloads", () => {
     );
     expect(document.querySelector(".sec .n")!.textContent).toBe("all finished");
     await userEvent.click(button("Show it in Library"));
-    expect(app.screen()).toBe("library");
+    await waitFor(() => app.screen() === "library");
     expect(app.lib.selected).toBe("879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD");
   });
 

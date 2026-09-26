@@ -10,7 +10,6 @@
 import { fileNameOf } from "~/domain/view";
 import { leafOf } from "~/domain/format";
 import { DownloadDesk } from "~/ipc/fixture/downloads";
-import type { Download, TokenService } from "~/ipc/draft";
 import type {
   ApplyProgress,
   ApplyRecord,
@@ -18,7 +17,9 @@ import type {
   ConsolidationPlan,
   ContentFilter,
   ContentPage,
+  Deleted,
   DirectoryListing,
+  Download,
   DriveInfo,
   Engine,
   ExtraPath,
@@ -41,9 +42,9 @@ import type {
   ScanProgress,
   ScanRecord,
   Settings,
+  TokenService,
   Unsubscribe,
   UsageResult,
-  Deleted,
   VaultError,
   VaultFile,
   VaultFilePage,
@@ -1905,8 +1906,8 @@ export class FixtureEngine implements Engine {
 
   // ── downloads ─────────────────────────────────────────────────────────────
 
+  // The token commands answer before a vault is open.
   setToken(service: TokenService, token: string) {
-    this.requireVault();
     return this.downloads.setToken(service, token);
   }
   getTokenStatus(service: TokenService) {

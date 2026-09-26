@@ -11,6 +11,7 @@ import {
   linkHint,
   listCount,
   listOrder,
+  refusedHead,
   rowView,
   type RowAction,
 } from "~/domain/download";
@@ -19,7 +20,7 @@ import { installName } from "~/domain/installname";
 import { fileNameOf, folderOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
 import { messageOf, useApp } from "~/state/store";
-import type { AddressPlan, AddressRefusal, Download, DownloadHost } from "~/ipc/draft";
+import type { AddressPlan, AddressRefusal, Download, DownloadHost } from "~/ipc/contract";
 
 export function DownloadScreen() {
   const app = useApp();
@@ -194,12 +195,12 @@ function PlanCard() {
         {(r) => (
           <div class="card plan-card">
             <div class="card-h">
-              <span class="nm" title={r().title ?? card.address}>
-                {r().title ?? card.address}
+              <span class="nm" title={refusedHead(r(), card.address).title}>
+                {refusedHead(r(), card.address).title}
               </span>
               <Show when={r().host}>{(host) => <span class="src">from {hostName(host())}</span>}</Show>
             </div>
-            <Show when={r().subtitle}>
+            <Show when={refusedHead(r(), card.address).subtitle}>
               {(sub) => (
                 <div class="card-sub" title={sub()}>
                   {sub()}
@@ -801,6 +802,21 @@ function DownloadRow(props: { record: Download }) {
   const r = () => props.record;
   const view = createMemo(() => rowView(r(), app.installs(), app.vaultVolume()));
 
+  /** The model is found in the vault by where it went. */
+  const showInLibrary = async () => {
+    const where = r().vaultRelPath.toLowerCase();
+    const find = () => app.vaultFiles().find((f) => f.vaultRelPath.toLowerCase() === where);
+    // The list of vault files may not have caught up with a download that just ended.
+    if (!find()) await app.actions.refresh();
+    const file = find();
+    app.setLib(
+      file
+        ? { selected: file.sha256, drawerOpen: true, query: "", category: "all", unusedOnly: false }
+        : { selected: null, drawerOpen: false, query: r().fileName, category: "all", unusedOnly: false },
+    );
+    app.actions.go("library");
+  };
+
   const act = (action: RowAction) => {
     const id = r().downloadId;
     const take = (call: () => Promise<Download>) =>
@@ -833,13 +849,8 @@ function DownloadRow(props: { record: Download }) {
             app.dl.forget(id);
           },
         });
-      case "library": {
-        const sha = r().sha256;
-        if (!sha) return;
-        app.setLib({ selected: sha, drawerOpen: true, query: "", category: "all", unusedOnly: false });
-        app.actions.go("library");
-        return;
-      }
+      case "library":
+        return void showInLibrary();
     }
   };
 

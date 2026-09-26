@@ -13,8 +13,7 @@
 
 import { fmt, timeLeft } from "~/domain/format";
 import { installNameOf } from "~/domain/installname";
-import type { Install } from "~/ipc/contract";
-import type { AddressPlan, Download } from "~/ipc/draft";
+import type { AddressPlan, AddressRefusal, Download, Install } from "~/ipc/contract";
 
 export type Host = Download["host"];
 
@@ -31,6 +30,29 @@ export function hostOf(address: string): Host | null {
   if (/^(https?:\/\/)?([a-z0-9-]+\.)*huggingface\.co(\/|$)/.test(text)) return "huggingface";
   if (/^(https?:\/\/)?([a-z0-9-]+\.)*civitai\.com(\/|$)/.test(text)) return "civitai";
   return null;
+}
+
+/**
+ * The head of a refused card. A refusal names no model, so a Hugging Face one
+ * is named by the file in its address and its repository, and a Civitai one
+ * by its address.
+ */
+export function refusedHead(
+  refusal: AddressRefusal,
+  address: string,
+): { title: string; subtitle: string | null } {
+  if (refusal.page) {
+    const path = address.trim().split(/[?#]/)[0]!;
+    const last = path.split("/").filter(Boolean).pop() ?? path;
+    let title = last;
+    try {
+      title = decodeURIComponent(last);
+    } catch {
+      // A broken escape is shown as written.
+    }
+    return { title, subtitle: `${refusal.page.owner}/${refusal.page.repo}` };
+  }
+  return { title: address.trim(), subtitle: null };
 }
 
 /** "ComfyUI-Easy-Install and ComfyUI-Flux", by the name each install is shown under. */
@@ -162,12 +184,9 @@ export function rowView(
           actions,
         };
       }
-      // Anything else is said in the engine's own sentence.
+      // Anything else is said in the engine's own sentence, as it is.
       return {
-        parts: [
-          { text: error.message, tone: "bad" },
-          { text: error.kind === "changedOnSite" ? "" : kept },
-        ],
+        parts: [{ text: error.message, tone: "bad" }],
         bar: grey,
         actions,
       };

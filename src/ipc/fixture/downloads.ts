@@ -7,17 +7,19 @@
  * screens read the same numbers the person would see.
  */
 
-import type { Install, LinkRecord, VaultError } from "~/ipc/contract";
 import type {
   AddressPlan,
   AddressReading,
   AddressRefusal,
+  Download,
   DownloadHost,
   HfPage,
-  Download,
+  Install,
+  LinkRecord,
   TokenService,
   TokenStatus,
-} from "~/ipc/draft";
+  VaultError,
+} from "~/ipc/contract";
 import type { Content, World } from "~/ipc/fixture/world";
 
 const GB = 1024 ** 3;
@@ -299,12 +301,10 @@ const CIVITAI_BAD_TOKEN = "Invalid API key";
 function refuse(
   kind: AddressRefusal["kind"],
   host: DownloadHost | null,
-  title: string | null,
-  subtitle: string | null,
   serviceMessage: string | null,
   page: HfPage | null = null,
 ): AddressRefusal {
-  return { kind, host, title, subtitle, serviceMessage, page };
+  return { kind, host, serviceMessage, page };
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {
@@ -321,6 +321,8 @@ interface Token {
 }
 
 interface Job extends Download {
+  /** The file's SHA-256 once known. The record does not carry it. */
+  hash: string | null;
   /** What the transfer reads again on a continue. Not part of the record. */
   address: string;
   versionId: number | null;
@@ -411,9 +413,9 @@ export class DownloadDesk {
     if (this.readDelayMs > 0) await new Promise((r) => setTimeout(r, this.readDelayMs));
     const refused = (refusal: AddressRefusal): AddressReading => ({ plan: null, refusal });
     const parsed = parseAddress(args.address);
-    if (parsed === "bad") return refused(refuse("badAddress", null, null, null, null));
+    if (parsed === "bad") return refused(refuse("badAddress", null, null));
     if (parsed === "hfRepoNotFile") {
-      return refused(refuse("hfRepoNotFile", "huggingface", null, null, null));
+      return refused(refuse("hfRepoNotFile", "huggingface", null));
     }
 
     if (parsed.host === "huggingface") {
@@ -427,7 +429,7 @@ export class DownloadDesk {
           f.path === parsed.path,
       );
       const hf = (kind: AddressRefusal["kind"], words: string) =>
-        refused(refuse(kind, "huggingface", name, subtitle, words, page));
+        refused(refuse(kind, "huggingface", words, page));
       if (!found) return hf("notFound", "Entry not found");
       const token = this.tokens.huggingface;
       if (found.gated) {
@@ -468,20 +470,19 @@ export class DownloadDesk {
         (parsed.modelId === null && m.versions.some((v) => v.id === parsed.versionId)),
     );
     if (!model) {
-      return refused(refuse("notFound", "civitai", null, args.address.trim(), "Model not found", null));
+      return refused(refuse("notFound", "civitai", "Model not found"));
     }
     const versionId = args.versionId ?? parsed.versionId ?? model.versions[0]!.id;
     const version = model.versions.find((v) => v.id === versionId) ?? model.versions[0]!;
     const file = version.files.find((f) => f.id === args.fileId) ?? version.files[0]!;
     if (model.needsLogin) {
       const token = this.tokens.civitai;
-      const title = `${model.name}, version ${version.name}`;
       if (!token) {
-        return refused(refuse("tokenMissing", "civitai", title, args.address.trim(), CIVITAI_LOGIN, null));
+        return refused(refuse("tokenMissing", "civitai", CIVITAI_LOGIN));
       }
       if (!token.ok) {
         return refused(
-          refuse("tokenRejected", "civitai", title, args.address.trim(), token.message ?? CIVITAI_BAD_TOKEN, null),
+          refuse("tokenRejected", "civitai", token.message ?? CIVITAI_BAD_TOKEN),
         );
       }
     }
@@ -664,13 +665,25 @@ export class DownloadDesk {
     installIds: string[];
   }): Promise<Download> {
     if (!CATEGORIES.includes(args.category)) {
-      throw error("invalidArgument", "Choose a folder for the model first.");
+      throw error("invalidArgument", "That folder name cannot be used. Choose one from the list.");
     }
     const reading = await this.readModelAddress(args);
-    if (reading.refusal) {
-      throw error("conflict", reading.refusal.serviceMessage ?? "That address cannot be downloaded.");
+    if (reading.refusal || !reading.plan) {
+      const r = reading.refusal!;
+      const site = r.host === "civitai" ? "Civitai" : r.host === "huggingface" ? "Hugging Face" : "The site";
+      const said = {
+        tokenMissing: `${site} needs your token for this model. Add it in Settings, then read the address again.`,
+        tokenRejected: `${site} did not accept your token. Paste a new one in Settings.`,
+        noAccess: `Your ${site} account has no access to this model yet.`,
+        notFound: `${site} has no such file.`,
+        badAddress: "That is not the address of one model file.",
+        hfRepoNotFile: "That is not the address of one model file.",
+      }[r.kind];
+      throw error("conflict", said, r.serviceMessage ?? undefined);
     }
     const plan = reading.plan;
+    const unknown = args.installIds.find((id) => !this.world().installs.some((i) => i.id === id));
+    if (unknown) throw error("notFound", "One of the chosen installs is not registered any more.");
     const world = this.world();
     const installIds = args.installIds.filter((id) =>
       plan.installs.some((i) => i.installId === id && i.state === "free"),
@@ -689,7 +702,7 @@ export class DownloadDesk {
       state: "waiting",
       category: plan.category ?? args.category,
       vaultRelPath: plan.vaultRelPath ?? `${args.category}\\${plan.fileName}`,
-      sha256: plan.alreadyInVault ? plan.sha256 : null,
+      hash: plan.alreadyInVault ? plan.sha256 : null,
       installIds,
       linkedInstallIds: [],
       notLinked: [],
@@ -714,7 +727,8 @@ export class DownloadDesk {
     if (plan.vaultFreeBytes !== null && plan.vaultFreeBytes < plan.spaceNeededBytes) {
       throw error(
         "ioError",
-        "Drive C: has too little free space for this file and the 5 GB it keeps free.",
+        "There is not enough free space on the vault's drive for this file and the 5 GB kept free.",
+        `needs ${plan.spaceNeededBytes} bytes, ${plan.vaultFreeBytes} free`,
       );
     }
     void world;
@@ -726,13 +740,15 @@ export class DownloadDesk {
 
   private find(downloadId: string): Job {
     const job = this.jobs.find((j) => j.downloadId === downloadId);
-    if (!job) throw error("notFound", "That download is not in the list.");
+    if (!job) throw error("notFound", "That download is not in the list any more.");
     return job;
   }
 
   async stopDownload(downloadId: string): Promise<Download> {
     const job = this.find(downloadId);
-    if (job.state !== "running") throw error("conflict", "That download is not running.");
+    if (!["waiting", "running", "checking"].includes(job.state)) {
+      throw error("conflict", "That download is not running, so there is nothing to stop.");
+    }
     job.state = "stopped";
     job.bytesPerSecond = null;
     this.emit(job);
@@ -743,7 +759,7 @@ export class DownloadDesk {
   async continueDownload(downloadId: string): Promise<Download> {
     const job = this.find(downloadId);
     if (!["stopped", "failed", "cutOff", "mismatch"].includes(job.state)) {
-      throw error("conflict", "That download cannot be continued.");
+      throw error("conflict", "Only a stopped, failed or cut-off download can continue.");
     }
     // A file that did not match starts again from nothing.
     if (job.state === "mismatch") job.bytesDone = 0;
@@ -756,8 +772,8 @@ export class DownloadDesk {
 
   async discardDownload(downloadId: string): Promise<{ removed: true }> {
     const job = this.find(downloadId);
-    if (job.state === "running" || job.state === "checking") {
-      throw error("conflict", "Stop the download first.");
+    if (["waiting", "running", "checking"].includes(job.state)) {
+      throw error("conflict", "Stop that download first, then discard it.");
     }
     this.jobs = this.jobs.filter((j) => j !== job);
     return { removed: true };
@@ -765,8 +781,12 @@ export class DownloadDesk {
 
   async removeDownload(downloadId: string): Promise<{ removed: true }> {
     const job = this.find(downloadId);
-    if (!["waiting", "done", "linkedOnly", "mismatch"].includes(job.state)) {
-      throw error("conflict", "A download with a kept part is discarded, not removed.");
+    const noPart = job.state === "waiting" && job.bytesDone === 0;
+    if (!noPart && !["done", "linkedOnly", "mismatch"].includes(job.state)) {
+      throw error(
+        "conflict",
+        "That download has a part already downloaded. Discard it to delete the part, or continue it.",
+      );
     }
     this.jobs = this.jobs.filter((j) => j !== job);
     this.schedule();
@@ -831,7 +851,7 @@ export class DownloadDesk {
       return;
     }
     const hash = job.expected ?? sha(`computed|${job.address}|${job.fileName}`);
-    job.sha256 = hash;
+    job.hash = hash;
     job.finishedAt = new Date().toISOString();
     if (world.vault.has(hash)) {
       // Found after the transfer: the new file goes, the links are made.
@@ -905,14 +925,25 @@ export class DownloadDesk {
   devDropConnection(): void {
     this.failRunning({
       kind: "connection",
-      message: "The connection dropped.",
+      message: `The connection to ${this.runningSite()} dropped. The part already downloaded is kept.`,
       serviceMessage: null,
+      detail: "connection reset by peer",
     });
   }
 
   /** The service answers 401 or 403 in the middle, in its own words. */
   devRefuseMidway(message: string): void {
-    this.failRunning({ kind: "refused", message: "The site refused the download.", serviceMessage: message });
+    this.failRunning({
+      kind: "refused",
+      message: `${this.runningSite()} refused the download part way.`,
+      serviceMessage: message,
+      detail: null,
+    });
+  }
+
+  private runningSite(): string {
+    const job = this.jobs.find((j) => j.state === "running");
+    return job?.host === "civitai" ? "Civitai" : "Hugging Face";
   }
 
   private failRunning(err: NonNullable<Download["error"]>): void {
@@ -955,12 +986,16 @@ export class DownloadDesk {
    * comes back from the list as cut off, with its part kept.
    */
   devCutOff(): void {
-    const job = this.jobs.find((j) => j.state === "running" || j.state === "checking");
-    if (!job) throw new Error("no download is running");
-    job.state = "cutOff";
-    job.bytesPerSecond = null;
-    // Stands in for the window reading the list again after the restart.
-    this.emit(job);
+    const under = this.jobs.filter((j) => ["waiting", "running", "checking"].includes(j.state));
+    if (under.length === 0) throw new Error("no download is under way");
+    // After a restart nothing starts by itself, and the finished ones are gone.
+    this.jobs = this.jobs.filter((j) => !["done", "linkedOnly", "mismatch"].includes(j.state));
+    for (const job of under) {
+      job.state = "cutOff";
+      job.bytesPerSecond = null;
+      // Stands in for the window reading the list again after the restart.
+      this.emit(job);
+    }
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -981,7 +1016,7 @@ function tagged(name: string, hash: string): string {
 }
 
 function publicOf(job: Job): Download {
-  const { expected: _expected, address: _address, versionId: _v, fileId: _f, ...record } = job;
+  const { expected: _e, hash: _h, address: _a, versionId: _v, fileId: _f, ...record } = job;
   return { ...record, installIds: [...record.installIds], linkedInstallIds: [...record.linkedInstallIds] };
 }
 

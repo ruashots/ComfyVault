@@ -9,8 +9,12 @@
 import { batch, type Accessor } from "solid-js";
 import { createStore, reconcile, type SetStoreFunction } from "solid-js/store";
 
-import type { Engine } from "~/ipc/contract";
-import type { AddressPlan, AddressRefusal, Download } from "~/ipc/draft";
+import type {
+  AddressPlan,
+  AddressRefusal,
+  Download,
+  Engine,
+} from "~/ipc/contract";
 
 export interface DownloadCard {
   /** What is in the address field. */
@@ -123,7 +127,7 @@ export function createDownloadState(
       try {
         const reading = await engine.readModelAddress({ address, ...choice });
         if (id !== latestRead) return;
-        if (reading.refusal) {
+        if (reading.refusal || !reading.plan) {
           setCard({ reading: false, plan: null, refusal: reading.refusal, ticked: [] });
           return;
         }

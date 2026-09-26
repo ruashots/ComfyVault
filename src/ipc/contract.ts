@@ -651,7 +651,7 @@ export interface LinkRecord {
   sha256: string;
   vaultRelPath: string;
   createdAt: string;
-  createdBy: "apply" | "manual";
+  createdBy: "apply" | "manual" | "download";
   /** The run that made it, or null for one made by hand. */
   applyId: string | null;
 }
@@ -864,6 +864,171 @@ export interface LockState {
   detail: string | null;
 }
 
+// ── downloading a model (section 16) ───────────────────────────────────────
+
+export type TokenService = "huggingface" | "civitai";
+
+export interface TokenSaved {
+  /** Always true. */
+  ok: boolean;
+  /** The Hugging Face account name. Null for Civitai. */
+  account: string | null;
+}
+
+/** Never carries the token itself. */
+export interface TokenStatus {
+  saved: boolean;
+  /** Null when nothing is saved, or the site did not answer. */
+  ok: boolean | null;
+  account: string | null;
+  /** The site's words when it refused, or why it was not checked. */
+  message: string | null;
+}
+
+export type DownloadHost = "huggingface" | "civitai";
+
+/** A Hugging Face repository, for "Open the model's page". */
+export interface HfPage {
+  owner: string;
+  repo: string;
+}
+
+export type AddressRefusalKind =
+  | "badAddress"
+  | "hfRepoNotFile"
+  | "tokenMissing"
+  | "tokenRejected"
+  | "noAccess"
+  | "notFound";
+
+export interface AddressRefusal {
+  kind: AddressRefusalKind;
+  /** Null for badAddress. */
+  host: DownloadHost | null;
+  /** The site's own words, verbatim. Text from the network: never markup. */
+  serviceMessage: string | null;
+  /** Hugging Face only. */
+  page: HfPage | null;
+}
+
+export interface VersionChoice {
+  id: number;
+  name: string;
+}
+
+export interface FileChoice {
+  id: number;
+  name: string;
+  sizeBytes: number;
+  detail: string;
+}
+
+export interface AlreadyInVault {
+  vaultRelPath: string;
+}
+
+export interface InstallTarget {
+  installId: string;
+  /** Null while the plan has no folder, and for an unavailable install. */
+  linkPath: string | null;
+  state: "free" | "hasLink" | "nameTaken" | "unavailable";
+  /** Ticked on a new card: the installs ticked last time, or every free one. */
+  ticked: boolean;
+}
+
+export interface AddressPlan {
+  host: DownloadHost;
+  /** The Civitai model's name, or the Hugging Face file name. */
+  title: string;
+  /** The Civitai model's address, or the Hugging Face owner/repo. */
+  subtitle: string;
+  /** Civitai only, newest first. */
+  versions: VersionChoice[];
+  versionId: number | null;
+  /** Civitai only, the primary file first. */
+  files: FileChoice[];
+  fileId: number | null;
+  fileName: string;
+  sizeBytes: number;
+  /** Uppercase. Null for a small Hugging Face file stored without LFS. */
+  sha256: string | null;
+  suggestedCategory: string | null;
+  suggestedBecause: string | null;
+  /** The folder this plan was worked out for. */
+  category: string | null;
+  /** The folder menu. */
+  categories: string[];
+  alreadyInVault: AlreadyInVault | null;
+  /** Null while category is null. */
+  vaultRelPath: string | null;
+  /** A different model already has this name in that vault folder. */
+  vaultNameTaken: boolean;
+  installs: InstallTarget[];
+  vaultFreeBytes: number | null;
+  /** The file's size plus the 5,000,000,000 bytes kept free. 0 when held. */
+  spaceNeededBytes: number;
+  page: HfPage | null;
+  modelId: number | null;
+}
+
+/** One branch or the other, never both. */
+export interface AddressReading {
+  plan: AddressPlan | null;
+  refusal: AddressRefusal | null;
+}
+
+export type DownloadState =
+  | "waiting"
+  | "running"
+  | "checking"
+  | "stopped"
+  | "failed"
+  | "mismatch"
+  | "cutOff"
+  | "done"
+  | "linkedOnly";
+
+export interface NotLinked {
+  installId: string;
+  /** One sentence to show as it is. */
+  reason: string;
+}
+
+export interface DownloadError {
+  kind: "connection" | "refused" | "expired" | "noSpace" | "mismatch" | "disk" | "changedOnSite";
+  /** One sentence for the person. */
+  message: string;
+  /** The site's own words, verbatim. */
+  serviceMessage: string | null;
+  /** What the connection or the disk reported, for a details panel. */
+  detail: string | null;
+}
+
+export interface Download {
+  downloadId: string;
+  host: DownloadHost;
+  title: string;
+  fileName: string;
+  category: string;
+  /** Where it goes, and in the end where it went. */
+  vaultRelPath: string;
+  /** The installs to link. */
+  installIds: string[];
+  /** The installs linked, once done or linkedOnly. */
+  linkedInstallIds: string[];
+  notLinked: NotLinked[];
+  /** Nothing new went into the vault: it held the file already. */
+  alreadyInVault: boolean;
+  state: DownloadState;
+  bytesDone: number;
+  bytesTotal: number;
+  /** Over the last 5 seconds. Null until known. */
+  bytesPerSecond: number | null;
+  error: DownloadError | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
 // ── walking folders, for the picker ─────────────────────────────────────────
 
 /** One folder inside another, as the picker browses. */
@@ -1020,6 +1185,31 @@ export interface Engine {
     refresh?: boolean,
   ): Promise<ModelMetadata[]>;
 
+  // downloading a model (section 16)
+  /** Saved only once the site accepts it. Answers before a vault is open. */
+  setToken(service: TokenService, token: string): Promise<TokenSaved>;
+  getTokenStatus(service: TokenService): Promise<TokenStatus>;
+  removeToken(service: TokenService): Promise<{ removed: true }>;
+  readModelAddress(args: {
+    address: string;
+    versionId?: number;
+    fileId?: number;
+    category?: string;
+  }): Promise<AddressReading>;
+  startDownload(args: {
+    address: string;
+    versionId?: number;
+    fileId?: number;
+    category: string;
+    installIds: string[];
+  }): Promise<Download>;
+  stopDownload(downloadId: string): Promise<Download>;
+  continueDownload(downloadId: string): Promise<Download>;
+  discardDownload(downloadId: string): Promise<{ removed: true }>;
+  removeDownload(downloadId: string): Promise<{ removed: true }>;
+  listDownloads(): Promise<Download[]>;
+  onDownloadProgress(fn: (download: Download) => void): Unsubscribe;
+
   // running programs
   getRunningComfy(): Promise<RunningComfy[]>;
   checkLockedFiles(paths: string[]): Promise<LockState[]>;
@@ -1031,6 +1221,8 @@ export interface Engine {
    * address, so the window never passes one.
    */
   openCivitaiPage(modelId: number, versionId: number | null): Promise<null>;
+  /** Opens a Hugging Face model's page, named by its owner and repository. */
+  openHuggingFacePage(owner: string, repo: string): Promise<null>;
   /** Opens Windows Task Manager. Rejects when Windows does not open it. */
   openTaskManager(): Promise<null>;
   revealInFileManager(path: string): Promise<void>;

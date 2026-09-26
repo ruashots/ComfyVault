@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { parseAddress } from "~/ipc/fixture/downloads";
-import type { VaultError } from "~/ipc/contract";
-import type { Download } from "~/ipc/draft";
+import type { Download, VaultError } from "~/ipc/contract";
 
 /**
  * The development engine's downloader must answer the way the real engine
@@ -95,8 +94,6 @@ describe("reading an address into a plan", () => {
     expect((await e.readModelAddress({ address: "https://drive.google.com/x" })).refusal).toEqual({
       kind: "badAddress",
       host: null,
-      title: null,
-      subtitle: null,
       serviceMessage: null,
       page: null,
     });
@@ -171,8 +168,6 @@ describe("reading an address into a plan", () => {
     expect(missing.refusal).toEqual({
       kind: "tokenMissing",
       host: "huggingface",
-      title: "flux1-dev.safetensors",
-      subtitle: "black-forest-labs/FLUX.1-dev",
       serviceMessage:
         "Access to model black-forest-labs/FLUX.1-dev is restricted. You must have access to it and be authenticated to access it. Please log in.",
       page: { owner: "black-forest-labs", repo: "FLUX.1-dev" },
@@ -228,9 +223,15 @@ describe("the queue", () => {
     expect(seen.some((r) => r.downloadId === b.downloadId && r.state === "running")).toBe(true);
     const dream = done[0]!;
     expect(dream.linkedInstallIds).toEqual(["studio"]);
-    expect(dream.sha256).toBe("879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD");
     const files = (await e.listVaultFiles({ offset: 0, limit: 1000 })).files;
-    expect(files.some((f) => f.sha256 === dream.sha256 && f.linkCount === 1)).toBe(true);
+    expect(
+      files.some(
+        (f) =>
+          f.vaultRelPath === dream.vaultRelPath &&
+          f.sha256 === "879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD" &&
+          f.linkCount === 1,
+      ),
+    ).toBe(true);
   });
 
   it("continues a stopped download from the part it kept", async () => {
@@ -247,7 +248,10 @@ describe("the queue", () => {
     e.downloads.devFinishDownloads();
     const [final] = await e.listDownloads();
     expect(final!.state).toBe("done");
-    expect(final!.sha256).toBe("879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD");
+    const files = (await e.listVaultFiles({ offset: 0, limit: 1000 })).files;
+    expect(files.find((f) => f.vaultRelPath === final!.vaultRelPath)!.sha256).toBe(
+      "879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD",
+    );
   });
 
   it("keeps a download cut off by a closed app, and continues it", async () => {
@@ -308,7 +312,9 @@ describe("the queue", () => {
     const full = await refusal(
       e.startDownload({ address: FLUX_FP8, category: "diffusion_models", installIds: [] }),
     );
-    expect(full.message).toContain("too little free space");
+    expect(full.message).toBe(
+      "There is not enough free space on the vault's drive for this file and the 5 GB kept free.",
+    );
     expect(await e.listDownloads()).toEqual([]);
   });
 
