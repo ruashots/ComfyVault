@@ -13,7 +13,7 @@ import {
 } from "~/domain/view";
 import { installNameOf } from "~/domain/installname";
 import { openConfirm } from "~/modals/confirm";
-import { useApp } from "~/state/store";
+import { messageOf, useApp, type AppStore } from "~/state/store";
 import type { Install, VaultFile } from "~/ipc/contract";
 
 export function CleanupScreen() {
@@ -54,11 +54,13 @@ function CleanupBody() {
           app.danglingLinks().length,
           groups().length,
           app.orphans().length,
+          app.health()?.stoppedDeletes.length ?? 0,
         )}
       />
       <div class="screen">
         <div class="scroll">
           <DanglingLinks />
+          <StoppedDeletes />
           <div class="sec">
             <span class="t">One model with more than one name</span>
             <span class="n">
@@ -118,8 +120,18 @@ function CleanupBody() {
 }
 
 /** The top bar's line: what Cleanup found, as sentences. */
-export function cleanupSummary(broken: number, named: number, unlinked: number): string {
+export function cleanupSummary(
+  broken: number,
+  named: number,
+  unlinked: number,
+  stopped = 0,
+): string {
   const parts: string[] = [];
+  if (stopped > 0) {
+    parts.push(
+      stopped === 1 ? "1 delete stopped part way." : `${stopped} deletes stopped part way.`,
+    );
+  }
   if (broken > 0) {
     parts.push(broken === 1 ? "1 link leads to nothing." : `${broken} links lead to nothing.`);
   }
@@ -502,13 +514,7 @@ function ModelRow(props: { file: VaultFile; usage: ModelUsage }) {
       ],
       list: file.links.map((l) => l.absPath),
       after: usageLine,
-      action: async () => {
-        const done = await app.engine.deleteVaultFile(file.sha256, file.sha256, true);
-        const k = done.linksRemoved.length;
-        app.actions.showToast(
-          `Deleted ${file.canonicalName}. ${fmt(done.bytesFreed)} freed, ${k} ${k === 1 ? "link" : "links"} removed.`,
-        );
-      },
+      action: () => deleteWithLinks(app, file),
     });
   };
 
@@ -547,5 +553,110 @@ function ModelRow(props: { file: VaultFile; usage: ModelUsage }) {
         <Icon name="trash" size={13} />
       </button>
     </div>
+  );
+}
+
+/** Delete a model and every link to it, then say what that freed. */
+async function deleteWithLinks(app: AppStore, file: VaultFile): Promise<void> {
+  const done = await app.engine.deleteVaultFile(file.sha256, file.sha256, true);
+  const k = done.linksRemoved.length;
+  app.actions.showToast(
+    `Deleted ${file.canonicalName}. ${fmt(done.bytesFreed)} freed, ${k} ${k === 1 ? "link" : "links"} removed.`,
+  );
+}
+
+/**
+ * Models whose delete was cut off, by the power going say. Some installs lost
+ * their link and no longer load the model, and the model is still in the
+ * vault, so the delete is half done until it is finished.
+ */
+function StoppedDeletes() {
+  const app = useApp();
+  const files = () => app.health()?.stoppedDeletes ?? [];
+
+  const finish = async (file: VaultFile) => {
+    let left: string[];
+    try {
+      left = (await app.engine.listLinks({ sha256: file.sha256 }))
+        .filter((l) => l.state === "ok")
+        .map((l) => l.absPath);
+    } catch (error) {
+      app.actions.showToast(messageOf(error), "bad");
+      return;
+    }
+    const installs = installsOf(
+      { ...file, links: file.links.filter((l) => left.includes(l.absPath)) },
+      app.installs(),
+    );
+    openConfirm(app, {
+      title: "Finish a delete",
+      cta: "Finish the delete",
+      body: [
+        [
+          { text: file.canonicalName, emph: true },
+          { text: " will be deleted, and " },
+          { text: fmt(file.sizeBytes), emph: true },
+          { text: ` will be freed on drive ${app.vaultVolume()}.` },
+        ],
+        [
+          { text: "This is the only copy ComfyVault knows of. " },
+          { text: "This cannot be undone.", emph: true },
+          { text: " To use the model again, you must download it again." },
+        ],
+        [
+          {
+            text:
+              left.length === 0
+                ? "No install links to it any more."
+                : `${left.length === 1 ? "Its last link is" : `Its ${left.length} remaining links are`} removed too, so it disappears from ${installs.length <= 2 ? installs.join(" and ") : "these installs"}:`,
+          },
+        ],
+      ],
+      list: left,
+      action: () => deleteWithLinks(app, file),
+    });
+  };
+
+  return (
+    <Show when={files().length > 0}>
+      <div class="blk" role="alert">
+        <h3>
+          <Icon name="warn" size={13} />
+          {files().length === 1
+            ? "A delete stopped part way"
+            : `${files().length} deletes stopped part way`}
+        </h3>
+        <div class="blkrow">
+          <div class="bl">
+            <div class="bt">Finish {files().length === 1 ? "it" : "each one"}</div>
+            <div class="bd">
+              ComfyVault stopped while it was deleting{" "}
+              {files().length === 1 ? "this model" : "these models"}, for example
+              because the power went. Some installs already lost their link, so they
+              no longer load it. The model is still in the vault and still takes its
+              space. Finishing the delete removes it and the links it still has.
+            </div>
+          </div>
+        </div>
+        <For each={files()}>
+          {(file) => (
+            <div class="blkrow">
+              <div class="bl">
+                <div class="bt">{file.canonicalName}</div>
+                <div class="bd">
+                  in {file.category}, {fmt(file.sizeBytes)} still in the vault
+                </div>
+              </div>
+              <div class="ba">
+                <button class="btn sm dng" onClick={() => void finish(file)}>
+                  <Icon name="trash" size={11} />
+                  Finish the delete
+                </button>
+              </div>
+            </div>
+          )}
+        </For>
+      </div>
+    </Show>
   );
 }

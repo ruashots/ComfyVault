@@ -657,13 +657,16 @@ export function SettingsScreen() {
                     await app.actions.refresh();
                     const health = app.health();
                     const broken = app.danglingLinks().length;
+                    const stopped = health?.stoppedDeletes.length ?? 0;
                     app.actions.showToast(
                       broken > 0
                         ? `${broken} ${broken === 1 ? "link points" : "links point"} at a file that is not there · see Cleanup`
-                        : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files · all well`,
-                      broken > 0 ? "bad" : "ok",
+                        : stopped > 0
+                          ? `${stopped === 1 ? "A delete stopped part way. Finish it" : `${stopped} deletes stopped part way. Finish them`} in Cleanup.`
+                          : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files · all well`,
+                      broken > 0 || stopped > 0 ? "bad" : "ok",
                     );
-                    if (broken > 0) app.actions.go("cleanup");
+                    if (broken > 0 || stopped > 0) app.actions.go("cleanup");
                   })()
                 }
               >

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { ConfirmModalView } from "~/modals/confirm";
+import { openUndoBox } from "~/modals/undo";
 import { CleanupScreen, cleanupSummary } from "~/screens/Cleanup";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
@@ -52,6 +53,9 @@ describe("the top line of Cleanup", () => {
     );
     expect(cleanupSummary(2, 3, 1)).toBe(
       "2 links lead to nothing. 3 models have more than one name. 1 vault file is not linked from any install.",
+    );
+    expect(cleanupSummary(0, 0, 0, 1)).toBe(
+      "1 delete stopped part way. Every model has one name. Every vault file is linked.",
     );
     expect(cleanupSummary(1, 0, 4)).toBe(
       "1 link leads to nothing. Every model has one name. 4 vault files are not linked from any install.",
@@ -303,5 +307,106 @@ describe("backing out of the delete", () => {
     expect(deletes).toBe(0);
     expect((await engine.listLinks({ sha256: file.sha256 })).length).toBe(file.links.length);
     expect(rowOf(file.canonicalName)).toBeDefined();
+  });
+});
+
+describe("a delete that stopped part way", () => {
+  async function withStoppedDelete() {
+    let gone: string[] = [];
+    let sha = "";
+    const h = await afterARun(async (e) => {
+      const { files } = await e.listVaultFiles({ offset: 0, limit: 1000 });
+      const f = files.find((x) => x.linkCount >= 3) ?? files.find((x) => x.linkCount >= 2)!;
+      sha = f.sha256;
+      gone = e.devStopDelete(sha, 1);
+    });
+    await waitFor(() => (h.app.health()?.stoppedDeletes.length ?? 0) > 0);
+    const file = h.app.vaultFiles().find((f) => f.sha256 === sha)!;
+    return { ...h, file, gone };
+  }
+
+  it("is the first thing Cleanup says, with a way to finish it", async () => {
+    const { file } = await withStoppedDelete();
+    const panel = document.querySelector(".scroll > .blk")!;
+    expect(panel.textContent).toContain("A delete stopped part way");
+    expect(panel.textContent).toContain("Some installs already lost their link, so they no longer load it.");
+    expect(panel.textContent).toContain(file.canonicalName);
+    expect(panel.textContent).toContain(`in ${file.category}, ${fmt(file.sizeBytes)} still in the vault`);
+    expect(screen.getByRole("button", { name: "Finish the delete" })).toBeDefined();
+  });
+
+  it("lists only the links still there, then finishes the delete", async () => {
+    const { app, engine, file, gone } = await withStoppedDelete();
+    await userEvent.click(screen.getByRole("button", { name: "Finish the delete" }));
+    await waitFor(() => document.querySelector(".modal") !== null);
+    const left = file.links.map((l) => l.absPath).filter((p) => !gone.includes(p));
+    const listed = [...document.querySelectorAll(".modal .mb > .paths li")].map((li) => li.textContent);
+    expect(listed).toEqual(left);
+    expect(modalText()).toContain(
+      `${file.canonicalName} will be deleted, and ${fmt(file.sizeBytes)} will be freed on drive C:.`,
+    );
+    expect(modalText()).toContain(
+      left.length === 1 ? "Its last link is removed too" : `Its ${left.length} remaining links are removed too`,
+    );
+
+    const finish = [...document.querySelectorAll(".modal button")].find(
+      (b) => b.textContent === "Finish the delete",
+    ) as HTMLButtonElement;
+    await userEvent.click(finish);
+    await waitFor(() => document.querySelector(".modal") === null);
+    await waitFor(() => (app.health()?.stoppedDeletes.length ?? 1) === 0);
+    expect(document.querySelector(".scroll > .blk")).toBeNull();
+    expect(app.toast()?.message).toBe(
+      `Deleted ${file.canonicalName}. ${fmt(file.sizeBytes)} freed, ${left.length} ${left.length === 1 ? "link" : "links"} removed.`,
+    );
+    expect(await engine.listLinks({ sha256: file.sha256 })).toEqual([]);
+  });
+});
+
+describe("the rest of the window, while a delete is stopped part way", () => {
+  async function appWithStoppedDelete() {
+    const engine = new FixtureEngine({ manual: true });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const scan = (await engine.getLastScan())!;
+    const plan = await engine.buildPlan(scan.scanId);
+    await engine.startApply({ planId: plan.planId, groupIds: plan.groups.map((g) => g.groupId) });
+    engine.devFinish();
+    const { files } = await engine.listVaultFiles({ offset: 0, limit: 1000 });
+    const gone = engine.devStopDelete(files.find((f) => f.linkCount >= 2)!.sha256, 1);
+    harness = await renderWithApp(() => <App />, { engine });
+    await waitFor(() => (harness!.app.health()?.stoppedDeletes.length ?? 0) > 0);
+    return { h: harness, gone };
+  }
+
+  it("counts it on Cleanup's badge", async () => {
+    const { h } = await appWithStoppedDelete();
+    const app = h.app;
+    const expected =
+      app.danglingLinks().length + 1 + app.nameGroups().length + app.orphans().length;
+    const cleanup = screen.getAllByRole("button").find((b) => /^Cleanup/.test(b.textContent ?? ""))!;
+    expect(cleanup.textContent).toBe(`Cleanup${expected}`);
+  });
+
+  it("does not call the vault well when the links are checked", async () => {
+    const { h } = await appWithStoppedDelete();
+    h.app.actions.go("settings");
+    await userEvent.click(await screen.findByRole("button", { name: /Check every link/ }));
+    await waitFor(() => h.app.toast() !== null);
+    expect(h.app.toast()!.message).toBe("A delete stopped part way. Finish it in Cleanup.");
+    expect(h.app.screen()).toBe("cleanup");
+  });
+
+  it("says why the run cannot be undone", async () => {
+    const { h, gone } = await appWithStoppedDelete();
+    const applyId = h.app.lastApply()!.applyId;
+    await openUndoBox(h.app, applyId);
+    await waitFor(() => document.querySelector(".modal .verdict") !== null);
+    const verdict = document.querySelector(".modal .verdict")!;
+    expect(verdict.textContent).toContain(
+      "A delete of one of this run's models stopped part way, so this run was not undone. Nothing was changed. Finish the delete in Cleanup. After that, this run can no longer be undone.",
+    );
+    expect([...verdict.querySelectorAll("li")].map((li) => li.textContent)).toEqual([gone.join(", ")]);
+    expect(screen.queryByRole("button", { name: "Undo the run" })).toBeNull();
   });
 });

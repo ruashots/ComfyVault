@@ -68,6 +68,7 @@ export function Rail() {
     if (key === "cleanup") {
       return (
         app.danglingLinks().length +
+          (app.health()?.stoppedDeletes.length ?? 0) +
           app.nameGroups().length +
           app.orphans().length || null
       );
