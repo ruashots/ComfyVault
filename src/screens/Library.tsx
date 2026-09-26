@@ -471,10 +471,10 @@ function DrawerBody(props: { row: ContentRow }) {
       body: [
         [
           { text: row().name, emph: true },
-          { text: " is deleted from the vault and " },
+          { text: " will be deleted from the vault, and " },
           { text: fmt(row().sizeBytes), emph: true },
           {
-            text: " comes back. Nothing points at it today. This cannot be undone: the bytes are gone.",
+            text: " will be freed. Nothing links to it today. This cannot be undone: the bytes are gone.",
           },
         ],
       ],
@@ -510,9 +510,9 @@ function DrawerBody(props: { row: ContentRow }) {
         when={(places() ?? []).length > 0}
         fallback={
           <div class="note">
-            Nothing points at this file. It is in the vault because an install that
+            Nothing links to this file. It is in the vault because an install that
             used it is no longer registered. Link it into an install, or delete it
-            and get {fmt(row().sizeBytes)} back.
+            to free {fmt(row().sizeBytes)}.
           </div>
         }
       >
