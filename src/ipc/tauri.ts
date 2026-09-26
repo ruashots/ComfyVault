@@ -23,6 +23,7 @@ import type {
   AppState,
   ConsolidationPlan,
   ContentPage,
+  Deleted,
   DirectoryListing,
   DriveInfo,
   Engine,
@@ -154,11 +155,11 @@ export function createTauriEngine(): Engine {
     removeAlias: (sha256, name) =>
       call<{ removed: true }>("remove_alias", { sha256, name }),
     listOrphans: () => callNoArgs<VaultFile[]>("list_orphans"),
-    deleteVaultFile: (sha256, confirm) =>
-      call<{ deleted: true; bytesFreed: number }>("delete_vault_file", {
-        sha256,
-        confirm,
-      }),
+    deleteVaultFile: (sha256, confirm, removeLinks) =>
+      call<Deleted>(
+        "delete_vault_file",
+        removeLinks === undefined ? { sha256, confirm } : { sha256, confirm, removeLinks },
+      ),
     checkVaultHealth: () => callNoArgs<VaultHealth>("check_vault_health"),
 
     checkModelUsage: (names, installIds) =>

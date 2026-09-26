@@ -686,6 +686,14 @@ export interface VaultFile {
   present: boolean;
 }
 
+/** What `delete_vault_file` did. */
+export interface Deleted {
+  deleted: true;
+  bytesFreed: number;
+  /** Every install link removed, as an absolute path. Empty unless `removeLinks`. */
+  linksRemoved: string[];
+}
+
 export interface VaultFileFilter {
   category?: string;
   nameContains?: string;
@@ -990,10 +998,11 @@ export interface Engine {
   setCanonicalName(sha256: string, name: string): Promise<VaultFile>;
   removeAlias(sha256: string, name: string): Promise<{ removed: true }>;
   listOrphans(): Promise<VaultFile[]>;
-  deleteVaultFile(
-    sha256: string,
-    confirm: string,
-  ): Promise<{ deleted: true; bytesFreed: number }>;
+  /**
+   * With `removeLinks`, every link to the file in every install goes too, all
+   * or nothing. Without it, a file any install links to is refused.
+   */
+  deleteVaultFile(sha256: string, confirm: string, removeLinks?: boolean): Promise<Deleted>;
   checkVaultHealth(): Promise<VaultHealth>;
 
   // usage and metadata

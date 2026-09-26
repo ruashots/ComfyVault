@@ -81,7 +81,8 @@ function accepts(type: string, kind: string): boolean {
     case "number":
       return /\bnumber\b/.test(t);
     case "boolean":
-      return /\bboolean\b/.test(t);
+      // `deleted: true` is a boolean that can only be true.
+      return /\b(boolean|true|false)\b/.test(t);
     default:
       return true;
   }

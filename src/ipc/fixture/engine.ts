@@ -41,6 +41,7 @@ import type {
   Settings,
   Unsubscribe,
   UsageResult,
+  Deleted,
   VaultError,
   VaultFile,
   VaultFilePage,
@@ -559,8 +560,13 @@ export class FixtureEngine implements Engine {
     }
     const install: Install = {
       id: leafOf(root).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      // The engine names an install after its folder, as it is.
-      label: label ?? leafOf(root),
+      label:
+        label ??
+        uniqueDefaultLabel(
+          path,
+          root,
+          this.world.installs.map((i) => i.label),
+        ),
       registeredPath: path,
       root,
       modelsDir: `${root}\\models`,
@@ -1520,7 +1526,9 @@ export class FixtureEngine implements Engine {
   async deleteVaultFile(
     sha256: string,
     confirm: string,
-  ): Promise<{ deleted: true; bytesFreed: number }> {
+    removeLinks = false,
+  ): Promise<Deleted> {
+    if (removeLinks) return this.deleteModelAndLinks(sha256, confirm);
     if (confirm !== sha256) {
       throw error("invalidArgument", "The confirmation did not match.");
     }
@@ -1531,7 +1539,78 @@ export class FixtureEngine implements Engine {
     this.world.vault.delete(sha256);
     const bytesFreed = content?.bytes ?? 0;
     this.world.freeBytes += bytesFreed;
-    return { deleted: true, bytesFreed };
+    return { deleted: true, bytesFreed, linksRemoved: [] };
+  }
+
+  /**
+   * The model and every link to it, as section 8.8 of the contract says: every
+   * path is checked before anything is removed, and a refusal removes nothing.
+   */
+  private deleteModelAndLinks(sha256: string, confirm: string): Deleted {
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
+    if (confirm !== sha256) {
+      throw error("invalidArgument", "This delete was not confirmed, so nothing was removed.");
+    }
+    const entry = this.world.vault.get(sha256);
+    if (!entry) throw error("notFound", "That model is not in the vault.");
+    const content = this.world.contents.find((c) => c.sha256 === sha256);
+    const links = this.world.links.filter((l) => l.sha256 === sha256);
+
+    // A real file where a link was is somebody's file, and it stops the delete.
+    const surprises = links
+      .filter((l) => this.stateOf(l) === "replaced")
+      .map((l) => l.absPath)
+      .sort();
+    if (surprises.length > 0) {
+      throw {
+        ...error(
+          "conflict",
+          "Some of this model's links are not links to it any more, so nothing was deleted. Something else sits at these paths now.",
+          surprises.join(", "),
+        ),
+        path: surprises[0],
+      } satisfies VaultError;
+    }
+
+    const vaultPath = `${VAULT_ROOT}\\${content?.category ?? ""}\\${entry.canonicalName}`;
+    if (this.heldOpen.has(sha256)) {
+      throw {
+        ...error(
+          "fileLocked",
+          "Another program has this model open, so nothing was deleted. ComfyUI keeps a model open while it is loaded. Close it and try again.",
+          vaultPath,
+        ),
+        path: vaultPath,
+      } satisfies VaultError;
+    }
+
+    // A link already gone from the disk is not counted as removed.
+    const linksRemoved = links.filter((l) => this.stateOf(l) === "ok").map((l) => l.absPath);
+    const removed = new Set(links.map((l) => l.absPath));
+    if (content) content.copies = content.copies.filter((c) => !(c.isLink && removed.has(c.absPath)));
+    this.world.links = this.world.links.filter((l) => l.sha256 !== sha256);
+    this.world.vault.delete(sha256);
+    const bytesFreed = content?.bytes ?? 0;
+    this.world.freeBytes += bytesFreed;
+    return { deleted: true, bytesFreed, linksRemoved };
+  }
+
+  /** Vault files another program holds open, by their SHA-256. */
+  private heldOpen = new Set<string>();
+
+  /** A program, ComfyUI say, opens a vault file or lets it go. */
+  devHoldOpen(sha256: string, open = true): void {
+    if (open) this.heldOpen.add(sha256);
+    else this.heldOpen.delete(sha256);
+  }
+
+  /** Someone puts a real file where a link was, at this path. */
+  devReplaceLink(absPath: string): void {
+    for (const content of this.world.contents) {
+      for (const copy of content.copies) {
+        if (copy.absPath === absPath) copy.isLink = false;
+      }
+    }
   }
 
   async checkVaultHealth(): Promise<VaultHealth> {
@@ -2051,6 +2130,28 @@ function notFoundMetadata(sha256: string): ModelMetadata {
     downloadUrl: null,
     ambiguous: false,
   };
+}
+
+/**
+ * The engine's name for a new install: the folder the person picked, or the
+ * root when they picked the root, else the first folder above it that no other
+ * install is called, else the whole root. A launcher keeps the real install in
+ * a folder called ComfyUI, so the root's own name tells installs apart least.
+ */
+export function uniqueDefaultLabel(
+  picked: string,
+  root: string,
+  taken: readonly string[],
+): string {
+  const trim = (p: string) => p.replace(/[\\/]+$/, "");
+  const start = trim(picked).toLowerCase() === trim(root).toLowerCase() ? root : picked;
+  const isTaken = (name: string) =>
+    taken.some((t) => t.trim().toLowerCase() === name.toLowerCase());
+  const folders = start.split(/[\\/]+/).filter((s) => s.length > 0 && !/^[A-Za-z]:$/.test(s));
+  for (let i = folders.length - 1; i >= 0; i--) {
+    if (!isTaken(folders[i]!)) return folders[i]!;
+  }
+  return root;
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {
