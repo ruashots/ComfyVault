@@ -164,6 +164,10 @@ impl UreqWeb {
             .tls_config(
                 ureq::tls::TlsConfig::builder()
                     .provider(ureq::tls::TlsProvider::NativeTls)
+                    // The certificates Windows trusts. ureq's default is its
+                    // own copy of Mozilla's list, and Civitai's storage sent
+                    // a chain Windows refused to build to that list alone.
+                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
                     .build(),
             )
             .http_status_as_error(false)
@@ -293,5 +297,19 @@ mod idle {
         fn is_tls(&self) -> bool {
             self.inner.is_tls()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_never_prints_its_token_or_a_signature() {
+        let r = Request::get("https://cas.example/x?X-Amz-Signature=abc").bearer(Some("hf_secret"));
+        let shown = format!("{r:?}");
+        assert!(!shown.contains("hf_secret"), "{shown}");
+        assert!(!shown.contains("X-Amz-Signature"), "{shown}");
+        assert!(shown.contains("authorization: <set>"), "{shown}");
     }
 }

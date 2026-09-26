@@ -736,3 +736,114 @@ fn a_token_is_saved_only_when_the_site_accepts_it() {
     assert_eq!(dl.token_status(Host::HuggingFace).unwrap().saved, false);
     let _ = w;
 }
+
+/// Against the real sites. They run only when asked (`--ignored`), and each
+/// one reads the address first and stops if the file is bigger than a few
+/// megabytes, so a wrong address can never fill a disk.
+mod real_sites {
+    use super::*;
+
+    const CEILING: u64 = 5_000_000;
+
+    fn real() -> (tempfile::TempDir, Context, Arc<Downloader>, Install) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&dir.path().join("vault"), true).unwrap());
+        let mut settings = store.settings().unwrap();
+        settings.min_file_size_bytes = 0;
+        settings.huggingface_cache_dirs = Some(Vec::new());
+        store.put_settings(&settings).unwrap();
+        let root = dir.path().join("ComfyUI");
+        detect::fixtures::make_install(&root);
+        let c = detect::inspect(&root).unwrap();
+        let install = Install::from_candidate("real".into(), "A".into(), root, &c).unwrap();
+        store.put_install(&install).unwrap();
+        let ctx = Context {
+            store,
+            platform: Arc::new(crate::platform::NativePlatform::new()),
+            vault_writes: Arc::new(Mutex::new(())),
+        };
+        let dl = Arc::new(Downloader::new(Arc::new(UreqWeb::new()), Sites::default(), Arc::new(MemoryTokens::default())));
+        (dir, ctx, dl, install)
+    }
+
+    fn fetch(address: &str, want_sha: Option<&str>) {
+        let (_dir, ctx, dl, install) = real();
+        let plan = dl.read_address(&ctx, address, None, None, None).unwrap().plan.expect("a plan");
+        assert!(plan.size_bytes <= CEILING, "{} is {} bytes, over the ceiling; nothing was downloaded", address, plan.size_bytes);
+        let category = plan.category.clone().unwrap_or_else(|| "loras".into());
+        let d = dl
+            .start(
+                &ctx,
+                &StartDownload { address: address.into(), version_id: None, file_id: None, category: category.clone(), install_ids: vec![install.id.clone()] },
+            )
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(120);
+        let d = loop {
+            let d = ctx.store.download(&d.download_id).unwrap().unwrap();
+            if !d.state.is_active() && !dl.is_running(&d.download_id) {
+                break d;
+            }
+            assert!(Instant::now() < until, "still {:?}", d.state);
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+        let rec = ctx.store.vault_files().unwrap().pop().unwrap();
+        if let Some(want) = want_sha {
+            assert_eq!(rec.sha256, want.to_ascii_uppercase());
+        }
+        let file = ctx.store.vault_root().join(rec.vault_rel_path());
+        assert_eq!(sha(&std::fs::read(&file).unwrap()), rec.sha256);
+        let link = folders::link_folder(&install, &category).join(&d.file_name);
+        assert_eq!(read_link(&link), std::fs::read(&file).unwrap());
+        println!("{address}: {} bytes, SHA-256 {}", rec.size_bytes, rec.sha256);
+    }
+
+    #[test]
+    #[ignore]
+    fn a_small_hugging_face_file_in_lfs_downloads_and_matches() {
+        fetch(
+            "https://huggingface.co/hf-internal-testing/tiny-random-gpt2/blob/main/model.safetensors",
+            Some("8111d5afb0715dbf5a31396d31432cb56370ba23f6650a035ea0fc8a20b4e500"),
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn a_small_hugging_face_file_with_no_hash_downloads() {
+        fetch("https://huggingface.co/hf-internal-testing/tiny-random-bert/blob/main/model.safetensors", None);
+    }
+
+    #[test]
+    #[ignore]
+    fn a_small_civitai_model_downloads_and_matches() {
+        fetch(
+            "https://civitai.com/models/7808/easynegative",
+            Some("C74B4E810B030F6B75FDE959E2DB678C268D07115B85356D3C0138BA5EB42340"),
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn a_gated_model_without_a_token_is_refused_in_hugging_faces_words() {
+        let (_dir, ctx, dl, _) = real();
+        let r = dl
+            .read_address(&ctx, "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/flux1-dev.safetensors", None, None, None)
+            .unwrap();
+        let refusal = r.refusal.expect("a refusal");
+        assert_eq!(refusal.kind, RefusalKind::TokenMissing);
+        println!("Hugging Face said: {:?}", refusal.service_message);
+        assert!(refusal.service_message.unwrap_or_default().contains("restricted"));
+    }
+
+    #[test]
+    #[ignore]
+    fn a_made_up_token_is_refused_by_both_sites_and_not_saved() {
+        let (_dir, _ctx, dl, _) = real();
+        for host in [Host::HuggingFace, Host::Civitai] {
+            let e = dl.set_token(host, "not_a_real_token_123").unwrap_err();
+            println!("{} said: {:?}", host.name(), e.detail);
+            assert_eq!(e.code, ErrorCode::Conflict, "{e:?}");
+            assert!(!dl.token_status(host).unwrap().saved);
+        }
+    }
+}
