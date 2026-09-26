@@ -765,6 +765,13 @@ export interface VaultHealth {
   replacedLinks: LinkRecord[];
   missingVaultFiles: VaultFile[];
   foreignFiles: string[];
+  /**
+   * Models whose delete with links stopped part way, the power going say.
+   * Some installs lost their link and the model is still in the vault. A
+   * delete with `removeLinks` finishes it. `ok` is false while this is not
+   * empty.
+   */
+  stoppedDeletes: VaultFile[];
   ok: boolean;
 }
 

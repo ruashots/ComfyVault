@@ -1657,6 +1657,8 @@ export class FixtureEngine implements Engine {
       replacedLinks,
       missingVaultFiles,
       foreignFiles: [],
+      // A delete here removes everything at once, so none ever stops part way.
+      stoppedDeletes: [],
       ok:
         danglingLinks.length === 0 &&
         replacedLinks.length === 0 &&
