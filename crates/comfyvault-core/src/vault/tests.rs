@@ -439,6 +439,21 @@ fn a_model_is_deleted_with_every_link_to_it_in_every_install() {
 }
 
 #[test]
+fn a_link_in_an_install_that_is_no_longer_registered_goes_too() {
+    // Removing an install from the list leaves its links in place. Left
+    // behind by a delete, they would point at nothing.
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let b = w.store.installs().unwrap().into_iter().find(|i| i.label == "B").unwrap();
+    assert!(w.store.delete_install(&b.id).unwrap());
+
+    let done = vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+    assert!(done.links_removed.contains(&places[2]));
+    assert!(std::fs::symlink_metadata(&places[2]).is_err(), "the unregistered install's link is still there");
+    assert!(w.store.links_for_hash(&sha).unwrap().is_empty());
+}
+
+#[test]
 fn every_removal_is_journaled_and_the_file_goes_last() {
     let w = TestWorld::new();
     let (places, sha) = three_links_two_installs(&w);

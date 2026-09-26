@@ -194,7 +194,9 @@ install, and that refusal is worth nothing if a vault can appear without it.
 
 The engine runs one long operation at a time. A scan, an apply, and a revert
 are long operations. If a second long operation starts, the engine rejects it
-with `vaultBusy`. All other commands stay callable during a long operation.
+with `vaultBusy`. All other commands stay callable during a long operation,
+except `delete_vault_file` with `removeLinks: true`, which section 8.8
+describes.
 
 ---
 
