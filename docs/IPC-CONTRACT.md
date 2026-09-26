@@ -512,6 +512,13 @@ Arguments:
 Returns an `Install`. The engine runs the same validation as
 `validate_install_path` and rejects an invalid folder with `notAComfyInstall`.
 
+Without `label`, the engine names the install after the folder in `path`, the
+folder the person picked, which for a launcher layout is the launcher's folder
+rather than the `ComfyUI` folder inside it. If another install already has
+that name, compared without regard to case, the engine tries the next folder
+up, and so on. If every folder name is taken, the label is the whole `root`.
+Installs registered before this rule keep the label they have.
+
 ```ts
 type Install = {
   id: string

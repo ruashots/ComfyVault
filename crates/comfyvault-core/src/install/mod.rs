@@ -90,12 +90,23 @@ impl Install {
         Ok(fresh)
     }
 
-    /// A label from the folder name, used when the person does not give one.
-    pub fn default_label(path: &std::path::Path) -> String {
-        path.file_name()
+    /// A label for a new install, when the person does not give one.
+    ///
+    /// A launcher keeps the real install in a folder called `ComfyUI` inside
+    /// its own folder, so the root's name is `ComfyUI` for almost everyone,
+    /// and every install ends up with the same name. The folder the person
+    /// picked says which one it is, so that name comes first. If another
+    /// install already has it, the next folder up is tried, and so on. The
+    /// whole root is the last resort, and it is always different.
+    pub fn unique_default_label(picked: &std::path::Path, root: &std::path::Path, taken: &[String]) -> String {
+        let start = if crate::paths::same_path_lexically(picked, root) { root } else { picked };
+        let is_taken = |name: &str| taken.iter().any(|t| t.trim().to_lowercase() == name.to_lowercase());
+        start
+            .ancestors()
+            .filter_map(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| crate::paths::display_path(path))
+            .find(|n| !n.is_empty() && !is_taken(n))
+            .unwrap_or_else(|| crate::paths::display_path(root))
     }
 
     /// Does this install's ComfyUI reject a per-file symbolic link on the model
@@ -255,8 +266,33 @@ mod tests {
     }
 
     #[test]
-    fn a_default_label_is_the_folder_name() {
-        assert_eq!(Install::default_label(std::path::Path::new("/a/b/ComfyUI-Main")), "ComfyUI-Main");
+    fn a_new_install_is_named_after_the_folder_the_person_picked() {
+        // A launcher layout: the real root is always a folder called ComfyUI.
+        let picked = std::path::Path::new("/AI/ComfyUI-Easy-Install");
+        let root = picked.join("ComfyUI");
+        assert_eq!(Install::unique_default_label(picked, &root, &[]), "ComfyUI-Easy-Install");
+    }
+
+    #[test]
+    fn a_name_another_install_has_moves_up_one_folder() {
+        let root = std::path::Path::new("/ComfyUI_windows_portable/ComfyUI");
+        let taken = vec!["ComfyUI".to_string()];
+        assert_eq!(Install::unique_default_label(root, root, &taken), "ComfyUI_windows_portable");
+        // Windows does not tell the two apart, and neither does a person.
+        let taken = vec!["comfyui".to_string()];
+        assert_eq!(Install::unique_default_label(root, root, &taken), "ComfyUI_windows_portable");
+        // The control: nothing taken, and the root's own name stays.
+        assert_eq!(Install::unique_default_label(root, root, &[]), "ComfyUI");
+    }
+
+    #[test]
+    fn when_every_folder_name_is_taken_the_whole_path_is_the_name() {
+        let root = std::path::Path::new("/A/ComfyUI");
+        let taken = vec!["ComfyUI".to_string(), "A".to_string()];
+        assert_eq!(
+            Install::unique_default_label(root, root, &taken),
+            crate::paths::display_path(root)
+        );
     }
 
     #[test]

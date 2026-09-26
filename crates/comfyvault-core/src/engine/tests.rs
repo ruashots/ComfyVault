@@ -357,6 +357,33 @@ fn a_second_long_operation_is_refused_while_one_runs() {
 }
 
 #[test]
+fn two_launcher_installs_get_two_different_names() {
+    // Both real roots are folders called ComfyUI. Named after the root alone,
+    // every screen showed two installs called ComfyUI.
+    let f = Fixture::new();
+    f.open_vault();
+    let mut labels = Vec::new();
+    for launcher in ["Easy-Install", "Portable"] {
+        let picked = f.dir.path().join(launcher);
+        crate::install::detect::fixtures::make_install(&picked.join("ComfyUI"));
+        labels.push(f.engine.register_install(&picked, None).unwrap().label);
+    }
+    assert_eq!(labels, vec!["Easy-Install", "Portable"]);
+
+    // The root picked directly, when another install already has its name.
+    let other = f.dir.path().join("Standalone");
+    crate::install::detect::fixtures::make_install(&other.join("ComfyUI"));
+    f.engine.rename_install(&f.engine.installs().unwrap()[0].id, "ComfyUI").unwrap();
+    let i = f.engine.register_install(&other.join("ComfyUI"), None).unwrap();
+    assert_eq!(i.label, "Standalone");
+
+    // A name the person gives always wins.
+    let named = f.dir.path().join("Named");
+    crate::install::detect::fixtures::make_install(&named.join("ComfyUI"));
+    assert_eq!(f.engine.register_install(&named, Some("Mine".into())).unwrap().label, "Mine");
+}
+
+#[test]
 fn a_model_is_not_deleted_with_its_links_while_a_long_operation_runs() {
     // A consolidation could be linking new copies to this very file.
     let f = Fixture::new();

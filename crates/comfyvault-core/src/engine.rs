@@ -484,7 +484,13 @@ impl Engine {
 
         let install = Install::from_candidate(
             uuid::Uuid::new_v4().to_string(),
-            label.unwrap_or_else(|| Install::default_label(&root)),
+            match label {
+                Some(l) => l,
+                None => {
+                    let taken: Vec<String> = store.installs()?.into_iter().map(|i| i.label).collect();
+                    Install::unique_default_label(path, &root, &taken)
+                }
+            },
             path.to_path_buf(),
             &candidate,
         )?;
