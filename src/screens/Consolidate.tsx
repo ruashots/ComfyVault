@@ -440,6 +440,9 @@ function DryRun() {
                         <span
                           class="who wide"
                           style={{ color: "var(--t-muted)", "font-size": "10px" }}
+                          title={
+                            app.installs().find((i) => i.id === group.source.installId)?.root
+                          }
                         >
                           {installNameOf(group.source.installId, app.installs())}
                         </span>
@@ -707,7 +710,14 @@ function BlockedRowView(props: { row: BlockedRow }) {
       <div class="grp-b">
         <div class="cp">
           <span class="role stay">{blockedRole(props.row.reason)}</span>
-          <span class="who">{props.row.installId ? installNameOf(props.row.installId, app.installs()) : "outside an install"}</span>
+          <span
+            class="who"
+            title={app.installs().find((i) => i.id === props.row.installId)?.root}
+          >
+            {props.row.installId
+              ? installNameOf(props.row.installId, app.installs())
+              : "outside an install"}
+          </span>
           <span class="pp">{props.row.absPath}</span>
         </div>
       </div>

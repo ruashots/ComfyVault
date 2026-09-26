@@ -334,6 +334,9 @@ describe("installs that the engine gave the same name", () => {
     );
     expect(who.has("ComfyUI")).toBe(false);
     expect([...who].every((w) => w === "ComfyUI-Studio" || w === "ComfyUI-Sandbox")).toBe(true);
+    for (const el of document.querySelectorAll(".grp .who")) {
+      expect(el.getAttribute("title")).toBe(`C:\\${el.textContent}`);
+    }
   });
 });
 
