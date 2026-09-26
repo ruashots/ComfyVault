@@ -1107,6 +1107,33 @@ fn a_record_that_points_outside_the_vault_deletes_nothing_there() {
 }
 
 #[test]
+fn a_second_name_that_points_outside_the_vault_removes_nothing_there() {
+    // A second name is a file name from the record. One that climbs out of
+    // the vault must be refused as outside, before anything is looked at,
+    // even when what it names is a link to this very model.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    let outside = w.path().join("outside/m.safetensors");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    w.platform.create_file_symlink(&outside, &file).unwrap();
+    let mut rec = w.store.vault_file(&sha).unwrap().unwrap();
+    rec.aliases = vec!["../../outside/m.safetensors".into()];
+    w.store.put_vault_file(&rec).unwrap();
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{err:?}");
+    assert!(w.is_link(&outside), "a link outside the vault was removed");
+    assert!(file.is_file());
+}
+
+#[test]
 fn with_the_file_gone_a_link_to_another_model_is_kept() {
     // Running a delete again after its file went has nothing to follow, so a
     // link must name the file. One that now leads to another model is not
