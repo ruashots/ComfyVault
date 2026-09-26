@@ -1,0 +1,27 @@
+{
+  "alreadyInVault": false,
+  "bytesDone": 6200000000,
+  "bytesPerSecond": null,
+  "bytesTotal": 9787841024,
+  "category": "text_encoders",
+  "downloadId": "8b0e3c52-2f3a-4d5e-9d61-1c8f0c2d7a11",
+  "error": {
+    "detail": "io: An existing connection was forcibly closed by the remote host. (os error 10054)",
+    "kind": "connection",
+    "message": "The connection to Hugging Face dropped. The part already downloaded is kept.",
+    "serviceMessage": null
+  },
+  "fileName": "t5xxl_fp16.safetensors",
+  "finishedAt": "2025-09-22T00:03:32Z",
+  "host": "huggingface",
+  "installIds": [
+    "inst-1",
+    "inst-2"
+  ],
+  "linkedInstallIds": [],
+  "notLinked": [],
+  "startedAt": "2025-09-22T00:00:00Z",
+  "state": "failed",
+  "title": "t5xxl_fp16.safetensors",
+  "vaultRelPath": "text_encoders\\t5xxl_fp16.safetensors"
+}

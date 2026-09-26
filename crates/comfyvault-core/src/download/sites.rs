@@ -476,6 +476,15 @@ fn civitai(
     }))
 }
 
+/// A Hugging Face model's page, from two names that must be plain Hugging
+/// Face names. The window names a page this way, never by its address.
+pub fn model_page_url(owner: &str, repo: &str) -> Result<String> {
+    if !super::address::is_hf_name(owner) || !super::address::is_hf_name(repo) {
+        return Err(VaultError::invalid("That is not a Hugging Face model."));
+    }
+    Ok(format!("https://huggingface.co/{owner}/{repo}"))
+}
+
 /// Asks a site whether a token is good, and for whose account.
 pub fn check_token(web: &dyn Web, sites: &Sites, host: Host, token: &str) -> Result<std::result::Result<Option<String>, String>> {
     let url = match host {

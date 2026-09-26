@@ -20,6 +20,9 @@ pub const APPLY_ERROR: &str = "apply:error";
 pub const REVERT_PROGRESS: &str = "revert:progress";
 pub const REVERT_DONE: &str = "revert:done";
 pub const REVERT_ERROR: &str = "revert:error";
+/// Every change to a download: its state, and its bytes up to four times a
+/// second. The payload is the whole `Download`.
+pub const DOWNLOAD_PROGRESS: &str = "download:progress";
 /// Raised when the vault remembered from last time could not be opened.
 pub const STARTUP_PROBLEM: &str = "app:startup-problem";
 

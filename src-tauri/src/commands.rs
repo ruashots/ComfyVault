@@ -41,8 +41,11 @@ use crate::AppEngine;
 /// samples come from the same serialiser the product uses.
 pub use comfyvault_core::reply::{
     Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted,
-    DirectoryListing, Removed, RemovedLinks, StartedApply, StartedScan, UnregisterResult,
+    DirectoryListing, Removed, RemovedLinks, StartedApply, StartedScan, TokenSaved,
+    UnregisterResult,
 };
+use comfyvault_core::download::sites::Host;
+use comfyvault_core::download::{AddressReading, Download, StartDownload, TokenStatus};
 
 type Reply<T> = Result<T, VaultError>;
 
@@ -799,6 +802,138 @@ pub async fn check_locked_files(
         Ok(e.locked_files(&paths))
     })
     .await
+}
+
+// ---------------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------------
+//
+// The token commands answer before a vault is open: a token is kept in
+// Windows Credential Manager, never in the vault.
+
+#[derive(Deserialize)]
+pub struct SetTokenArgs {
+    pub service: Host,
+    pub token: String,
+}
+
+#[derive(Deserialize)]
+pub struct ServiceArgs {
+    pub service: Host,
+}
+
+#[tauri::command]
+pub async fn set_token(state: State<'_, AppEngine>, args: SetTokenArgs) -> Reply<TokenSaved> {
+    let e = engine(&state);
+    blocking(move || Ok(TokenSaved { ok: true, account: e.set_token(args.service, &args.token)? })).await
+}
+
+#[tauri::command]
+pub async fn get_token_status(state: State<'_, AppEngine>, args: ServiceArgs) -> Reply<TokenStatus> {
+    let e = engine(&state);
+    blocking(move || e.token_status(args.service)).await
+}
+
+#[tauri::command]
+pub async fn remove_token(state: State<'_, AppEngine>, args: ServiceArgs) -> Reply<Removed> {
+    let e = engine(&state);
+    blocking(move || {
+        e.remove_token(args.service)?;
+        Ok(Removed { removed: true })
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadAddressArgs {
+    pub address: String,
+    #[serde(default)]
+    pub version_id: Option<u64>,
+    #[serde(default)]
+    pub file_id: Option<u64>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+#[tauri::command]
+pub async fn read_model_address(state: State<'_, AppEngine>, args: ReadAddressArgs) -> Reply<AddressReading> {
+    let e = engine(&state);
+    blocking(move || e.read_model_address(&args.address, args.version_id, args.file_id, args.category.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn start_download(state: State<'_, AppEngine>, args: StartDownload) -> Reply<Download> {
+    let e = engine(&state);
+    blocking(move || e.start_download(&args)).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadIdArgs {
+    pub download_id: String,
+}
+
+#[tauri::command]
+pub async fn stop_download(state: State<'_, AppEngine>, args: DownloadIdArgs) -> Reply<Download> {
+    let e = engine(&state);
+    blocking(move || e.stop_download(&args.download_id)).await
+}
+
+#[tauri::command]
+pub async fn continue_download(state: State<'_, AppEngine>, args: DownloadIdArgs) -> Reply<Download> {
+    let e = engine(&state);
+    blocking(move || e.continue_download(&args.download_id)).await
+}
+
+#[tauri::command]
+pub async fn discard_download(state: State<'_, AppEngine>, args: DownloadIdArgs) -> Reply<Removed> {
+    let e = engine(&state);
+    blocking(move || {
+        e.discard_download(&args.download_id)?;
+        Ok(Removed { removed: true })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn remove_download(state: State<'_, AppEngine>, args: DownloadIdArgs) -> Reply<Removed> {
+    let e = engine(&state);
+    blocking(move || {
+        e.remove_download(&args.download_id)?;
+        Ok(Removed { removed: true })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_downloads(state: State<'_, AppEngine>) -> Reply<Vec<Download>> {
+    let e = engine(&state);
+    blocking(move || e.list_downloads()).await
+}
+
+#[derive(Deserialize)]
+pub struct HuggingFacePageArgs {
+    pub owner: String,
+    pub repo: String,
+}
+
+/// Opens a model's page on Hugging Face in the default browser.
+///
+/// The window sends the Hugging Face owner and repository names, and the engine builds
+/// the address from them, only after both are plain Hugging Face names. So
+/// nothing the window holds can choose another page or another site.
+#[tauri::command]
+pub async fn open_huggingface_page<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    args: HuggingFacePageArgs,
+) -> Reply<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = comfyvault_core::download::sites::model_page_url(&args.owner, &args.repo)?;
+    app.opener().open_url(url, None::<&str>).map_err(|e| {
+        VaultError::new(ErrorCode::IoError, "Windows did not open the Hugging Face page.")
+            .with_detail(e.to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------

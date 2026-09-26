@@ -533,9 +533,87 @@ model's name, version, base model, trigger words and the link to its page, and
 the Library shows them when you open a model.
 
 The lookup is on by default. The **Civitai lookup** switch in Settings turns it
-off, and then ComfyVault uses no network at all.
+off, and then ComfyVault uses the network only for a download you start.
 
 - A file Civitai does not know stays without a label. That is normal. The
   answer is remembered, so the file is not asked about again.
 - If Civitai cannot be reached, Settings says so, and ComfyVault asks again
   after the next scan. A scan, a plan and a run never wait for a lookup.
+
+---
+
+## 13. Downloading a model
+
+The Download screen takes the address of a model on Hugging Face or Civitai.
+For Hugging Face, it is the address of one file, from that file's page. For
+Civitai, it is a model page, with or without a version.
+
+### Reading the address
+
+ComfyVault asks the site what the address names: the file, its size, and its
+SHA-256 when the site states it. Civitai states it for every file. Hugging
+Face states it for a large file, and not for a small one stored without LFS.
+
+It also asks for the file itself, with your token if you saved one, and
+reads the answer without following it. So a model that needs an account, or
+that your account has no access to, is refused here, before anything is
+downloaded. The site's own words are shown as it wrote them.
+
+### Where it goes
+
+The file goes into the vault, in the folder you choose. ComfyVault suggests
+one: from Civitai's kind of model, or from a folder name in the Hugging Face
+path.
+
+Each install you tick gets a link, in the folder where that install's ComfyUI
+saves new files of that kind. That is `models\{folder}`, unless the install's
+`extra_model_paths.yaml` marks another folder `is_default` for that kind.
+This follows ComfyUI's own code.
+
+An install where a different file already has that name, in any folder
+ComfyUI searches for that kind, cannot be ticked. Only one of the two files
+would load, so ComfyVault leaves that install alone.
+
+If the vault already holds the same file, nothing is downloaded. The installs
+you tick get links to the file that is there.
+
+### The transfer
+
+One download runs at a time. The bytes go into a part file inside the
+vault's own `.comfyvault` folder, on the vault's drive, so moving it into
+place at the end is a rename. ComfyVault needs the file's size plus 5 GB free
+on that drive.
+
+Both sites send the download on to a storage address that is signed and
+expires. ComfyVault asks the site again every time a download starts or
+continues, and never reuses an old storage address. Your token goes only to
+the site, never to the storage address.
+
+A stopped, failed or cut-off download keeps its part. Continue asks for the
+rest only, and names the version the part came from. If the file changed on
+the site since, the storage sends the whole file, and the old part is
+dropped rather than joined to the new one.
+
+Nothing is tried again without you. A dropped line, a line silent for 30
+seconds, an expired storage address, a refusal part way and a full drive
+each stop the download and say what happened.
+
+### Before anything is linked
+
+The whole file is hashed. If it is not the file the site named, it is
+deleted, nothing goes into the vault, and nothing is linked. With no SHA-256
+from the site, the hash is used to check whether the vault already holds the
+file.
+
+Then the file is renamed into the vault, never over anything, and each ticked
+install gets its link. Each step is written to the journal first. If the app
+closes after the file went into the vault, Continue finds it, checks it, and
+makes the record and the links.
+
+### Your tokens
+
+Each token is kept in Windows Credential Manager, under your Windows account
+on this PC. It is not in the vault folder, so it does not travel with the
+vault. ComfyVault checks a token with the site before it saves it, and never
+shows it again.
+

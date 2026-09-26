@@ -72,6 +72,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let engine = Engine::new(config_path(&app.handle().clone()));
+            engine.set_download_sink(std::sync::Arc::new(events::EventSink::<comfyvault_core::download::Download>::new(
+                app.handle().clone(),
+                events::DOWNLOAD_PROGRESS,
+            )));
 
             // Open last time's vault, if it is still there. A vault on a drive
             // that is not plugged in must not stop the window from appearing,
@@ -138,6 +142,17 @@ pub fn run() {
             commands::get_running_comfy,
             commands::open_task_manager,
             commands::open_civitai_page,
+            commands::set_token,
+            commands::get_token_status,
+            commands::remove_token,
+            commands::read_model_address,
+            commands::start_download,
+            commands::stop_download,
+            commands::continue_download,
+            commands::discard_download,
+            commands::remove_download,
+            commands::list_downloads,
+            commands::open_huggingface_page,
             commands::check_locked_files,
             commands::list_directory,
             commands::create_directory,

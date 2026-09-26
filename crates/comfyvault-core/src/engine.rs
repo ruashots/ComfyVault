@@ -141,7 +141,9 @@ pub struct Engine {
     /// checks its links and then removes them, and a link made in between
     /// would be left pointing at nothing. These commands are quick, so one
     /// waiting for another is never noticed.
-    vault_writes: Mutex<()>,
+    vault_writes: Arc<Mutex<()>>,
+    /// Downloads run beside everything else and take no long-operation slot.
+    downloads: Arc<crate::download::Downloader>,
     config_path: PathBuf,
 }
 
@@ -152,11 +154,27 @@ impl Engine {
     }
 
     pub fn with_platform(config_path: PathBuf, platform: Arc<dyn Platform>) -> Arc<Self> {
+        let downloads = crate::download::Downloader::new(
+            Arc::new(crate::download::http::UreqWeb::new()),
+            crate::download::sites::Sites::default(),
+            crate::download::tokens::system_store(),
+        );
+        Self::with_parts(config_path, platform, downloads)
+    }
+
+    /// An engine with the downloads pointed somewhere of the caller's
+    /// choosing, for tests.
+    pub fn with_parts(
+        config_path: PathBuf,
+        platform: Arc<dyn Platform>,
+        downloads: crate::download::Downloader,
+    ) -> Arc<Self> {
         Arc::new(Self {
             platform,
             store: RwLock::new(None),
             busy: Mutex::new(None),
-            vault_writes: Mutex::new(()),
+            vault_writes: Arc::new(Mutex::new(())),
+            downloads: Arc::new(downloads),
             config_path,
         })
     }
@@ -219,6 +237,73 @@ impl Engine {
         let cancel = CancelToken::new();
         *g = Some((BusyOp { kind, id: id.to_string() }, cancel.clone()));
         Ok(cancel)
+    }
+
+    fn context(&self, store: &Arc<Store>) -> crate::download::Context {
+        crate::download::Context {
+            store: Arc::clone(store),
+            platform: Arc::clone(&self.platform),
+            vault_writes: Arc::clone(&self.vault_writes),
+        }
+    }
+
+    fn open_context(&self) -> Result<crate::download::Context> {
+        Ok(self.context(&self.store()?))
+    }
+
+    // -- downloads --------------------------------------------------------
+
+    /// Where download updates go. The window sets this once, at start.
+    pub fn set_download_sink(&self, sink: Arc<dyn crate::progress::ProgressSink<crate::download::Download>>) {
+        self.downloads.set_sink(sink);
+    }
+
+    pub fn set_token(&self, host: crate::download::sites::Host, token: &str) -> Result<Option<String>> {
+        self.downloads.set_token(host, token)
+    }
+
+    pub fn token_status(&self, host: crate::download::sites::Host) -> Result<crate::download::TokenStatus> {
+        self.downloads.token_status(host)
+    }
+
+    pub fn remove_token(&self, host: crate::download::sites::Host) -> Result<bool> {
+        self.downloads.remove_token(host)
+    }
+
+    pub fn read_model_address(
+        &self,
+        address: &str,
+        version_id: Option<u64>,
+        file_id: Option<u64>,
+        category: Option<&str>,
+    ) -> Result<crate::download::AddressReading> {
+        let ctx = self.open_context()?;
+        self.downloads.read_address(&ctx, address, version_id, file_id, category)
+    }
+
+    pub fn start_download(&self, req: &crate::download::StartDownload) -> Result<crate::download::Download> {
+        let ctx = self.open_context()?;
+        self.downloads.start(&ctx, req)
+    }
+
+    pub fn stop_download(&self, id: &str) -> Result<crate::download::Download> {
+        self.downloads.stop(&self.open_context()?, id)
+    }
+
+    pub fn continue_download(&self, id: &str) -> Result<crate::download::Download> {
+        self.downloads.resume(&self.open_context()?, id)
+    }
+
+    pub fn discard_download(&self, id: &str) -> Result<()> {
+        self.downloads.discard(&self.open_context()?, id)
+    }
+
+    pub fn remove_download(&self, id: &str) -> Result<()> {
+        self.downloads.remove(&self.open_context()?, id)
+    }
+
+    pub fn list_downloads(&self) -> Result<Vec<crate::download::Download>> {
+        self.downloads.list(&self.open_context()?)
     }
 
     /// Waits for any other command that changes links or vault names.
@@ -317,6 +402,12 @@ impl Engine {
         crate::apply::fsops::remove_leftovers(&store.temp_dir());
 
         let info = self.vault_info_of(&store)?;
+        // A transfer writes into the vault it started in. It stops, with its
+        // part kept, before that vault stops being the open one.
+        if let Some(current) = self.store.read().ok().and_then(|g| g.clone()) {
+            self.downloads.close(Some(&self.context(&current)));
+        }
+        self.downloads.on_open(&self.context(&store))?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
         AppConfig { vault_root: Some(PathBuf::from(&info.root)) }.save(&self.config_path)?;
@@ -415,6 +506,9 @@ impl Engine {
     pub fn close_vault(&self) -> Result<()> {
         if let Some(op) = self.busy() {
             return Err(VaultError::busy(op.kind.word()));
+        }
+        if let Some(current) = self.store.read().ok().and_then(|g| g.clone()) {
+            self.downloads.close(Some(&self.context(&current)));
         }
         if let Ok(mut g) = self.store.write() {
             *g = None;

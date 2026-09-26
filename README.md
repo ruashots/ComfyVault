@@ -182,10 +182,6 @@ choose.
 
 ## What it will not do
 
-**It does not download models.** The Download screen says so. Downloads from
-Hugging Face and Civitai are not in this version. Download the way you always
-do, then scan again.
-
 **Consolidated models show no picture in ComfyUI's model browser**, from
 ComfyUI 0.28 on. ComfyUI refuses to serve a preview image through a per-file
 link. This is a security fix in ComfyUI, and it will not be reverted. Loading
@@ -260,11 +256,16 @@ come first, and you can remove them. A file that arrived under two names can
 keep the name you pick, and the other name stays as a link so saved workflows
 still open. Vault files that nothing points at come last.
 
-**Download** is empty in this version, and says so.
+**Download** takes the address of a model on Hugging Face or Civitai. It shows
+the file, its size and its folder before anything is downloaded, then puts the
+file in the vault and links it in the installs you tick. The file is checked
+against its SHA-256 before it goes into the vault. A download can be stopped
+and continued, and one cut off by a closed app continues from where it
+stopped.
 
-**Settings** holds your installs, the vault folder, the scan rules and the
-Civitai switch. It also checks Developer Mode again, and which ComfyUI programs
-are running.
+**Settings** holds your installs, the vault folder, the scan rules, the
+Civitai switch, and your Hugging Face and Civitai tokens. It also checks
+Developer Mode again, and which ComfyUI programs are running.
 
 ---
 
@@ -291,10 +292,16 @@ off.** After a scan, ComfyVault sends the SHA-256 hash of each model file
 it has not asked about before to Civitai, to find the model's name, base model,
 trigger words and page. No file name and no path is sent. The lookup
 is on by default. **Turn it off with the Civitai lookup switch in Settings**,
-and ComfyVault uses no network at all. Everything else works the same without
-it.
+and ComfyVault uses the network only for a download you start. Everything else
+works the same without it.
 
-There is no account, no API key and no telemetry.
+**A download goes only to the site you pasted.** Some models download only for
+a signed-in account. For those, paste your own Hugging Face token or Civitai
+key in Settings. ComfyVault keeps each one in Windows Credential Manager on
+this PC, never in the vault folder, and sends it only to the site it belongs
+to.
+
+There is no ComfyVault account and no telemetry.
 
 ---
 

@@ -21,7 +21,10 @@ fn open(url: &str) -> Result<(), String> {
 fn call(cmd: &str, body: serde_json::Value) -> Result<(), String> {
     let app = mock_builder()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![comfyvault_lib::commands::open_civitai_page])
+        .invoke_handler(tauri::generate_handler![
+            comfyvault_lib::commands::open_civitai_page,
+            comfyvault_lib::commands::open_huggingface_page
+        ])
         .build(tauri::generate_context!())
         .expect("build the app");
     let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -117,6 +120,43 @@ fn a_civitai_page_is_named_by_numbers_and_nothing_else() {
         let err = call("open_civitai_page", bad.clone()).expect_err(&bad.to_string());
         assert!(err.contains("invalid args"), "{bad}: {err}");
     }
+}
+
+#[test]
+fn a_hugging_face_page_is_named_by_plain_names_and_nothing_else() {
+    // Each of these is refused before anything opens: the engine builds the
+    // address only from two plain Hugging Face names.
+    for (owner, repo) in [
+        ("..", "x"),
+        ("o", "../../settings/tokens"),
+        ("o/evil", "r"),
+        ("o", "r?x=1"),
+        ("o", "r#x"),
+        ("o", "r --flag"),
+        ("o\"", "r"),
+        ("o", "r\nhttps://evil.example/"),
+        ("evil.example@o", "r"),
+        ("", "r"),
+    ] {
+        let err = call("open_huggingface_page", serde_json::json!({ "args": { "owner": owner, "repo": repo } }))
+            .expect_err(&format!("{owner}/{repo}"));
+        assert!(err.contains("not a Hugging Face model"), "{owner}/{repo}: {err}");
+    }
+    // The window's own opener does not open Hugging Face either.
+    let err = open("https://huggingface.co/o/r").expect_err("opened");
+    assert!(err.contains("Not allowed to open url"), "{err}");
+}
+
+/// Opens a real Hugging Face model page in the default browser, so it runs
+/// only when asked: `--ignored`.
+#[test]
+#[ignore]
+fn a_hugging_face_model_page_opens() {
+    call(
+        "open_huggingface_page",
+        serde_json::json!({ "args": { "owner": "Comfy-Org", "repo": "flux1-dev" } }),
+    )
+    .expect("the model page did not open");
 }
 
 /// Opens a real Civitai model page in the default browser, so it runs only

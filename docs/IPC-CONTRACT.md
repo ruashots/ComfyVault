@@ -145,6 +145,8 @@ These are the only calls that answer in that state:
 | `list_drives` | every drive on this computer, with its size and its free space |
 | `open_task_manager` | it opens a Windows program, and reads nothing in the vault |
 | `open_civitai_page` | it opens a web page, and reads nothing in the vault |
+| `open_huggingface_page` | the same |
+| `set_token`, `get_token_status`, `remove_token` | a token lives in Windows Credential Manager, not in the vault |
 
 `select_vault` is the way out of the state, and it works.
 
@@ -199,6 +201,9 @@ except `delete_vault_file` with `removeLinks: true`, which section 8.8
 describes. While that delete runs, the commands that change a link or a vault
 name wait for it to finish. It removes links and one file, so the wait is
 short.
+
+A download is not a long operation. It runs beside a scan, a consolidation
+and an undo, and section 16.3 says how they meet.
 
 ---
 
@@ -414,19 +419,18 @@ nobody can see.
 `update_settings` takes a partial object. Every field is optional. The engine
 applies only the fields that are present.
 
-There is **no Civitai key**, and the interface must not offer a field for one.
+There is no Civitai key and no Hugging Face token in `Settings`. Both live in
+Windows Credential Manager, and section 16.1 has the commands.
 
 Looking a model up by hash needs no credential. That was checked against the
 live service: the same request unauthenticated, with a bogus bearer token, and
 with a token on the query string all return the same answer, byte for byte.
-Civitai gates *downloading*, and this version does not download.
+The lookup therefore never sends a token.
 
-A key field would therefore store a credential for a feature nobody can reach,
-at rest in the vault database, in a folder this product tells the person to
-carry on a portable drive they might lend, sell, or back up somewhere shared.
-
-Whoever adds downloading adds the key then, and puts it in the operating
-system's credential store, where it is bound to the machine and the account.
+A token is kept out of the vault on purpose. The vault is a folder this
+product tells the person to carry on a portable drive they might lend, sell,
+or back up somewhere shared, and its database would hold the token in the
+clear. Credential Manager binds it to the machine and the Windows account.
 
 ---
 
@@ -2222,6 +2226,7 @@ consolidated models, and that nothing else changes.
 | `revert:progress` | `RevertProgress` | `revert_apply` |
 | `revert:done` | `ApplyRecord` | `revert_apply` |
 | `revert:error` | `VaultError` | `revert_apply` |
+| `download:progress` | `Download` | `start_download`, `continue_download`, `stop_download`, and the transfer itself |
 
 Subscribe before you call the command that starts the work:
 
@@ -2290,6 +2295,17 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `remove_dangling_links` | 8.9 |
 | `list_directory` | 15.1 |
 | `create_directory` | 15.2 |
+| `set_token` | 16.1 |
+| `get_token_status` | 16.1 |
+| `remove_token` | 16.1 |
+| `read_model_address` | 16.2 |
+| `start_download` | 16.3 |
+| `stop_download` | 16.5 |
+| `continue_download` | 16.5 |
+| `discard_download` | 16.5 |
+| `remove_download` | 16.5 |
+| `list_downloads` | 16.5 |
+| `open_huggingface_page` | 16.6 |
 
 ---
 
@@ -2350,3 +2366,373 @@ This command is deliberately not limited to an install, because a vault can
 live anywhere. `select_vault` separately refuses a vault inside a registered
 install. To create a folder **inside** an install, use `create_model_folder`
 from section 7.3, which checks that the folder is somewhere ComfyUI reads.
+
+---
+
+## 16. Downloading a model
+
+The person pastes the address of a model on Hugging Face or Civitai. The
+engine reads it, the person confirms, and the engine downloads the file into
+the vault and links it in the installs the person ticked.
+
+Every download runs in the engine, never in the window. Nothing in the
+window's own network rules changes.
+
+### 16.1 Tokens
+
+Some models download only for a signed-in account. Each person pastes their
+own Hugging Face token and Civitai key. The engine keeps each one in Windows
+Credential Manager, under this Windows account, on this computer, as the
+generic credentials `ComfyVault/huggingface` and `ComfyVault/civitai`. A token
+is never written to the vault, to a log, to an error, to an event or to the
+journal, and no command returns it. A token is sent only to the site it
+belongs to, in an `Authorization: Bearer` header, and never to the storage
+address a site sends a download to.
+
+These three commands answer before a vault is open.
+
+#### `set_token`
+
+Arguments: `{ service: 'huggingface' | 'civitai', token: string }`.
+
+The engine asks the site first: Hugging Face `api/whoami-v2`, Civitai
+`api/v1/me`. It saves the token only if the site accepts it.
+
+Returns:
+
+```ts
+type TokenSaved = {
+  ok: boolean                // always true
+  account: string | null     // the Hugging Face account name. null for Civitai.
+}
+```
+
+Errors:
+
+| Code | When |
+|---|---|
+| `invalidArgument` | The text is empty, or is not one line of visible characters. |
+| `conflict` | The site did not accept the token. `detail` is the site's own message. |
+| `networkUnavailable` | The site did not answer. Nothing was saved. |
+| `permissionDenied` | Credential Manager refused. |
+
+#### `get_token_status`
+
+Arguments: `{ service: 'huggingface' | 'civitai' }`.
+
+```ts
+type TokenStatus = {
+  saved: boolean
+  ok: boolean | null        // null: not saved, or the site did not answer
+  account: string | null
+  message: string | null    // the site's words when it refused, or why it was not checked
+}
+```
+
+With a saved token, this asks the site each time.
+
+#### `remove_token`
+
+Arguments: `{ service: 'huggingface' | 'civitai' }`. Returns `{ removed: true }`.
+
+### 16.2 `read_model_address`
+
+Reads an address and says what a download would do. Nothing is downloaded.
+
+Arguments:
+
+```ts
+{
+  address: string
+  versionId?: number     // Civitai: another version than the one chosen
+  fileId?: number        // Civitai: another file of the version
+  category?: string      // the folder the person chose in the menu
+}
+```
+
+The addresses it reads:
+
+- `huggingface.co/{owner}/{repo}/blob/{revision}/{path}` and
+  `.../resolve/{revision}/{path}`, with or without `?download=true`.
+- `civitai.com/models/{id}` and `civitai.com/models/{id}/{slug}`, both with
+  or without `?modelVersionId={v}`, and `civitai.com/api/download/models/{v}`.
+
+Anything else is refused before any request. So is a path part that decodes
+to a folder separator.
+
+Returns one of two branches, never both:
+
+```ts
+type AddressReading = {
+  plan: AddressPlan | null
+  refusal: AddressRefusal | null
+}
+```
+
+```ts
+type AddressRefusal = {
+  kind: 'badAddress' | 'hfRepoNotFile' | 'tokenMissing' | 'tokenRejected' | 'noAccess' | 'notFound'
+  host: 'huggingface' | 'civitai' | null     // null for badAddress
+  serviceMessage: string | null              // the site's own words, verbatim
+  page: HfPage | null                        // Hugging Face: for "Open the model's page"
+}
+```
+
+`serviceMessage` is text from the network. Show it as text, never as markup.
+
+How a site's answer becomes a `kind`:
+
+| The site answers | `kind` |
+|---|---|
+| Hugging Face 401, no token saved | `tokenMissing` |
+| Hugging Face 401, with a token | `tokenRejected` |
+| Hugging Face 403 | `noAccess`, or `tokenMissing` with no token saved |
+| Hugging Face `x-error-code` `RepoNotFound`, `EntryNotFound` or `RevisionNotFound`, whatever the status | `notFound` |
+| Civitai 401, no token saved | `tokenMissing` |
+| Civitai 401, with a token | `tokenRejected` |
+| Civitai 403 | `noAccess`, or `tokenMissing` with no token saved |
+| 404 on either site | `notFound` |
+
+The engine finds a refusal while reading the address. It asks for the file
+itself with the saved token, and does not follow the redirect.
+
+```ts
+type AddressPlan = {
+  host: 'huggingface' | 'civitai'
+  title: string                 // the Civitai model's name, or the Hugging Face file name
+  subtitle: string              // the Civitai model's address, or the Hugging Face owner/repo
+  versions: VersionChoice[]     // Civitai only, newest first
+  versionId: number | null
+  files: FileChoice[]           // Civitai only, the primary file first
+  fileId: number | null
+  fileName: string
+  sizeBytes: number
+  sha256: string | null         // uppercase; null for a small Hugging Face file stored without LFS
+  suggestedCategory: string | null
+  suggestedBecause: string | null
+  category: string | null       // the folder this plan was worked out for
+  categories: string[]          // the folder menu
+  alreadyInVault: AlreadyInVault | null
+  vaultRelPath: string | null   // null while category is null
+  vaultNameTaken: boolean
+  installs: InstallTarget[]
+  vaultFreeBytes: number | null
+  spaceNeededBytes: number
+  page: HfPage | null
+  modelId: number | null
+}
+
+type VersionChoice = { id: number, name: string }
+type FileChoice = { id: number, name: string, sizeBytes: number, detail: string }
+type HfPage = { owner: string, repo: string }
+type AlreadyInVault = {
+  vaultRelPath: string
+}
+
+type InstallTarget = {
+  installId: string
+  linkPath: string | null       // null while category is null, and for an unavailable install
+  state: 'free' | 'hasLink' | 'nameTaken' | 'unavailable'
+  ticked: boolean
+}
+```
+
+- `sizeBytes` is exact for Hugging Face. Civitai states sizes in kilobytes, so
+  for Civitai it is close. The transfer uses the exact size the storage sends.
+- `suggestedCategory` comes from Civitai's `type` (`Checkpoint` goes to
+  `checkpoints`; `LORA`, `LoCon` and `DoRA` to `loras`; `TextualInversion` to
+  `embeddings`; `VAE` to `vae`; `Controlnet` to `controlnet`; `Upscaler` to
+  `upscale_models`), or from the deepest folder in the Hugging Face path that
+  names a category. Anything else suggests nothing.
+- `category` is the argument, or else `suggestedCategory`. When it is null,
+  `vaultRelPath` and every `linkPath` are null, and a download cannot start.
+- `categories` holds ComfyUI's own categories and every folder the vault
+  already has, sorted.
+- `vaultNameTaken` says that a different model already has this name in this
+  vault folder. With a known SHA-256, `vaultRelPath` already carries the tag,
+  for example `checkpoints\dreamshaper_8__879DB523.safetensors`. Without one,
+  `vaultRelPath` shows the plain name, and the tag is added when the file is
+  in hand. A link always keeps the plain name.
+- `alreadyInVault`: the vault holds a file with this SHA-256. Nothing will be
+  downloaded, and `spaceNeededBytes` is 0.
+- `spaceNeededBytes` is `sizeBytes` plus 5,000,000,000 bytes kept free on the
+  vault's drive. `start_download` refuses below it.
+- `ticked`: the first time, every install whose `state` is `free`. After
+  that, the installs ticked for the last download. An install with state
+  `hasLink` is always ticked. An install with state `nameTaken` or
+  `unavailable` is never ticked.
+
+#### Where a link goes
+
+This follows ComfyUI's own `folder_paths.py` and `utils/extra_config.py`,
+read on 2026-09-26:
+
+- Each built-in category starts with a fixed list of folders under `models`.
+  `diffusion_models` lists `models\unet` first, then
+  `models\diffusion_models`. `text_encoders` lists `models\text_encoders`,
+  then `models\clip`. `controlnet` lists `models\controlnet`, then
+  `models\t2i_adapter`.
+- `extra_model_paths.yaml` is read in file order. A folder marked
+  `is_default: true` is put first in its category's list, so the last such
+  folder in the file ends up first. Any other folder is added at the end.
+- The output model folders are added after that.
+- To load a model by name, ComfyUI takes the first folder in the list that
+  holds a file of that name.
+
+So:
+
+- **The link goes where ComfyUI saves new files of that category.** That is
+  the folder `extra_model_paths.yaml` marks `is_default: true` for the
+  category, if there is one, and otherwise `models\{category}`. A category
+  that ComfyUI does not know itself, and that only the YAML file names, goes
+  into the first folder the YAML file gives it. A YAML folder that contains
+  the whole install is never used; the link then goes into
+  `models\{category}`.
+- **A name is taken when any folder ComfyUI searches for that category, in
+  that install, already holds it.** One of the two files would never load,
+  wherever the link went. That install's `state` is `nameTaken`, and nothing
+  in it is touched.
+- Two installs whose YAML files name the same shared folder get the same
+  `linkPath`. One link serves both.
+
+### 16.3 `start_download`
+
+Arguments:
+
+```ts
+{
+  address: string
+  versionId?: number
+  fileId?: number
+  category: string
+  installIds: string[]     // may be empty: the file is then only in the vault
+}
+```
+
+Returns a `Download`.
+
+The engine reads the address again, so this takes a few seconds, and it can
+refuse as `read_model_address` can. A refusal comes back as `conflict`, with
+the site's words in `detail`. The engine also refuses with `ioError` when the
+vault's drive has less free space than `spaceNeededBytes`, and with
+`notFound` for an install that is not registered.
+
+With the model already in the vault, the engine makes the links at once,
+transfers nothing, and returns the download in state `linkedOnly`.
+
+Otherwise the download is queued. One transfer runs at a time, in the order
+they were started. A download runs beside a scan, a consolidation and an
+undo, and does not take their place. None of them ever writes over a file,
+so a name that one of them takes first makes the other end with a clear
+message rather than overwrite it.
+
+### 16.4 A download
+
+```ts
+type Download = {
+  downloadId: string
+  host: 'huggingface' | 'civitai'
+  title: string
+  fileName: string
+  category: string
+  vaultRelPath: string          // where it goes, and in the end where it went
+  installIds: string[]          // the installs to link
+  linkedInstallIds: string[]    // the installs linked, once done or linkedOnly
+  notLinked: NotLinked[]
+  alreadyInVault: boolean
+  state: 'waiting' | 'running' | 'checking' | 'stopped' | 'failed' | 'mismatch' | 'cutOff' | 'done' | 'linkedOnly'
+  bytesDone: number
+  bytesTotal: number
+  bytesPerSecond: number | null // over the last 5 seconds; null until known
+  error: DownloadError | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+type NotLinked = {
+  installId: string
+  reason: string                // one sentence to show as it is
+}
+
+type DownloadError = {
+  kind: 'connection' | 'refused' | 'expired' | 'noSpace' | 'mismatch' | 'disk' | 'changedOnSite'
+  message: string               // one sentence for the person
+  serviceMessage: string | null // the site's own words, verbatim
+  detail: string | null         // what the connection or the disk reported, for a details panel
+}
+```
+
+What happens, in order:
+
+1. **Running.** The engine asks the site's own address again every time, since
+   a signed storage address expires, and never reuses an old one. It follows
+   the redirect itself, without the token. The bytes go into a part file in
+   the vault's own `.comfyvault\downloads` folder, on the vault's drive. A kept
+   part continues with an HTTP `Range` request, and `If-Range` names the
+   version it came from. A file that changed on the site is then sent whole,
+   and the old part is dropped, never joined to the new one.
+2. **Checking.** The whole file is hashed. If it does not match the SHA-256 the
+   site gave, the file is deleted, nothing goes into the vault, nothing is
+   linked, and the state is `mismatch`. With no SHA-256 known, the hash just
+   computed is used. If the vault already holds that content, the new file is
+   deleted, the links go to the file already there, and `alreadyInVault` is
+   true.
+3. **Done.** The file is renamed into the vault, never over anything. Then each
+   ticked install gets its link, as section 16.2 says. Each step is written to
+   the journal before it happens, under the run name `download-{downloadId}`,
+   which is never a run to finish or undo. An install that cannot take its
+   link at the end, for example because a file of that name appeared there,
+   is listed in `notLinked`. The model stays in the vault, and the state is
+   still `done`.
+
+**No silent retry.** A dropped line, a line silent for 30 seconds, an expired
+storage address, a 401 or 403 in the middle, and a full drive each end the
+attempt as `failed`, with its `kind`, and the part is kept. The engine does not
+try again on its own. `continue_download` tries again.
+
+`changedOnSite`: the site now gives a different SHA-256 for this file than
+when the download started. Discard it and read the address again.
+
+#### After the app closes
+
+A download that was `waiting`, `running` or `checking` when the app closed
+comes back as `cutOff`, with `bytesDone` read from its part. Nothing starts
+by itself. `stopped` and `failed` downloads stay as they were. `done`,
+`linkedOnly` and `mismatch` downloads are gone from the list, since nothing
+of them is left on disk to keep.
+
+A download cut off after its file went into the vault finishes when it is
+continued: the engine finds the file where the journal says, checks its
+SHA-256, and makes the record and the links.
+
+`close_vault`, and `select_vault` for another vault, stop the transfer first,
+and the part is kept. The download shows as `stopped` when the vault opens
+again.
+
+### 16.5 Commands on a download
+
+All take `{ downloadId: string }`.
+
+| Command | Returns | Allowed when | Does |
+|---|---|---|---|
+| `stop_download` | `Download` | `waiting`, `running`, `checking` | Stops it at once. The part is kept. |
+| `continue_download` | `Download` | `stopped`, `failed`, `cutOff`, `mismatch` | Queues it again. It reads the address again and carries on from the part. |
+| `discard_download` | `{ removed: true }` | not `waiting`, `running` or `checking` | Deletes the part, and removes the download from the list. |
+| `remove_download` | `{ removed: true }` | `done`, `linkedOnly`, `mismatch`, or `waiting` with no part | Removes it from the list. |
+
+A command used in another state rejects with `conflict`. `list_downloads`
+takes no argument and returns `Download[]`, in the order they were started.
+
+### 16.6 `open_huggingface_page`
+
+Arguments: `{ owner: string, repo: string }`. Returns `null`.
+
+Opens `https://huggingface.co/{owner}/{repo}` in the default browser. The
+window sends the two names, never an address, and the engine refuses a name
+that is not a plain Hugging Face name, with `invalidArgument`. It answers
+before a vault is open.
+
+### 16.7 `download:progress`
+
+The payload is a `Download`. It is sent on every change of state, and at most
+4 times a second while bytes move.

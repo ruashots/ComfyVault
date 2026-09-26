@@ -795,14 +795,15 @@ impl Downloader {
                 return self.fail(
                     ctx,
                     &mut d,
-                    Failure { kind: FailureKind::Refused, message, service_message: r.service_message },
+                    Failure { kind: FailureKind::Refused, message, service_message: r.service_message, detail: None },
                 );
             }
             Err(e) if e.code == ErrorCode::NetworkUnavailable => {
                 return self.fail(
                     ctx,
                     &mut d,
-                    Failure::new(FailureKind::Connection, format!("{site} did not answer. The part already downloaded is kept.")),
+                    Failure::new(FailureKind::Connection, format!("{site} did not answer. The part already downloaded is kept."))
+                        .with_detail(e.detail.unwrap_or(e.message)),
                 );
             }
             Err(e) => return Err(e),

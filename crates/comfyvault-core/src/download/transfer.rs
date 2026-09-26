@@ -48,11 +48,19 @@ pub struct Failure {
     pub message: String,
     /// The site's own words, when it said something.
     pub service_message: Option<String>,
+    /// What the connection or the disk reported, for a details panel. Never
+    /// an address.
+    pub detail: Option<String>,
 }
 
 impl Failure {
     pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into(), service_message: None }
+        Self { kind, message: message.into(), service_message: None, detail: None }
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 }
 
@@ -109,7 +117,8 @@ pub fn run(
             .filter(|l| l.starts_with("https://") || l.starts_with("http://"))
             .ok_or_else(|| Failure::new(FailureKind::Connection, format!("{host} sent the download somewhere ComfyVault cannot follow.")))?;
         // The storage address carries its own signature. No token goes there.
-        web.send(&ranged(Request::get(&to), have), None).map_err(|e| dropped(host, &e.message))?
+        web.send(&ranged(Request::get(&to), have), None)
+            .map_err(|e| dropped(host, e.detail.as_deref().unwrap_or(&e.message)))?
     } else {
         first
     };
@@ -196,6 +205,7 @@ fn refused(host: Host, reply: Reply, had_token: bool) -> Failure {
         kind: FailureKind::Refused,
         message: format!("{} refused the download part way.", host.name()),
         service_message: refusal.and_then(|r| r.service_message),
+        detail: None,
     }
 }
 
@@ -211,15 +221,16 @@ fn expired(host: &str, reply: Reply) -> Failure {
         kind: FailureKind::Expired,
         message: format!("The download address {host} gave is no longer valid. Continue reads the address again, and the part already downloaded is kept."),
         service_message: said,
+        detail: None,
     }
 }
 
 fn dropped(host: &str, detail: &str) -> Failure {
-    let _ = detail;
     Failure::new(
         FailureKind::Connection,
         format!("The connection to {host} dropped. The part already downloaded is kept."),
     )
+    .with_detail(detail)
 }
 
 fn disk(e: &std::io::Error, part: &Path) -> Failure {
@@ -228,7 +239,8 @@ fn disk(e: &std::io::Error, part: &Path) -> Failure {
         return Failure::new(
             FailureKind::NoSpace,
             "The vault's drive is full. Free some space, then continue. The part already downloaded is kept.",
-        );
+        )
+        .with_detail(e.to_string());
     }
     Failure::new(
         FailureKind::Disk,

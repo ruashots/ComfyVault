@@ -54,6 +54,16 @@ pub struct Deleted {
     pub links_removed: Vec<String>,
 }
 
+/// A token the site accepted and the engine saved.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenSaved {
+    pub ok: bool,
+    /// The account the site knows the token as, when it says. Hugging Face
+    /// does; Civitai does not.
+    pub account: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemovedLinks {

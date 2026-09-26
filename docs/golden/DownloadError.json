@@ -1,0 +1,6 @@
+{
+  "detail": null,
+  "kind": "refused",
+  "message": "Hugging Face refused the download part way.",
+  "serviceMessage": "Invalid credentials in Authorization header"
+}

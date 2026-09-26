@@ -1,0 +1,60 @@
+{
+  "plan": {
+    "alreadyInVault": null,
+    "categories": [
+      "checkpoints",
+      "loras",
+      "vae"
+    ],
+    "category": "checkpoints",
+    "fileId": 93152,
+    "fileName": "dreamshaper_8.safetensors",
+    "files": [
+      {
+        "detail": "pruned fp16 SafeTensor",
+        "id": 93152,
+        "name": "dreamshaper_8.safetensors",
+        "sizeBytes": 2132625894
+      }
+    ],
+    "host": "civitai",
+    "installs": [
+      {
+        "installId": "inst-1",
+        "linkPath": "C:\\ComfyUI-Main\\models\\checkpoints\\dreamshaper_8.safetensors",
+        "state": "free",
+        "ticked": true
+      },
+      {
+        "installId": "inst-2",
+        "linkPath": null,
+        "state": "unavailable",
+        "ticked": false
+      }
+    ],
+    "modelId": 4384,
+    "page": null,
+    "sha256": "A45F9C7EA1DAD86AC6176BC5F23E84F1BDD904B09D5929F34CBAF92145BB8C0D",
+    "sizeBytes": 2132625894,
+    "spaceNeededBytes": 7132625894,
+    "subtitle": "https://civitai.com/models/4384",
+    "suggestedBecause": "Civitai calls it a Checkpoint",
+    "suggestedCategory": "checkpoints",
+    "title": "DreamShaper",
+    "vaultFreeBytes": 412000000000,
+    "vaultNameTaken": false,
+    "vaultRelPath": "checkpoints\\dreamshaper_8.safetensors",
+    "versionId": 128713,
+    "versions": [
+      {
+        "id": 128713,
+        "name": "8"
+      },
+      {
+        "id": 109123,
+        "name": "7"
+      }
+    ]
+  },
+  "refusal": null
+}

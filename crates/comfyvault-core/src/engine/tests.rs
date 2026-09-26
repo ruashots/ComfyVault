@@ -1246,3 +1246,64 @@ fn a_vault_from_an_older_build_finds_its_last_finished_scan() {
     assert_eq!(store.latest_scan_id().unwrap(), Some(stopped.scan_id.clone()));
     assert_eq!(f.engine.last_scan().unwrap().unwrap().scan_id, full.scan_id);
 }
+
+#[test]
+fn opening_another_vault_stops_a_download_and_keeps_its_part() {
+    // A download takes no long-operation slot, so nothing else would stop it
+    // writing into a vault that is no longer the open one.
+    use crate::download::test_server::{Canned, Server};
+    let body: Vec<u8> = (0..400_000u32).map(|i| (i % 251) as u8).collect();
+    let b2 = body.clone();
+    let server = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let base = server.clone();
+    let s = Server::start(move |req| {
+        let base = base.lock().unwrap().clone();
+        match (req.method.as_str(), req.path()) {
+            (_, "/o/r/resolve/main/m.safetensors") => Canned::redirect(&format!("{base}/store/m")),
+            ("POST", _) => Canned::json(200, &format!(r#"[{{"path":"m.safetensors","size":{}}}]"#, b2.len())),
+            (_, "/store/m") => Canned {
+                stall_after: Some((100_000, std::time::Duration::from_secs(5))),
+                ..Canned::file(req, &b2, "\"v\"")
+            },
+            _ => Canned::new(404),
+        }
+    });
+    *server.lock().unwrap() = s.base.clone();
+
+    let dir = tempfile::tempdir().unwrap();
+    let platform = Arc::new(FakePlatform::new());
+    let downloads = crate::download::Downloader::new(
+        Arc::new(crate::download::http::UreqWeb::new()),
+        crate::download::sites::Sites { hugging_face: s.base.clone(), civitai: s.base.clone() },
+        Arc::new(crate::download::tokens::MemoryTokens::default()),
+    );
+    let e = Engine::with_parts(dir.path().join("config.json"), platform, downloads);
+    let first = dir.path().join("VaultOne");
+    e.select_vault(&first, true).unwrap();
+    let d = e
+        .start_download(&crate::download::StartDownload {
+            address: "https://huggingface.co/o/r/blob/main/m.safetensors".into(),
+            version_id: None,
+            file_id: None,
+            category: "loras".into(),
+            install_ids: vec![],
+        })
+        .unwrap();
+    let part = first.join(".comfyvault/downloads").join(format!("{}.part", d.download_id));
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) < 100_000 {
+        assert!(std::time::Instant::now() < until, "no bytes arrived");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    e.select_vault(&dir.path().join("VaultTwo"), true).unwrap();
+    assert!(e.list_downloads().unwrap().is_empty(), "the other vault has its own list");
+    assert_eq!(std::fs::metadata(&part).unwrap().len(), 100_000, "the part is kept, and nothing more was written");
+
+    e.select_vault(&first, false).unwrap();
+    let back = e.list_downloads().unwrap();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].state, crate::download::DownloadState::Stopped);
+    assert_eq!(back[0].bytes_done, 100_000);
+}
+

@@ -56,7 +56,13 @@ use crate::platform::{
 };
 use crate::reply::{
     Cancelled, Cleared, CreatedDirectory, CreatedFolder, Deleted, DirEntryInfo, DirectoryListing,
-    Removed, RemovedLinks, StartedApply, StartedScan, UnregisterResult,
+    Removed, RemovedLinks, StartedApply, StartedScan, TokenSaved, UnregisterResult,
+};
+use crate::download::sites::{FileChoice, HfPage, Host, Refusal, RefusalKind, VersionChoice};
+use crate::download::transfer::{Failure, FailureKind};
+use crate::download::{
+    AddressPlan, AddressReading, AlreadyInVault, Download, DownloadState, InstallTarget, InstallTargetState,
+    NotLinked, TokenStatus,
 };
 use crate::scan::{ScanPhase, ScanProgress};
 use crate::settings::Settings;
@@ -143,6 +149,73 @@ fn totals() -> ScanTotals {
         bytes_read: 388_000_000_000,
         bytes_from_cache: 224_000_000_000,
         duration_ms: 212_000,
+    }
+}
+
+fn address_plan() -> AddressPlan {
+    AddressPlan {
+        host: Host::Civitai,
+        title: "DreamShaper".into(),
+        subtitle: "https://civitai.com/models/4384".into(),
+        versions: vec![VersionChoice { id: 128713, name: "8".into() }, VersionChoice { id: 109123, name: "7".into() }],
+        version_id: Some(128713),
+        files: vec![FileChoice {
+            id: 93152,
+            name: "dreamshaper_8.safetensors".into(),
+            size_bytes: 2_132_625_894,
+            detail: "pruned fp16 SafeTensor".into(),
+        }],
+        file_id: Some(93152),
+        file_name: "dreamshaper_8.safetensors".into(),
+        size_bytes: 2_132_625_894,
+        sha256: Some(hash_b()),
+        suggested_category: Some("checkpoints".into()),
+        suggested_because: Some("Civitai calls it a Checkpoint".into()),
+        category: Some("checkpoints".into()),
+        categories: vec!["checkpoints".into(), "loras".into(), "vae".into()],
+        already_in_vault: None,
+        vault_rel_path: Some(r"checkpoints\dreamshaper_8.safetensors".into()),
+        vault_name_taken: false,
+        installs: vec![
+            InstallTarget {
+                install_id: "inst-1".into(),
+                link_path: Some(r"C:\ComfyUI-Main\models\checkpoints\dreamshaper_8.safetensors".into()),
+                state: InstallTargetState::Free,
+                ticked: true,
+            },
+            InstallTarget { install_id: "inst-2".into(), link_path: None, state: InstallTargetState::Unavailable, ticked: false },
+        ],
+        vault_free_bytes: Some(412_000_000_000),
+        space_needed_bytes: 7_132_625_894,
+        page: None,
+        model_id: Some(4384),
+    }
+}
+
+fn download() -> Download {
+    Download {
+        download_id: "8b0e3c52-2f3a-4d5e-9d61-1c8f0c2d7a11".into(),
+        host: Host::HuggingFace,
+        title: "t5xxl_fp16.safetensors".into(),
+        file_name: "t5xxl_fp16.safetensors".into(),
+        category: "text_encoders".into(),
+        vault_rel_path: r"text_encoders\t5xxl_fp16.safetensors".into(),
+        install_ids: vec!["inst-1".into(), "inst-2".into()],
+        linked_install_ids: vec![],
+        not_linked: vec![],
+        already_in_vault: false,
+        state: DownloadState::Failed,
+        bytes_done: 6_200_000_000,
+        bytes_total: 9_787_841_024,
+        bytes_per_second: None,
+        error: Some(Failure {
+            kind: FailureKind::Connection,
+            message: "The connection to Hugging Face dropped. The part already downloaded is kept.".into(),
+            service_message: None,
+            detail: Some("io: An existing connection was forcibly closed by the remote host. (os error 10054)".into()),
+        }),
+        started_at: Some(SCAN_START),
+        finished_at: Some(SCAN_END),
     }
 }
 
@@ -611,6 +684,32 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             },
         ),
         s("RemovedLinks", RemovedLinks { removed: 3 }),
+        s("AddressPlan", address_plan()),
+        s("AddressReading", AddressReading { plan: Some(address_plan()), refusal: None }),
+        s(
+            "AddressRefusal",
+            Refusal {
+                kind: RefusalKind::TokenMissing,
+                host: Some(Host::HuggingFace),
+                service_message: Some("Access to model black-forest-labs/FLUX.1-dev is restricted. You must have access to it and be authenticated to access it. Please log in.".into()),
+                page: Some(HfPage { owner: "black-forest-labs".into(), repo: "FLUX.1-dev".into() }),
+            },
+        ),
+        s("InstallTarget", address_plan().installs[0].clone()),
+        s("AlreadyInVault", AlreadyInVault { vault_rel_path: r"text_encoders\t5xxl_fp16.safetensors".into() }),
+        s("Download", download()),
+        s(
+            "DownloadError",
+            Failure {
+                kind: FailureKind::Refused,
+                message: "Hugging Face refused the download part way.".into(),
+                service_message: Some("Invalid credentials in Authorization header".into()),
+                detail: None,
+            },
+        ),
+        s("NotLinked", NotLinked { install_id: "inst-2".into(), reason: "That install's folder is not a ComfyUI install right now.".into() }),
+        s("TokenStatus", TokenStatus { saved: true, ok: Some(true), account: Some("someone".into()), message: None }),
+        s("TokenSaved", TokenSaved { ok: true, account: Some("someone".into()) }),
         s(
             "UsageResult",
             UsageResult {
@@ -1218,6 +1317,94 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("ApplyState", wire(&a), expected));
     }
 
+    for h in [Host::HuggingFace, Host::Civitai] {
+        let expected = match h {
+            Host::HuggingFace => "huggingface",
+            Host::Civitai => "civitai",
+        };
+        out.push(("Host", wire(&h), expected));
+    }
+
+    for d in [
+        DownloadState::Waiting,
+        DownloadState::Running,
+        DownloadState::Checking,
+        DownloadState::Stopped,
+        DownloadState::Failed,
+        DownloadState::Mismatch,
+        DownloadState::CutOff,
+        DownloadState::Done,
+        DownloadState::LinkedOnly,
+    ] {
+        let expected = match d {
+            DownloadState::Waiting => "waiting",
+            DownloadState::Running => "running",
+            DownloadState::Checking => "checking",
+            DownloadState::Stopped => "stopped",
+            DownloadState::Failed => "failed",
+            DownloadState::Mismatch => "mismatch",
+            DownloadState::CutOff => "cutOff",
+            DownloadState::Done => "done",
+            DownloadState::LinkedOnly => "linkedOnly",
+        };
+        out.push(("DownloadState", wire(&d), expected));
+    }
+
+    for f in [
+        FailureKind::Connection,
+        FailureKind::Refused,
+        FailureKind::Expired,
+        FailureKind::NoSpace,
+        FailureKind::Mismatch,
+        FailureKind::Disk,
+        FailureKind::ChangedOnSite,
+    ] {
+        let expected = match f {
+            FailureKind::Connection => "connection",
+            FailureKind::Refused => "refused",
+            FailureKind::Expired => "expired",
+            FailureKind::NoSpace => "noSpace",
+            FailureKind::Mismatch => "mismatch",
+            FailureKind::Disk => "disk",
+            FailureKind::ChangedOnSite => "changedOnSite",
+        };
+        out.push(("DownloadErrorKind", wire(&f), expected));
+    }
+
+    for r in [
+        RefusalKind::BadAddress,
+        RefusalKind::HfRepoNotFile,
+        RefusalKind::TokenMissing,
+        RefusalKind::TokenRejected,
+        RefusalKind::NoAccess,
+        RefusalKind::NotFound,
+    ] {
+        let expected = match r {
+            RefusalKind::BadAddress => "badAddress",
+            RefusalKind::HfRepoNotFile => "hfRepoNotFile",
+            RefusalKind::TokenMissing => "tokenMissing",
+            RefusalKind::TokenRejected => "tokenRejected",
+            RefusalKind::NoAccess => "noAccess",
+            RefusalKind::NotFound => "notFound",
+        };
+        out.push(("RefusalKind", wire(&r), expected));
+    }
+
+    for t in [
+        InstallTargetState::Free,
+        InstallTargetState::HasLink,
+        InstallTargetState::NameTaken,
+        InstallTargetState::Unavailable,
+    ] {
+        let expected = match t {
+            InstallTargetState::Free => "free",
+            InstallTargetState::HasLink => "hasLink",
+            InstallTargetState::NameTaken => "nameTaken",
+            InstallTargetState::Unavailable => "unavailable",
+        };
+        out.push(("InstallTargetState", wire(&t), expected));
+    }
+
     for o in [O::Apply, O::Manual, O::Download] {
         let expected = match o {
             O::Apply => "apply",
@@ -1289,7 +1476,20 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
 
     let mut checked = 0;
     let mut wrong = Vec::new();
-    for kind in ["Classification", "BlockReason", "LinkState", "ErrorCode", "RevertAction", "ApplyState"] {
+    for kind in [
+        "Classification",
+        "BlockReason",
+        "LinkState",
+        "ErrorCode",
+        "RevertAction",
+        "ApplyState",
+        "LinkOrigin",
+        "Host",
+        "DownloadState",
+        "DownloadErrorKind",
+        "RefusalKind",
+        "InstallTargetState",
+    ] {
         let engine: Vec<&str> = values
             .iter()
             .filter(|(k, _, _)| *k == kind)
