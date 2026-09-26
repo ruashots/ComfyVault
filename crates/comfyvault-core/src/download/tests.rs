@@ -737,6 +737,58 @@ fn a_token_is_saved_only_when_the_site_accepts_it() {
     let _ = w;
 }
 
+#[test]
+fn a_download_does_not_stand_in_the_way_of_undoing_an_earlier_run() {
+    // A download's journal belongs to no run. It must only matter to an undo
+    // that needs what the download touched, and a download never touches
+    // what a run made.
+    let w = world(content("new", 2_000), true);
+    let a = w.install("A");
+    let b = w.install("B");
+    let pa = a.root.join("models/loras/m.safetensors");
+    let pb = b.root.join("models/loras/m.safetensors");
+    for p in [&pa, &pb] {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, content("m", 3_000)).unwrap();
+    }
+    let settings = w.ctx.store.settings().unwrap();
+    let installs = vec![a.clone(), b.clone()];
+    let scan = crate::scan::Scanner::new(&w.ctx.store, &*w.fake, settings)
+        .scan("scan-1", &installs, &CancelToken::new(), &crate::progress::NullSink)
+        .unwrap();
+    w.ctx.store.put_scan(&scan.record).unwrap();
+    w.ctx.store.put_scan_entries(&scan.record.scan_id, &scan.entries).unwrap();
+    let plan = crate::plan::Planner::new(&w.ctx.store, &*w.fake)
+        .build("plan-1", &scan.record.scan_id, &scan.entries, &installs)
+        .unwrap();
+    w.ctx.store.put_plan(&plan).unwrap();
+    crate::apply::Applier::new(&w.ctx.store, &*w.fake)
+        .apply(
+            "ap-1",
+            &plan,
+            &crate::apply::ApplyRequest {
+                plan_id: plan.plan_id.clone(),
+                group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                verify: crate::apply::VerifyModeArg::SizeAndMtime,
+                stop_on_error: false,
+            },
+            &CancelToken::new(),
+            &crate::progress::NullSink,
+        )
+        .unwrap();
+    assert!(std::fs::symlink_metadata(&pa).unwrap().file_type().is_symlink());
+
+    let d = w.settle(&w.start(HF, "text_encoders", &[&a, &b]).download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+
+    crate::apply::Applier::new(&w.ctx.store, &*w.fake)
+        .revert("ap-1", &CancelToken::new(), &crate::progress::NullSink)
+        .expect("the earlier run is undone");
+    assert!(std::fs::symlink_metadata(&pa).unwrap().file_type().is_file(), "the file is back");
+    // And the download's links are untouched by that undo.
+    assert_eq!(read_link(&a.root.join("models/text_encoders/t5.safetensors")), content("new", 2_000));
+}
+
 /// Against the real sites. They run only when asked (`--ignored`), and each
 /// one reads the address first and stops if the file is bigger than a few
 /// megabytes, so a wrong address can never fill a disk.

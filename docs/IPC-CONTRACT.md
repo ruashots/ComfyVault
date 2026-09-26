@@ -2723,6 +2723,12 @@ All take `{ downloadId: string }`.
 A command used in another state rejects with `conflict`. `list_downloads`
 takes no argument and returns `Download[]`, in the order they were started.
 
+A download that was stopped a moment ago can still be letting go of its
+connection. Until it has, which can take up to 30 seconds on a line that
+went silent, `continue_download` and `discard_download` reject it with
+`conflict` and the message "That download is still stopping. Try again in a
+moment." or "Stop that download first, then discard it.".
+
 ### 16.6 `open_huggingface_page`
 
 Arguments: `{ owner: string, repo: string }`. Returns `null`.
