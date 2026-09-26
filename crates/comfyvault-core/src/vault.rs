@@ -81,6 +81,10 @@ pub struct VaultHealth {
     pub missing_vault_files: Vec<VaultFile>,
     /// Files in the vault folder the database does not know about.
     pub foreign_files: Vec<String>,
+    /// Models whose delete stopped part way, for example when the computer
+    /// lost power. Some installs lost their link, and the model is still in
+    /// the vault. Deleting it again finishes the delete.
+    pub stopped_deletes: Vec<VaultFile>,
     pub ok: bool,
 }
 
@@ -976,21 +980,24 @@ impl<'a> Vault<'a> {
                 removed.push(Removed { link, target, seq });
                 journal.done(seq)?;
             }
+
+            // Written even when the file was already gone, so the journal
+            // always says the delete reached its end.
+            let seq = journal.pending(JournalStep::DeleteVaultFile {
+                path: path.clone(),
+                sha256: sha.clone(),
+                size_bytes: record.size_bytes,
+            })?;
             if present {
-                let seq = journal.pending(JournalStep::DeleteVaultFile {
-                    path: path.clone(),
-                    sha256: sha.clone(),
-                    size_bytes: record.size_bytes,
-                })?;
                 if let Err(e) = std::fs::remove_file(&path) {
                     let e = VaultError::from_io(&e, &path, "deleting the file from the vault");
                     let _ = journal.failed(seq, &e);
                     return Err(e);
                 }
-                // The file is gone. A journal write that fails now cannot
-                // bring it back, so it does not stop the records going.
-                let _ = journal.done(seq);
             }
+            // The file is gone. A journal write that fails now cannot bring
+            // it back, so it does not stop the records going.
+            let _ = journal.done(seq);
             Ok(())
         })();
         if let Err(e) = removal {
@@ -1134,15 +1141,52 @@ impl<'a> Vault<'a> {
         }
         foreign.sort();
 
+        let stopped = self.stopped_deletes()?;
+
         Ok(VaultHealth {
             checked_links: all_links.len() as u64,
             checked_files: records.len() as u64,
-            ok: dangling.is_empty() && replaced.is_empty() && missing.is_empty(),
+            ok: dangling.is_empty() && replaced.is_empty() && missing.is_empty() && stopped.is_empty(),
+            stopped_deletes: stopped,
             dangling_links: dangling,
             replaced_links: replaced,
             missing_vault_files: missing,
             foreign_files: foreign,
         })
+    }
+
+    /// Models a delete removed links from and then stopped, before it reached
+    /// the file.
+    ///
+    /// A delete that put its links back, or one that finished, is not one. A
+    /// model still counts only if it was in the vault before that delete
+    /// began, so a model deleted and later brought back is not taken for it.
+    fn stopped_deletes(&self) -> Result<Vec<VaultFile>> {
+        let mut out: Vec<VaultFile> = Vec::new();
+        for id in self.store.journal_ids()? {
+            if !id.starts_with(DELETE_JOURNAL_PREFIX) {
+                continue;
+            }
+            let entries = self.store.journal(&id)?;
+            let finished = entries.iter().any(|e| {
+                e.state == crate::store::JournalState::Done && matches!(e.step, JournalStep::DeleteVaultFile { .. })
+            });
+            let removed_some = entries.iter().any(|e| {
+                matches!(e.state, crate::store::JournalState::Done | crate::store::JournalState::Pending)
+                    && matches!(e.step, JournalStep::RemoveLink { .. })
+            });
+            let (Some(first), false, true) = (entries.first(), finished, removed_some) else {
+                continue;
+            };
+            let Some(record) = self.store.vault_file(&first.group_id)? else {
+                continue;
+            };
+            if record.added_at > first.started_at || out.iter().any(|f| f.sha256 == record.sha256) {
+                continue;
+            }
+            out.push(self.decorate(&record)?);
+        }
+        Ok(out)
     }
 
     /// Removes the links that point at nothing.

@@ -456,7 +456,12 @@ The links go first, then the second names, then the file. If Windows refuses
 any of those, ComfyVault puts back the links it already removed, and the model
 loads as before. An undo of the run that brought the file into the vault is
 refused afterwards, because the file it needs is gone. The refusal says that
-one of the run's models was deleted in Cleanup, and nothing is changed.
+one of the run's models was deleted in Cleanup, and nothing is changed. A run
+made after the delete can still be undone.
+
+If the computer stops part way through a delete, some installs can lose their
+link while the model is still in the vault. The health check in Cleanup lists
+the model, and deleting it again finishes the delete.
 
 **A file in the vault folder that the record does not know about** is reported
 as well, rather than quietly adopted.

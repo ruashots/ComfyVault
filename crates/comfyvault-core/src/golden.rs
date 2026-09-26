@@ -606,6 +606,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 replaced_links: Vec::new(),
                 missing_vault_files: Vec::new(),
                 foreign_files: vec![r"C:\ComfyVault\loras\dropped-in-by-hand.safetensors".into()],
+                stopped_deletes: vec![vault_file()],
                 ok: false,
             },
         ),

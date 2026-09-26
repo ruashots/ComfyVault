@@ -1345,28 +1345,41 @@ impl<'a> Applier<'a> {
 
         let mut conflicts: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
+        let mut stopped: Vec<String> = Vec::new();
         for other in self.store.journal_ids()? {
             if other == apply_id {
                 continue;
             }
-            // A later apply, or any in-vault rename, which has no apply record.
-            let later = match self.store.apply(&other)? {
-                Some(r) => r.started_at >= started && r.state != ApplyState::Reverted,
-                None => true,
-            };
-            if !later {
-                continue;
+            // A later apply. An in-vault rename or a delete has no apply
+            // record, so its own steps' times say whether it came later.
+            // Counting every such journal as later made one delete block the
+            // undo of every run after it that used the same paths, forever.
+            let owned = self.store.apply(&other)?;
+            if let Some(r) = &owned {
+                if r.started_at < started || r.state == ApplyState::Reverted {
+                    continue;
+                }
             }
-            for e in self.store.journal(&other)? {
+            let entries = self.store.journal(&other)?;
+            let is_delete = other.starts_with(crate::vault::DELETE_JOURNAL_PREFIX);
+            // A delete that reached its file is final. One that did not was
+            // cut off, and the model is still in the vault.
+            let delete_finished = entries.iter().any(|e| {
+                e.state == JournalState::Done && matches!(e.step, JournalStep::DeleteVaultFile { .. })
+            });
+            for e in entries {
                 if matches!(e.state, JournalState::Reverted | JournalState::Undone | JournalState::Failed) {
+                    continue;
+                }
+                if owned.is_none() && e.started_at < started {
                     continue;
                 }
                 for p in step_paths_touched(&e.step) {
                     if mine.contains(&p) {
-                        let into = if other.starts_with(crate::vault::DELETE_JOURNAL_PREFIX) {
-                            &mut deleted
-                        } else {
-                            &mut conflicts
+                        let into = match (is_delete, delete_finished) {
+                            (true, true) => &mut deleted,
+                            (true, false) => &mut stopped,
+                            (false, _) => &mut conflicts,
                         };
                         into.push(crate::paths::display_path(&p));
                     }
@@ -1400,6 +1413,17 @@ impl<'a> Applier<'a> {
                 "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed.",
             )
             .with_detail(deleted.join(", ")));
+        }
+
+        // A delete cut off part way cannot be undone either, and the model it
+        // was deleting is still there. Finishing it is the way forward.
+        if !stopped.is_empty() {
+            stopped.sort();
+            stopped.dedup();
+            return Err(VaultError::conflict(
+                "A delete of one of this run's models stopped part way, so this run was not undone. Nothing was changed. Finish the delete in Cleanup. After that, this run can no longer be undone.",
+            )
+            .with_detail(stopped.join(", ")));
         }
 
         if conflicts.is_empty() {

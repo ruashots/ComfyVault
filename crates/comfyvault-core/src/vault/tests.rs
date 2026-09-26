@@ -758,6 +758,13 @@ fn a_delete_cut_off_after_the_file_went_is_finished_by_running_it_again() {
     assert!(w.store.links_for_hash(&sha).unwrap().is_empty());
     assert!(w.store.vault_file(&sha).unwrap().is_none());
     assert!(vault(&w).health().unwrap().ok);
+
+    // The delete reached its end, even with no file to remove, so the undo
+    // says the model was deleted rather than that a delete stopped.
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert!(err.message.contains("deleted in Cleanup"), "{}", err.message);
 }
 
 #[test]
@@ -802,6 +809,197 @@ fn undoing_the_run_that_made_a_deleted_model_refuses_before_touching_anything() 
         crate::store::ApplyState::Completed,
         "the run must not be marked as partly undone"
     );
+}
+
+// --- a delete and what happens around it -------------------------------------
+
+/// The fake platform, plus one action run just before a chosen link is
+/// removed. It stands in for another command, or another program, acting
+/// between a delete's checks and its removals.
+struct Hooked<'a> {
+    inner: &'a crate::platform::FakePlatform,
+    before_remove: std::sync::Mutex<std::collections::HashMap<PathBuf, Box<dyn FnOnce() + Send + 'a>>>,
+}
+
+impl<'a> Hooked<'a> {
+    fn new(inner: &'a crate::platform::FakePlatform) -> Self {
+        Self { inner, before_remove: Default::default() }
+    }
+
+    fn before_removing(&self, link: &Path, f: impl FnOnce() + Send + 'a) {
+        self.before_remove.lock().unwrap().insert(link.to_path_buf(), Box::new(f));
+    }
+}
+
+impl crate::platform::Platform for Hooked<'_> {
+    fn create_file_symlink(&self, link: &Path, target: &Path) -> Result<()> {
+        self.inner.create_file_symlink(link, target)
+    }
+    fn remove_symlink(&self, link: &Path) -> Result<()> {
+        let hook = self.before_remove.lock().unwrap().remove(link);
+        if let Some(f) = hook {
+            f();
+        }
+        self.inner.remove_symlink(link)
+    }
+    fn read_symlink(&self, link: &Path) -> Result<PathBuf> {
+        self.inner.read_symlink(link)
+    }
+    fn symlink_capability(&self) -> crate::platform::SymlinkCapability {
+        self.inner.symlink_capability()
+    }
+    fn lock_state(&self, path: &Path) -> crate::platform::LockState {
+        self.inner.lock_state(path)
+    }
+    fn volume_id(&self, path: &Path) -> Result<crate::platform::VolumeId> {
+        self.inner.volume_id(path)
+    }
+    fn file_identity(&self, path: &Path) -> Option<crate::platform::FileIdentity> {
+        self.inner.file_identity(path)
+    }
+    fn disk_space(&self, path: &Path) -> Result<crate::platform::DiskSpace> {
+        self.inner.disk_space(path)
+    }
+    fn list_processes(&self) -> Vec<crate::platform::ProcessInfo> {
+        self.inner.list_processes()
+    }
+    fn listening_ports(&self, pids: &[u32]) -> std::collections::HashMap<u32, Vec<u16>> {
+        self.inner.listening_ports(pids)
+    }
+    fn processes_holding(&self, pids: &[u32], files: &[PathBuf]) -> std::collections::HashMap<u32, bool> {
+        self.inner.processes_holding(pids, files)
+    }
+    fn long_paths_enabled(&self) -> Option<bool> {
+        self.inner.long_paths_enabled()
+    }
+    fn drive_roots(&self) -> Vec<PathBuf> {
+        self.inner.drive_roots()
+    }
+    fn drives(&self) -> Vec<crate::platform::DriveInfo> {
+        self.inner.drives()
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), crate::platform::RenameError> {
+        self.inner.rename(from, to)
+    }
+}
+
+fn consolidate_as(w: &TestWorld, apply_id: &str, installs: &[crate::install::Install]) {
+    let plan = w.plan(installs);
+    Applier::new(&w.store, &w.platform)
+        .apply(
+            apply_id,
+            &plan,
+            &ApplyRequest {
+                plan_id: plan.plan_id.clone(),
+                group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                verify: VerifyModeArg::SizeAndMtime,
+                stop_on_error: false,
+            },
+            &CancelToken::new(),
+            &NullSink,
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_delete_does_not_block_the_undo_of_a_run_made_after_it() {
+    // A delete's journal belongs to no run. Counted as later than every run,
+    // it refused the undo of any run after it that used the same paths, for
+    // ever, saying the model had been deleted.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a.clone(), b.clone()]);
+    let sha = weights_hash("m");
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+
+    // The same model comes back at the same places, and a new run takes it.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let a = w.refresh(&a);
+    let b = w.refresh(&b);
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-2", &[a, b]);
+    assert!(w.is_link(&pa) && w.is_link(&pb));
+
+    let undone = Applier::new(&w.store, &w.platform).revert("ap-2", &CancelToken::new(), &NullSink);
+    assert!(undone.is_ok(), "the undo of a run made after the delete was refused: {:?}", undone.err());
+    assert_eq!(std::fs::read(&pa).unwrap(), weights("m"));
+    assert!(!w.is_link(&pa), "the file is back in its place");
+
+    // The control: the run the delete came after is still refused.
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert!(err.message.contains("deleted in Cleanup"), "{}", err.message);
+}
+
+#[test]
+fn a_delete_cut_off_part_way_is_reported_and_finished_by_running_it_again() {
+    // The computer stops after one link went and before the file did. The
+    // model is still in the vault, and one install lost it.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    let hooked = Hooked::new(&w.platform);
+    for (now, other) in [(&pa, pb.clone()), (&pb, pa.clone())] {
+        hooked.before_removing(now, move || {
+            if std::fs::symlink_metadata(&other).is_err() {
+                panic!("the computer stopped");
+            }
+        });
+    }
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Vault::new(&w.store, &hooked).delete_file_and_links(&sha, &sha)
+    }));
+    assert!(crashed.is_err(), "the stop did not happen");
+    assert!(file.is_file());
+    assert!(w.is_link(&pa) != w.is_link(&pb), "exactly one link went before the stop");
+
+    // The health check says so, and names the model.
+    let health = vault(&w).health().unwrap();
+    assert!(!health.ok, "the health check says all is well");
+    assert_eq!(health.stopped_deletes.len(), 1);
+    assert_eq!(health.stopped_deletes[0].sha256, sha);
+
+    // The undo does not claim the model was deleted: it is still there.
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert!(!err.message.contains("was deleted in Cleanup"), "{}", err.message);
+    assert!(err.message.contains("stopped part way"), "{}", err.message);
+
+    // Running the delete again finishes it, and then the undo says it was.
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+    assert!(!file.exists());
+    let health = vault(&w).health().unwrap();
+    assert!(health.stopped_deletes.is_empty());
+    assert!(health.ok);
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert!(err.message.contains("deleted in Cleanup"), "{}", err.message);
+}
+
+#[test]
+fn a_delete_that_put_its_links_back_is_not_a_stopped_delete() {
+    let w = TestWorld::new();
+    let (_places, sha) = three_links_two_installs(&w);
+    let alias = alias_of(&w, &sha);
+    w.platform.fail_remove_symlink_at(&alias, std::io::ErrorKind::PermissionDenied);
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+
+    let health = vault(&w).health().unwrap();
+    assert!(health.stopped_deletes.is_empty(), "every link is back, so nothing stopped");
+    assert!(health.ok);
 }
 
 // --- health ----------------------------------------------------------------

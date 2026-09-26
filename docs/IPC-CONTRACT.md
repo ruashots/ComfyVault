@@ -1821,6 +1821,16 @@ run's models was deleted in Cleanup, so this run can no longer be undone.
 Nothing was changed.", and `detail` lists the deleted model's paths, separated
 by commas. `revert_apply` and `preview_revert` both answer it.
 
+Only a delete that happened after the run started counts. The undo of a run
+made after the delete, for example after the same model came back and was
+consolidated again, is not refused because of it.
+
+If the delete stopped part way (see below), the model is still in the vault,
+and the undo refuses with `conflict` and a different message: "A delete of one
+of this run's models stopped part way, so this run was not undone. Nothing was
+changed. Finish the delete in Cleanup. After that, this run can no longer be
+undone." `detail` lists the paths the same way.
+
 **All or nothing.** If the disk refuses a removal, the engine puts back every
 link it already removed, and rejects with the disk's code (`ioError`,
 `permissionDenied` or `fileLocked`). The message ends with "Nothing was
@@ -1831,10 +1841,18 @@ If a link cannot be put back, the message says how many were not, and `detail`
 lists them. The vault file is still there in that case, and the other installs
 still load the model.
 
-A delete stopped by a crash leaves links that point at a file that still
-exists, or no links and a file that is gone. Run the same delete again to
-finish it. A link already gone is not counted in `linksRemoved`, and a file
-already gone frees `0` bytes.
+A delete stopped by a crash, or by the power going, leaves one of three
+states:
+
+- Every link and the file still there, when it stopped before the first
+  removal.
+- Some links and second names gone, and the others and the file still there.
+  The installs whose link is gone no longer load the model.
+  `check_vault_health` lists the model in `stoppedDeletes`, and `ok` is false.
+- No links and no file, with the records still there.
+
+Run the same delete again to finish it. A link already gone is not counted in
+`linksRemoved`, and a file already gone frees `0` bytes.
 
 ### 8.9 `check_vault_health`
 
@@ -1850,9 +1868,16 @@ type VaultHealth = {
   replacedLinks: LinkRecord[]          // a real file sits where a link belonged
   missingVaultFiles: VaultFile[] // recorded in the database, absent on disk
   foreignFiles: string[]         // files in the vault folder the database does not know
+  stoppedDeletes: VaultFile[]    // a delete with links stopped part way; see 8.8
   ok: boolean
 }
 ```
+
+A model in `stoppedDeletes` is still in the vault, and some installs lost
+their link to it. The user interface must offer to delete it again with
+`delete_vault_file` and `removeLinks: true`, which finishes the delete. It
+leaves the list once the delete finishes. A delete that failed and put its
+links back is never listed.
 
 A dangling link is the most serious result. ComfyUI lists a dangling link in
 its model menu, and then fails to load it. Worse, a custom node that
