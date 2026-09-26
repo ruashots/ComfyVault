@@ -7,6 +7,7 @@ import { dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
+import { TokenSection } from "~/components/Tokens";
 import { Boundary } from "~/components/Boundary";
 import { labelsOf, openTaskManager, pidAndStart } from "~/domain/running";
 import { installName } from "~/domain/installname";
@@ -479,7 +480,7 @@ export function SettingsScreen() {
                   The fingerprint goes out. No filename, no path. After
                   each scan ComfyVault asks, in the background, about the files it has
                   not asked about before, a hundred at a time. Turn it off and
-                  ComfyVault runs with no network at all. Files Civitai does not know
+                  ComfyVault goes online only to download a model you ask for. Files Civitai does not know
                   stay unlabelled, which is normal.
                 </div>
                 <Show when={current().metadataLookupsEnabled === true}>
@@ -503,6 +504,10 @@ export function SettingsScreen() {
               </>
             )}
           </Show>
+
+          <Boundary where="Hugging Face and Civitai tokens">
+            <TokenSection />
+          </Boundary>
 
           <div class="sec secgap">
             <span class="t">What a scan reads</span>
