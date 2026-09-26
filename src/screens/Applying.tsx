@@ -10,7 +10,7 @@ import { useApp } from "~/state/store";
 const STEP_WORDS: Record<string, string> = {
   verifying: "checking the file has not changed",
   moving: "moving it into the vault",
-  linking: "putting a link where it was",
+  linking: "replacing it with a link",
   cleaning: "tidying up",
 };
 
@@ -104,14 +104,14 @@ function Applying() {
             <span class="ic">
               <Icon name="link" size={12} />
             </span>
-            <span class="s">Links put back where files were</span>
-            <span class="r">{progress().linksCreated} places</span>
+            <span class="s">Copies replaced by links</span>
+            <span class="r">{progress().linksCreated}</span>
           </div>
           <div class="step done">
             <span class="ic">
               <Icon name="vault" size={12} />
             </span>
-            <span class="s">Space returned</span>
+            <span class="s">Space freed</span>
             <span class="r">{fmt(progress().bytesFreed)}</span>
           </div>
           <Show when={progress().failures > 0}>

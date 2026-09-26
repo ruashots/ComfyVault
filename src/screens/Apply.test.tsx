@@ -156,6 +156,31 @@ async function waitForDialog(): Promise<HTMLElement> {
   return document.querySelector('[role="dialog"]') as HTMLElement;
 }
 
+describe("the words while a run works and when it is done", () => {
+  it("says copies are replaced by links, and space is freed", async () => {
+    const h = await runApply();
+    await upTo(h, 2);
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    const p = h.app.applyProgress()!;
+    expect(text).toContain(`Copies replaced by links${p.linksCreated}`);
+    expect(text).toContain(`Space freed${fmt(p.bytesFreed)}`);
+    // There were no links before the run, so none are put back.
+    expect(text).not.toContain("put back");
+    expect(text).not.toContain("returned");
+  });
+
+  it("says the space was freed, not that it came back", async () => {
+    const h = await runApply();
+    await finish(h);
+    const run = h.app.lastApply()!;
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Freed on drive C:.");
+    expect(text).toContain(`${fmt(run.bytesFreed)} freed`);
+    expect(text).not.toContain("Back on drive");
+    expect(text).not.toContain("returned");
+  });
+});
+
 describe("the numbers on the finished screen", () => {
   it("shows the drive's own before and after, never one derived from the other", async () => {
     const h = await runApply();

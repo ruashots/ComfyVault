@@ -34,7 +34,7 @@ export function ApplyDone() {
     <>
       <Header
         title="Consolidate"
-        sub={`${HOW_IT_ENDED[run().state]} · ${fmt(run().bytesFreed)} returned`}
+        sub={`${HOW_IT_ENDED[run().state]} · ${fmt(run().bytesFreed)} freed`}
       >
         <button
           class="btn"
@@ -60,7 +60,7 @@ export function ApplyDone() {
                     the other copies were removed. Measured against the real
                     engine: three installs holding three models moved 3 files
                     and made 9 links, so 6 copies were removed. */}
-                Back on drive {app.vaultVolume()}.{" "}
+                Freed on drive {app.vaultVolume()}.{" "}
                 {removedCopies(run())}{" "}
                 {removedCopies(run()) === 1 ? "copy" : "copies"} stopped taking room.
               </div>
