@@ -7,6 +7,7 @@ import { fmt, usedPercent } from "~/domain/format";
 import { warnbarRunning } from "~/domain/running";
 import { gateBlockers } from "~/domain/selection";
 import { installName } from "~/domain/installname";
+import { activeCount } from "~/domain/download";
 import { useApp, type Screen } from "~/state/store";
 
 /** The window's own title bar. The window has no system frame. */
@@ -60,6 +61,7 @@ export function Rail() {
   const app = useApp();
 
   const badgeFor = (key: Screen): number | null => {
+    if (key === "download") return activeCount(app.dl.downloads()) || null;
     if (!app.hasInstalls()) return null;
     if (key === "consolidate") {
       if (app.runOnScreen()) return null;

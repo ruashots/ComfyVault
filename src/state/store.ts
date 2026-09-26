@@ -33,6 +33,8 @@ import {
 } from "~/domain/selection";
 import { volumeLabel } from "~/domain/drives";
 import { runLookups } from "~/domain/lookup";
+import { createDownloadState, type DownloadState } from "~/state/download";
+import type { DownloadRecord } from "~/ipc/draft";
 import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
@@ -313,6 +315,8 @@ export interface AppStore {
 
   readonly lib: LibraryView;
   readonly setLib: SetStoreFunction<LibraryView>;
+  /** The downloads, and the card for the address being read. */
+  readonly dl: DownloadState;
   readonly modal: Accessor<Modal | null>;
   readonly setModal: (modal: Modal | null) => void;
   readonly patchModal: (fn: (modal: Modal) => void) => void;
@@ -495,6 +499,8 @@ export function createAppStore(engine: Engine): AppStore {
     drawerOpen: false,
   });
 
+  const dl = createDownloadState(engine, (error) => messageOf(error));
+
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   const showToast = (message: string, tone: "ok" | "bad" = "ok") => {
     if (toastTimer) clearTimeout(toastTimer);
@@ -646,6 +652,7 @@ export function createAppStore(engine: Engine): AppStore {
           setLastUndoneAt(null);
           setUsage(new Map());
           setNothingSearched(false);
+          dl.replace([]);
           setFailure(null);
           setReady(true);
         });
@@ -677,7 +684,7 @@ export function createAppStore(engine: Engine): AppStore {
           ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
           : null;
 
-      const [files, groups, orphanList, vaultHealth, contents] = await Promise.all([
+      const [files, groups, orphanList, vaultHealth, contents, downloadList] = await Promise.all([
         orNotYet(engine.listVaultFiles({ offset: 0, limit: 1000 }), {
           total: 0,
           offset: 0,
@@ -692,6 +699,7 @@ export function createAppStore(engine: Engine): AppStore {
           rows: [] as ContentRow[],
           scanId: null,
         }),
+        orNotYet(engine.listDownloads(), [] as DownloadRecord[]),
       ]);
 
       batch(() => {
@@ -706,6 +714,7 @@ export function createAppStore(engine: Engine): AppStore {
         setHealth(vaultHealth);
         setLibrary(contents.rows);
         setLibraryTotal(contents.total);
+        dl.replace(downloadList);
         setRunning(runningList);
         setInterrupted(interruptedList);
         setLastApply(applies.find((a) => a.state !== "reverted") ?? null);
@@ -861,6 +870,17 @@ export function createAppStore(engine: Engine): AppStore {
       void refresh();
     }),
     engine.onApplyProgress((p) => setApplyProgress(p)),
+    engine.onDownloadProgress((record) => {
+      const before = dl.downloads().find((r) => r.downloadId === record.downloadId);
+      dl.receive(record);
+      // A finished download added a vault file and its links.
+      if (
+        (record.state === "done" || record.state === "linkedOnly") &&
+        before?.state !== record.state
+      ) {
+        void refresh();
+      }
+    }),
     engine.onApplyDone((result) => {
       batch(() => {
         setApplyProgress(null);
@@ -985,6 +1005,7 @@ export function createAppStore(engine: Engine): AppStore {
     renaming,
     lib,
     setLib,
+    dl,
     modal: () => modal.current,
     setModal: (next) => setModalStore("current", next),
     patchModal: (fn) =>

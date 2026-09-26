@@ -18,6 +18,7 @@ import { driveFor, volumeLabel } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { processLine, processTooltip, processesFor } from "~/domain/running";
 import { installName } from "~/domain/installname";
+import { cutOffLine } from "~/domain/download";
 import { messageOf, useApp } from "~/state/store";
 import type { DriveInfo, Install } from "~/ipc/contract";
 import { ScanScreen } from "~/screens/Scan";
@@ -455,6 +456,16 @@ function HomeReport() {
                   />
                 </div>
 
+                <Show when={cutOffLine(app.dl.downloads())}>
+                  {(line) => (
+                    <div class="note up">
+                      {line().text}{" "}
+                      <button class="lnk" onClick={() => app.actions.go("download")}>
+                        {line().link}
+                      </button>
+                    </div>
+                  )}
+                </Show>
                 <Show when={app.cutOffRun()}>
                   <div class="hero">
                     <div class="txt">
