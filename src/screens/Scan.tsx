@@ -3,6 +3,7 @@ import { For, Show, createMemo } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import { fmt, minutesLeft } from "~/domain/format";
+import { installNameOf } from "~/domain/installname";
 import { useApp } from "~/state/store";
 import type { ScanProgress } from "~/ipc/contract";
 
@@ -133,7 +134,7 @@ export function ScanScreen() {
             <span class="t">Where it is now</span>
           </div>
           <Show
-            when={progress().installLabel}
+            when={progress().installId}
             fallback={
               <div class="note">
                 ComfyVault has to read each file before it can tell two of them
@@ -141,12 +142,12 @@ export function ScanScreen() {
               </div>
             }
           >
-            {(label) => (
+            {(id) => (
               <>
                 <div class="kv">
                   <span class="k">Install</span>
                   <span class="v">
-                    <b>{label()}</b>
+                    <b>{installNameOf(id(), app.installs())}</b>
                   </span>
                 </div>
                 <div class="kv">

@@ -197,7 +197,7 @@ export function placesOf(
       seen.add(link.absPath.toLowerCase());
       places.push({
         installId: link.installId,
-        installLabel: link.installLabel,
+        installLabel: label(link.installId),
         absPath: link.absPath,
         relPath: link.relPath,
         name: link.linkName,
@@ -213,7 +213,7 @@ export function placesOf(
     seen.add(row.absPath.toLowerCase());
     places.push({
       installId: row.installId ?? "",
-      installLabel: row.installLabel ?? "",
+      installLabel: row.installId ? label(row.installId) : "",
       absPath: row.absPath,
       relPath: row.absPath,
       name: fileNameOf(row.absPath),

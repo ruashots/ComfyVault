@@ -5,6 +5,7 @@
  * is guessed in its place.
  */
 
+import { installNameOf } from "~/domain/installname";
 import type { Engine, Install, RunningComfy } from "~/ipc/contract";
 import { agoLong, dayAndTime, startedShort } from "~/domain/format";
 
@@ -18,10 +19,10 @@ export function processesFor(
   return running.filter((p) => p.matchedInstallIds.includes(installId));
 }
 
-/** The labels of the installs a process belongs to, as they are. */
+/** The names of the installs a process belongs to. */
 export function labelsOf(p: RunningComfy, installs: readonly Install[]): string {
   return p.matchedInstallIds
-    .map((id) => installs.find((i) => i.id === id)?.label ?? id)
+    .map((id) => installNameOf(id, installs))
     .join(", ");
 }
 

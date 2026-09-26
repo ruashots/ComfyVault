@@ -9,6 +9,7 @@ import {
   isFixable,
 } from "~/domain/blocked";
 import { fmt, relativeTime } from "~/domain/format";
+import { installName, installNameOf } from "~/domain/installname";
 import { chosenBecauseText, fileNameOf } from "~/domain/view";
 import { gateBlockers } from "~/domain/selection";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
@@ -213,7 +214,7 @@ function DryRun() {
           <For each={app.installViews()}>
             {(install) => (
               <div class="kv">
-                <span class="k">{install.install.label}</span>
+                <span class="k" title={install.install.root}>{installName(install.install, app.installs())}</span>
                 <span class="v">
                   <b>{install.moving}</b> of {install.files} files become links{" "}
                   <span class="dim">
@@ -342,10 +343,10 @@ function DryRun() {
                         <div class="cp mid">
                           <Checkbox
                             on={!app.unticked().has(group.groupId)}
-                            label={`Include ${fileNameOf(group.source.relPath)} from ${group.source.installLabel}`}
+                            label={`Include ${fileNameOf(group.source.relPath)} from ${installNameOf(group.source.installId, app.installs())}`}
                             onToggle={() => app.actions.toggleGroup(group.groupId)}
                           />
-                          <span class="who wide">{group.source.installLabel}</span>
+                          <span class="who wide">{installNameOf(group.source.installId, app.installs())}</span>
                           <span class="pp">{group.source.relPath}</span>
                           <span class="num" style={{ width: "62px" }}>
                             {fmt(group.sizeBytes)}
@@ -420,7 +421,7 @@ function DryRun() {
                           class="who wide"
                           style={{ color: "var(--t-muted)", "font-size": "10px" }}
                         >
-                          {group.source.installLabel}
+                          {installNameOf(group.source.installId, app.installs())}
                         </span>
                         <span class="grp-s" style={{ color: "var(--t-body)" }}>
                           {fmt(group.sizeBytes)}
@@ -541,7 +542,7 @@ function DuplicateGroup(props: { group: PlanGroup }) {
                 <span class="role" classList={{ keep: isSource(), link: !isSource() }}>
                   {isSource() ? "keep" : "link"}
                 </span>
-                <span class="who">{link.installLabel}</span>
+                <span class="who">{installNameOf(link.installId, app.installs())}</span>
                 <span class="pp">
                   {link.relPath}
                   <Show when={link.nameDiffersFromVault}>
@@ -621,11 +622,11 @@ function BlockedRowView(props: { row: BlockedRow }) {
       <div class="grp-b">
         <div class="cp">
           <span class="role stay">{blockedRole(props.row.reason)}</span>
-          <span class="who">{props.row.installLabel ?? "outside an install"}</span>
+          <span class="who">{props.row.installId ? installNameOf(props.row.installId, app.installs()) : "outside an install"}</span>
           <span class="pp">{props.row.absPath}</span>
         </div>
       </div>
-      <div class="grp-why wide">{blockedWhy(props.row)}</div>
+      <div class="grp-why wide">{blockedWhy(props.row, app.installs())}</div>
       <Show when={isFixable(props.row.reason)}>
         <div class="grp-fix">
           <button class="btn sm" onClick={() => void recheck()}>

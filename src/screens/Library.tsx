@@ -10,6 +10,7 @@ import {
   onMount,
 } from "solid-js";
 
+import { installName, installNameOf } from "~/domain/installname";
 import { Icon } from "~/components/Icon";
 import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
@@ -458,7 +459,7 @@ function DrawerBody(props: { row: ContentRow }) {
         sha256,
         app.plan(),
         links,
-        new Map(app.installs().map((i) => [i.id, i.label])),
+        new Map(app.installs().map((i) => [i.id, installName(i, app.installs())])),
       );
     },
   );
@@ -564,7 +565,7 @@ function DrawerBody(props: { row: ContentRow }) {
                   <div class="pp alt">filename here: {place.name}</div>
                 </Show>
                 <Show when={place.blocked}>
-                  {(blocked) => <div class="pp">{blockedWhy(blocked())}</div>}
+                  {(blocked) => <div class="pp">{blockedWhy(blocked(), app.installs())}</div>}
                 </Show>
               </div>
             )}
@@ -644,7 +645,7 @@ function DrawerBody(props: { row: ContentRow }) {
                 {(match) => (
                   <div class="kv namerow">
                     <span class="v faint" style={{ "font-size": "10px" }}>
-                      {match.installLabel} &middot; {match.workflowName}
+                      {installNameOf(match.installId, app.installs())} &middot; {match.workflowName}
                     </span>
                   </div>
                 )}

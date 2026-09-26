@@ -297,3 +297,33 @@ describe("an apply with nothing ticked", () => {
     expect(app.applyProgress()).toBeNull();
   });
 });
+
+describe("installs that the engine gave the same name", () => {
+  const sameLabels = (engine: FixtureEngine) => {
+    void engine.updateInstall("studio", "ComfyUI");
+    void engine.updateInstall("sandbox", "ComfyUI");
+  };
+
+  it("are told apart by their folders in the summary", async () => {
+    await mount(sameLabels);
+    const keys = [...document.querySelectorAll(".kv .k")].map((k) => k.textContent);
+    expect(keys).toContain("ComfyUI-Studio");
+    expect(keys).toContain("ComfyUI-Sandbox");
+    expect(keys).not.toContain("ComfyUI");
+    const studio = [...document.querySelectorAll(".kv .k")].find(
+      (k) => k.textContent === "ComfyUI-Studio",
+    )!;
+    expect(studio.getAttribute("title")).toBe("C:\\ComfyUI-Studio");
+  });
+
+  it("are told apart in the list of single copies", async () => {
+    const { app } = await mount(sameLabels);
+    app.actions.setShowSingles(true);
+    await waitFor(() => document.querySelectorAll(".grp .who").length > 0);
+    const who = new Set(
+      [...document.querySelectorAll(".grp .who")].map((w) => w.textContent),
+    );
+    expect(who.has("ComfyUI")).toBe(false);
+    expect([...who].every((w) => w === "ComfyUI-Studio" || w === "ComfyUI-Sandbox")).toBe(true);
+  });
+});

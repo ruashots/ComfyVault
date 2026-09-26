@@ -10,6 +10,7 @@ import {
   sameVolume,
   volumeLabel,
 } from "~/domain/drives";
+import { installName } from "~/domain/installname";
 import {
   messageOf,
   useApp,
@@ -815,7 +816,7 @@ export function verdictFor(
         title: "ComfyUI does not look here",
         body: (
           <p>
-            {install.label} only reads models from{" "}
+            {installName(install, app.installs())} only reads models from{" "}
             <span class="emph">{install.modelsDir}</span> and the folders its
             extra_model_paths.yaml adds. A link anywhere else would never be found.
           </p>
@@ -876,7 +877,7 @@ export function verdictFor(
         title: "That is inside an install",
         body: (
           <p>
-            The vault cannot live inside <span class="emph">{inside.label}</span>.
+            The vault cannot live inside <span class="emph">{installName(inside, app.installs())}</span>.
             Removing that install later would take the vault with it. Pick a folder
             of its own.
           </p>
@@ -922,7 +923,7 @@ export function verdictFor(
       title: "Not the drive your installs are on",
       body: (
         <p>
-          {elsewhere.map((i) => i.label).join(" and ")}{" "}
+          {elsewhere.map((i) => installName(i, app.installs())).join(" and ")}{" "}
           {elsewhere.length === 1 ? "sits" : "sit"} on a different drive from{" "}
           {volume}. Every file from there is <span class="emph">copied</span> and
           checked before the original goes, so {volume} needs up to{" "}
@@ -949,7 +950,7 @@ export function verdictFor(
       return {
         ok: false,
         title: "Already registered",
-        body: <p>{already.label} is in the list already. Nothing to add.</p>,
+        body: <p>{installName(already, app.installs())} is in the list already. Nothing to add.</p>,
       };
     }
     return {
@@ -1020,7 +1021,7 @@ export function verdictFor(
           </div>
           <p>
             <Show when={had.length > 0}>
-              {had.map((i) => i!.label).join(", ")}{" "}
+              {had.map((i) => installName(i!, app.installs())).join(", ")}{" "}
               {had.length === 1 ? "is" : "are"} already registered.{" "}
             </Show>
             To add only one, pick it in the list above.
@@ -1049,7 +1050,7 @@ export function verdictFor(
     return {
       ok: false,
       title: "Already registered",
-      body: <p>{already.label} is in the list already. Nothing to add.</p>,
+      body: <p>{installName(already, app.installs())} is in the list already. Nothing to add.</p>,
     };
   }
 

@@ -6,7 +6,8 @@
  * its own and no token from the engine ever reaches the glass.
  */
 
-import type { BlockReason, BlockedRow } from "~/ipc/contract";
+import { installName } from "~/domain/installname";
+import type { BlockReason, BlockedRow, Install } from "~/ipc/contract";
 
 /** One word for the role column, next to keep and link. */
 export function blockedRole(reason: BlockReason): string {
@@ -77,8 +78,9 @@ export function blockedShort(reason: BlockReason): string {
 }
 
 /** The full reason, shown under a file that stays put. */
-export function blockedWhy(row: BlockedRow): string {
-  const who = row.installLabel ?? "that install";
+export function blockedWhy(row: BlockedRow, installs: readonly Install[]): string {
+  const install = installs.find((i) => i.id === row.installId);
+  const who = install ? installName(install, installs) : (row.installLabel ?? "that install");
   switch (row.reason) {
     case "fileLocked":
       return `ComfyUI is running out of ${who} and has this file open. Windows will not move a file that a program is using. Close it and check again.`;

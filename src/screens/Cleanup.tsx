@@ -6,6 +6,7 @@ import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
 import { dayMonth, fmt } from "~/domain/format";
 import { buildNameGroupView, type NameGroupView } from "~/domain/view";
+import { installNameOf } from "~/domain/installname";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
 import type { VaultFile } from "~/ipc/contract";
@@ -177,10 +178,7 @@ function NameGroupCard(props: { view: NameGroupView }) {
                   >
                     the name used in{" "}
                     {choice.seenInInstalls
-                      .map(
-                        (id) =>
-                          app.installs().find((i) => i.id === id)?.label ?? id,
-                      )
+                      .map((id) => installNameOf(id, app.installs()))
                       .join(" and ")}
                   </Show>
                   <Show when={choice.usedByLinks > 0}>

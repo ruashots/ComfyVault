@@ -17,6 +17,7 @@ import {
 import { driveFor, volumeLabel } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { processLine, processTooltip, processesFor } from "~/domain/running";
+import { installName } from "~/domain/installname";
 import { messageOf, useApp } from "~/state/store";
 import type { DriveInfo, Install } from "~/ipc/contract";
 import { ScanScreen } from "~/screens/Scan";
@@ -206,8 +207,8 @@ function Setup() {
                     classList={{ fresh: app.freshInstalls().includes(install.root) }}
                   >
                     <Icon name="folder" size={12} />
-                    <span class="nm" title={install.label}>
-                      {install.label}
+                    <span class="nm" title={install.root}>
+                      {installName(install, app.installs())}
                     </span>
                     <span class="pp" title={install.root}>
                       {mid(install.root, 64)}
@@ -417,7 +418,7 @@ function HomeReport() {
                   <Tile
                     value={String(app.installs().length)}
                     label="Instances"
-                    note={app.installs().map((i) => i.label).join(" · ")}
+                    note={app.installs().map((i) => installName(i, app.installs())).join(" · ")}
                   />
                   <Tile
                     value={String(t().uniqueContents)}
@@ -544,8 +545,8 @@ function HomeReport() {
             {(view) => (
               <div class="inst">
                 <span class="led" classList={{ up: view.running, idle: !view.running }} />
-                <span class="name nm" title={view.install.label}>
-                  {view.install.label}
+                <span class="name nm" title={view.install.root}>
+                  {installName(view.install, app.installs())}
                 </span>
                 <span class="path pp">{view.install.root}</span>
                 <Show when={view.install.extraPaths.length > 0}>
@@ -743,7 +744,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   for (const install of app.installs()) {
     lines.push({
       event: "instance.add",
-      detail: `${install.label} · ${install.root}`,
+      detail: `${installName(install, app.installs())} · ${install.root}`,
       when: install.addedAt,
     });
   }

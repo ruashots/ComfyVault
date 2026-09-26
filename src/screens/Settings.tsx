@@ -9,6 +9,7 @@ import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { Boundary } from "~/components/Boundary";
 import { labelsOf, openTaskManager, pidAndStart } from "~/domain/running";
+import { installName } from "~/domain/installname";
 import { useApp } from "~/state/store";
 import { cacheDirsOf, type Install } from "~/ipc/contract";
 
@@ -74,7 +75,7 @@ export function SettingsScreen() {
       action: async () => {
         const result = await app.engine.unregisterInstall(install.id);
         app.actions.showToast(
-          `Removed ${install.label} · ${result.linksLeftInPlace} links left exactly where they are`,
+          `Removed ${installName(install, app.installs())} · ${result.linksLeftInPlace} links left exactly where they are`,
         );
       },
     });
@@ -112,7 +113,7 @@ export function SettingsScreen() {
                   />
                   <div class="it">
                     <div class="nm">
-                      {view.install.label}
+                      {installName(view.install, app.installs())}
                       <span class="faint" style={{ "font-weight": 400 }}>
                         {" "}
                         &middot;{" "}
@@ -149,7 +150,7 @@ export function SettingsScreen() {
                     onClick={() =>
                       void app.actions.run(
                         () => app.engine.refreshInstall(view.install.id),
-                        `Re-read ${view.install.label}`,
+                        `Re-read ${installName(view.install, app.installs())}`,
                       )
                     }
                   >
@@ -238,7 +239,7 @@ export function SettingsScreen() {
                     when={otherDrives().length === 0}
                     fallback={
                       <>
-                        {otherDrives().map((i) => i.label).join(" and ")}{" "}
+                        {otherDrives().map((i) => installName(i, app.installs())).join(" and ")}{" "}
                         {otherDrives().length === 1 ? "sits" : "sit"} on another
                         drive, so files from there are copied across and checked
                         before the original goes, and drive {app.vaultVolume()} pays for

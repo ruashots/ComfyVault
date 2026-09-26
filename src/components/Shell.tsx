@@ -6,6 +6,7 @@ import { driveKindShort, isReadable, volumeLabel } from "~/domain/drives";
 import { fmt, usedPercent } from "~/domain/format";
 import { warnbarRunning } from "~/domain/running";
 import { gateBlockers } from "~/domain/selection";
+import { installName } from "~/domain/installname";
 import { useApp, type Screen } from "~/state/store";
 
 /** The window's own title bar. The window has no system frame. */
@@ -183,7 +184,7 @@ export function Rail() {
                 onClick={() => app.actions.go("settings")}
               >
                 <span class="led" classList={{ up: view.running, idle: !view.running }} />
-                <span class="nm">{view.install.label}</span>
+                <span class="nm">{installName(view.install, app.installs())}</span>
                 <span class="sz">{app.nothingRead() ? "" : fmt(view.bytes)}</span>
               </button>
             )}

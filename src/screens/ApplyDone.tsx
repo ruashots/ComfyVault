@@ -153,7 +153,7 @@ export function ApplyDone() {
                       sha256: null,
                       reason: failure.reason,
                       detail: failure.detail,
-                    })}{" "}
+                    }, app.installs())}{" "}
                     Nothing was done to it, and both copies are still where they
                     were.
                   </div>

@@ -2,6 +2,7 @@ import { Show, createMemo } from "solid-js";
 
 import { useApp } from "~/state/store";
 import type { InstallView } from "~/domain/view";
+import { installName } from "~/domain/installname";
 
 /** "Studio", "Studio and Sandbox", "A, B and C". */
 export function listOf(names: readonly string[]): string {
@@ -26,7 +27,7 @@ export function ThumbnailNote(props: { where?: "plan" | "plain" }) {
     app.installViews().filter((v) => v.thumbnails === "unknown"),
   );
   const labels = (views: readonly InstallView[]) =>
-    listOf(views.map((v) => v.install.label));
+    listOf(views.map((v) => installName(v.install, app.installs())));
 
   return (
     <Show when={affected().length > 0 || unknown().length > 0}>
@@ -69,7 +70,7 @@ export function ThumbnailNoteForModel(props: { installIds: readonly string[] }) 
           when={anyAffected()}
           fallback={
             <>
-              {listOf(views().map((v) => v.install.label))} does not record which
+              {listOf(views().map((v) => installName(v.install, app.installs())))} does not record which
               ComfyUI version it runs, so whether this model keeps its picture in
               the model browser once it is reached through a link is unknown.
             </>
@@ -79,7 +80,7 @@ export function ThumbnailNoteForModel(props: { installIds: readonly string[] }) 
           {listOf(
             views()
               .filter((v) => v.thumbnails === "affected")
-              .map((v) => v.install.label),
+              .map((v) => installName(v.install, app.installs())),
           )}{" "}
           will not show a picture for it in the model browser.
         </Show>{" "}
