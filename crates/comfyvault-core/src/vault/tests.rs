@@ -1081,6 +1081,58 @@ fn a_delete_that_put_its_links_back_is_not_a_stopped_delete() {
     assert!(health.ok);
 }
 
+#[test]
+fn a_record_that_points_outside_the_vault_deletes_nothing_there() {
+    // A record written by an older build, or by hand, can name a folder
+    // outside the vault. A file of the same size there is somebody's.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+
+    let victim = w.path().join("victim/m.safetensors");
+    std::fs::create_dir_all(victim.parent().unwrap()).unwrap();
+    std::fs::write(&victim, weights("m")).unwrap();
+    let mut rec = w.store.vault_file(&weights_hash("m")).unwrap().unwrap();
+    rec.sha256 = crate::scan::hash::normalize_sha256(&"ab".repeat(32)).unwrap();
+    rec.category = "../victim".into();
+    rec.aliases.clear();
+    w.store.put_vault_file(&rec).unwrap();
+
+    let err = vault(&w).delete_file_and_links(&rec.sha256, &rec.sha256).unwrap_err();
+    assert!(victim.is_file(), "a file outside the vault was deleted");
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{err:?}");
+}
+
+#[test]
+fn with_the_file_gone_a_link_to_another_model_is_kept() {
+    // Running a delete again after its file went has nothing to follow, so a
+    // link must name the file. One that now leads to another model is not
+    // this delete's to remove.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&a, "models/loras/n.safetensors", &weights("n"));
+    w.write_model(&b, "models/loras/n.safetensors", &weights("n"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+    let m = weights_hash("m");
+    let m_file = vault_file_of(&w, &m);
+    let n_file = vault_file_of(&w, &weights_hash("n"));
+
+    std::fs::remove_file(&m_file).unwrap();
+    std::fs::remove_file(&pa).unwrap();
+    w.platform.create_file_symlink(&pa, &n_file).unwrap();
+
+    let err = vault(&w).delete_file_and_links(&m, &m).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(w.is_link(&pa), "a working link to another model was removed");
+    assert_eq!(w.read(&pa), weights("n"));
+}
+
 // --- health ----------------------------------------------------------------
 
 #[test]
