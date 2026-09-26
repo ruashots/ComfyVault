@@ -1816,7 +1816,10 @@ Then it removes, in this order:
 Each removal is written to the journal before it happens. The journal belongs
 to no run, so it never appears as a run to finish or undo. It makes an undo of
 the run that put the file in the vault refuse with `conflict` before it moves
-anything, because that undo needs the file.
+anything, because that undo needs the file. That refusal says "One of this
+run's models was deleted in Cleanup, so this run can no longer be undone.
+Nothing was changed.", and `detail` lists the deleted model's paths, separated
+by commas. `revert_apply` and `preview_revert` both answer it.
 
 **All or nothing.** If the disk refuses a removal, the engine puts back every
 link it already removed, and rejects with the disk's code (`ioError`,

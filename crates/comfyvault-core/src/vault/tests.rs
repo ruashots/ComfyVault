@@ -782,6 +782,17 @@ fn undoing_the_run_that_made_a_deleted_model_refuses_before_touching_anything() 
         .revert("ap-1", &CancelToken::new(), &NullSink)
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::Conflict, "{err:?}");
+    // The person is told why, not sent to undo a delete that cannot be undone.
+    assert!(err.message.contains("deleted in Cleanup"), "{}", err.message);
+    assert!(err.message.contains("can no longer be undone"), "{}", err.message);
+    assert!(!err.message.contains("Undo the later change"), "{}", err.message);
+    let detail = err.detail.clone().unwrap_or_default();
+    assert!(detail.contains("m.safetensors"), "the deleted model is named: {detail}");
+    assert!(!detail.contains("keep.safetensors"), "a model still there is not named: {detail}");
+
+    // The preview asks the same question first, and gets the same answer.
+    let preview = Applier::new(&w.store, &w.platform).preview_revert("ap-1").unwrap_err();
+    assert_eq!(preview.message, err.message);
     for p in &kept {
         assert!(w.is_link(p), "{p:?} was put back by an undo that should have refused");
         assert_eq!(w.read(p), weights("keep"));

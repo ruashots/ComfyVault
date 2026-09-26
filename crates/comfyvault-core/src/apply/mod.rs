@@ -1344,6 +1344,7 @@ impl<'a> Applier<'a> {
             .unwrap_or_default();
 
         let mut conflicts: Vec<String> = Vec::new();
+        let mut deleted: Vec<String> = Vec::new();
         for other in self.store.journal_ids()? {
             if other == apply_id {
                 continue;
@@ -1362,7 +1363,12 @@ impl<'a> Applier<'a> {
                 }
                 for p in step_paths_touched(&e.step) {
                     if mine.contains(&p) {
-                        conflicts.push(crate::paths::display_path(&p));
+                        let into = if other.starts_with(crate::vault::DELETE_JOURNAL_PREFIX) {
+                            &mut deleted
+                        } else {
+                            &mut conflicts
+                        };
+                        into.push(crate::paths::display_path(&p));
                     }
                 }
             }
@@ -1383,6 +1389,17 @@ impl<'a> Applier<'a> {
             if mine.contains(&target) {
                 conflicts.push(crate::paths::display_path(&link.abs_path));
             }
+        }
+
+        // A delete cannot be undone, so asking for it to be undone first
+        // would send the person looking for a button that does not exist.
+        if !deleted.is_empty() {
+            deleted.sort();
+            deleted.dedup();
+            return Err(VaultError::conflict(
+                "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed.",
+            )
+            .with_detail(deleted.join(", ")));
         }
 
         if conflicts.is_empty() {

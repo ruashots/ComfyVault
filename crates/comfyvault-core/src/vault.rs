@@ -162,6 +162,10 @@ pub struct VaultPage {
     pub files: Vec<VaultFile>,
 }
 
+/// How a delete's journal is named. An undo reads it to tell a model that was
+/// deleted from a change that can itself be undone.
+pub const DELETE_JOURNAL_PREFIX: &str = "delete-";
+
 /// What deleting a model with its links did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeletedModel {
@@ -201,7 +205,7 @@ impl<'a> DeleteJournal<'a> {
     fn new(store: &'a Store, sha256: &str) -> Self {
         Self {
             store,
-            id: format!("delete-{}", uuid::Uuid::new_v4().simple()),
+            id: format!("{DELETE_JOURNAL_PREFIX}{}", uuid::Uuid::new_v4().simple()),
             sha256: sha256.to_string(),
             entries: Vec::new(),
         }
