@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  SPACE_MARGIN_BYTES,
   activeCount,
   cutOffLine,
   cutOffSentence,
@@ -14,7 +13,7 @@ import {
   speedOf,
 } from "~/domain/download";
 import type { Install } from "~/ipc/contract";
-import type { DownloadRecord } from "~/ipc/draft";
+import type { Download } from "~/ipc/draft";
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -40,14 +39,12 @@ const installs = [
   install("c", "ComfyUI", "C:\\AI\\ComfyUI-Flux\\ComfyUI"),
 ];
 
-const record = (over: Partial<DownloadRecord> = {}): DownloadRecord => ({
+const record = (over: Partial<Download> = {}): Download => ({
   downloadId: "d1",
   host: "huggingface",
-  address: "https://huggingface.co/Comfy-Org/flux1-dev/blob/main/flux1-dev-fp8.safetensors",
-  versionId: null,
-  fileId: null,
+  title: "flux1-dev-fp8.safetensors",
   fileName: "flux1-dev-fp8.safetensors",
-  sizeBytes: 16 * GB,
+  bytesTotal: 16 * GB,
   bytesDone: 6.2 * GB,
   bytesPerSecond: 38 * MB,
   state: "running",
@@ -56,14 +53,15 @@ const record = (over: Partial<DownloadRecord> = {}): DownloadRecord => ({
   sha256: null,
   installIds: ["a", "c"],
   linkedInstallIds: [],
-  alreadyInVault: null,
+  notLinked: [],
+  alreadyInVault: false,
   error: null,
   startedAt: "2026-09-26T10:00:00Z",
   finishedAt: null,
   ...over,
 });
 
-const say = (r: DownloadRecord) =>
+const say = (r: Download) =>
   rowView(r, installs, "C:").parts.map((p) => p.text).join("");
 
 describe("what a row of the Downloads list says", () => {
@@ -188,12 +186,27 @@ describe("what a row of the Downloads list says", () => {
   });
 
   it("says nothing was downloaded when the vault already had the file", () => {
-    expect(say(record({ state: "linkedOnly", alreadyInVault: "before", linkedInstallIds: ["c"] }))).toBe(
+    expect(say(record({ state: "linkedOnly", alreadyInVault: true, linkedInstallIds: ["c"] }))).toBe(
       "Linked in ComfyUI-Flux. It was already in the vault, so nothing was downloaded.",
     );
-    expect(say(record({ state: "linkedOnly", alreadyInVault: "after", linkedInstallIds: ["c"] }))).toBe(
+    // A Hugging Face file with no hash up front, found in the vault after it came.
+    expect(say(record({ state: "done", alreadyInVault: true, linkedInstallIds: ["c"] }))).toBe(
       "Linked in ComfyUI-Flux. It was already in the vault, so the new file was deleted.",
     );
+  });
+
+  it("says which install could not get its link at the end, in the engine's words", () => {
+    const r = record({
+      state: "done",
+      vaultRelPath: "loras\\x.safetensors",
+      linkedInstallIds: ["a"],
+      notLinked: [{ installId: "c", reason: "A file with that name appeared there in the meantime." }],
+    });
+    const view = rowView(r, installs, "C:");
+    expect(say(r)).toBe(
+      "Downloaded into the vault as loras\\x.safetensors, and linked in ComfyUI-Easy-Install. It was not linked in ComfyUI-Flux: A file with that name appeared there in the meantime.",
+    );
+    expect(view.parts.at(-1)!.tone).toBe("bad");
   });
 });
 
@@ -244,11 +257,10 @@ describe("a download ComfyVault closed on", () => {
 
 describe("the plan card's rules", () => {
   it("needs the file size plus the margin free on the vault drive", () => {
-    expect(SPACE_MARGIN_BYTES).toBe(5 * GB);
-    expect(hasRoom({ sizeBytes: 16 * GB, vaultFreeBytes: 21 * GB })).toBe(true);
-    expect(hasRoom({ sizeBytes: 16 * GB, vaultFreeBytes: 21 * GB - 1 })).toBe(false);
+    expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: 21 * GB })).toBe(true);
+    expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: 21 * GB - 1 })).toBe(false);
     // A drive that did not answer is left to the engine to refuse.
-    expect(hasRoom({ sizeBytes: 16 * GB, vaultFreeBytes: null })).toBe(true);
+    expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: null })).toBe(true);
   });
 
   it("says how many installs will get a link", () => {

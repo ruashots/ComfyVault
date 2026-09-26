@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
 
 import { openConfirm } from "~/modals/confirm";
+import { isVaultError } from "~/ipc/contract";
 import { messageOf, useApp } from "~/state/store";
 import type { TokenService, TokenStatus } from "~/ipc/draft";
 
@@ -71,8 +72,9 @@ function TokenRow(props: {
       mutate({ saved: true, ok: true, account: answer.account, message: null });
       void refetch();
     } catch (error) {
-      // The typed token stays in the field, so it can be corrected.
-      setRefused(messageOf(error));
+      // The typed token stays in the field, so it can be corrected. The site's
+      // own words are the detail, when it gave any.
+      setRefused(isVaultError(error) && error.detail ? error.detail : messageOf(error));
     } finally {
       setSaving(false);
     }

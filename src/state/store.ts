@@ -34,7 +34,7 @@ import {
 import { volumeLabel } from "~/domain/drives";
 import { runLookups } from "~/domain/lookup";
 import { createDownloadState, type DownloadState } from "~/state/download";
-import type { DownloadRecord } from "~/ipc/draft";
+import type { Download } from "~/ipc/draft";
 import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type {
   ApplyProgress,
@@ -699,7 +699,7 @@ export function createAppStore(engine: Engine): AppStore {
           rows: [] as ContentRow[],
           scanId: null,
         }),
-        orNotYet(engine.listDownloads(), [] as DownloadRecord[]),
+        orNotYet(engine.listDownloads(), [] as Download[]),
       ]);
 
       batch(() => {

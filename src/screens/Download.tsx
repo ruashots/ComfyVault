@@ -19,7 +19,7 @@ import { installName } from "~/domain/installname";
 import { fileNameOf, folderOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
 import { messageOf, useApp } from "~/state/store";
-import type { AddressPlan, DownloadRecord } from "~/ipc/draft";
+import type { AddressPlan, AddressRefusal, Download, DownloadHost } from "~/ipc/draft";
 
 export function DownloadScreen() {
   const app = useApp();
@@ -75,8 +75,8 @@ function CutOffBanner() {
 }
 
 /** The address refusals the field itself answers, below it, in red. */
-function fieldRefusal(plan: AddressPlan | null): { head: string; next: string } | null {
-  switch (plan?.refusal?.kind) {
+function fieldRefusal(refusal: AddressRefusal | null): { head: string; next: string } | null {
+  switch (refusal?.kind) {
     case "badAddress":
       return {
         head: "This is not a Hugging Face or Civitai address.",
@@ -95,7 +95,7 @@ function fieldRefusal(plan: AddressPlan | null): { head: string; next: string } 
 function PasteBox() {
   const app = useApp();
   const card = app.dl.card;
-  const refused = () => fieldRefusal(card.plan);
+  const refused = () => fieldRefusal(card.refusal);
   const read = () => {
     const address = card.address.trim();
     if (address) void app.dl.read(address);
@@ -190,22 +190,42 @@ function PlanCard() {
           </div>
         </div>
       </Match>
-      <Match when={plan() && !fieldRefusal(plan()) ? plan() : null}>
+      <Match when={card.refusal && !fieldRefusal(card.refusal) ? card.refusal : null}>
+        {(r) => (
+          <div class="card plan-card">
+            <div class="card-h">
+              <span class="nm" title={r().title ?? card.address}>
+                {r().title ?? card.address}
+              </span>
+              <Show when={r().host}>{(host) => <span class="src">from {hostName(host())}</span>}</Show>
+            </div>
+            <Show when={r().subtitle}>
+              {(sub) => (
+                <div class="card-sub" title={sub()}>
+                  {sub()}
+                </div>
+              )}
+            </Show>
+            <Refused refusal={r()} />
+          </div>
+        )}
+      </Match>
+      <Match when={plan()}>
         {(p) => (
           <div class="card plan-card">
             <CardHead plan={p()} />
-            <Switch fallback={<Ready plan={p()} />}>
-              <Match when={p().refusal}>{(r) => <Refused plan={p()} refusal={r()} />}</Match>
-              <Match when={p().alreadyInVault}>
-                {(already) => <Already plan={p()} vaultRelPath={already().vaultRelPath} />}
-              </Match>
-            </Switch>
+            <Show when={p().alreadyInVault} fallback={<Ready plan={p()} />}>
+              {(already) => <Already plan={p()} vaultRelPath={already().vaultRelPath} />}
+            </Show>
           </div>
         )}
       </Match>
     </Switch>
   );
 }
+
+/** The id of the file the plan is for, to read it again with another folder. */
+const fileIdOf = (plan: AddressPlan) => plan.fileId ?? undefined;
 
 function CardHead(props: { plan: AddressPlan }) {
   const app = useApp();
@@ -229,7 +249,7 @@ function CardHead(props: { plan: AddressPlan }) {
       <div class="card-sub" title={p().subtitle}>
         {p().subtitle}
       </div>
-      <Show when={p().host === "civitai" && p().versions.length > 0 && !p().refusal}>
+      <Show when={p().host === "civitai" && p().versions.length > 0}>
         <div class="pick">
           <label>
             Version
@@ -262,7 +282,7 @@ function CardHead(props: { plan: AddressPlan }) {
             >
               <For each={p().files}>
                 {(f) => (
-                  <option value={f.id} selected={f.name === p().fileName}>
+                  <option value={f.id} selected={f.id === p().fileId}>
                     {f.name}, {fmt(f.sizeBytes)}
                     {f.detail ? `, ${f.detail}` : ""}
                   </option>
@@ -299,10 +319,9 @@ function InstallLines(props: { plan: AddressPlan }) {
         const install = () => app.installs().find((i) => i.id === line.installId);
         const name = () => (install() ? installName(install()!, app.installs()) : line.installId);
         const on = () => card.ticked.includes(line.installId);
+        // Without a folder the path is not known yet, so the folder shows as "…".
         const path = () =>
-          props.plan.category
-            ? line.linkPath
-            : `${install()?.modelsDir ?? ""}\\…\\${props.plan.fileName}`;
+          line.linkPath ?? `${install()?.modelsDir ?? ""}\\…\\${props.plan.fileName}`;
         return (
           <Switch>
             <Match when={line.state === "hasLink"}>
@@ -324,9 +343,20 @@ function InstallLines(props: { plan: AddressPlan }) {
                 <span class="nm" title={install()?.root}>
                   {name()}
                 </span>
-                <span class="why bad" title={line.linkPath}>
+                <span class="why bad" title={line.linkPath ?? undefined}>
                   a different file already has this name in its {props.plan.category} folder
                 </span>
+              </div>
+            </Match>
+            <Match when={line.state === "unavailable"}>
+              <div class="dl-inst off">
+                <span class="cb held">
+                  <Icon name="check" size={9} />
+                </span>
+                <span class="nm" title={install()?.root}>
+                  {name()}
+                </span>
+                <span class="why">its folder cannot be reached right now</span>
               </div>
             </Match>
             <Match when={line.state === "free"}>
@@ -360,14 +390,13 @@ function Ready(props: { plan: AddressPlan }) {
   const volume = () => app.vaultVolume();
   const room = () => hasRoom(p());
   const ticked = createMemo(() => tickedFree(p(), card.ticked));
-  const vaultName = () => fileNameOf(p().vaultRelPath);
   const chosenByPerson = () => card.category !== null;
 
   const chooseFolder = (category: string) => {
     app.dl.setCard("category", category);
     void app.dl.read(card.address, {
       ...(p().versionId !== null ? { versionId: p().versionId! } : {}),
-      ...(p().fileId !== null ? { fileId: p().fileId! } : {}),
+      ...(fileIdOf(p()) !== undefined ? { fileId: fileIdOf(p())! } : {}),
       category,
     });
   };
@@ -393,7 +422,7 @@ function Ready(props: { plan: AddressPlan }) {
               }
             >
               <b>{p().vaultRelPath}</b>
-              <Show when={vaultName() !== p().fileName}>
+              <Show when={p().vaultNameTaken}>
                 <span class="faint"> (another model already has this name in the vault)</span>
               </Show>
               <Show when={!chosenByPerson() && p().suggestedBecause}>
@@ -519,7 +548,7 @@ function Ready(props: { plan: AddressPlan }) {
   );
 }
 
-/** Queue the download the card describes, and keep the ticks for next time. */
+/** Queue the download the card describes. The engine keeps the ticks for next time. */
 async function start(app: ReturnType<typeof useApp>, plan: AddressPlan, installIds: string[]) {
   const card = app.dl.card;
   if (card.starting || plan.category === null) return;
@@ -528,19 +557,10 @@ async function start(app: ReturnType<typeof useApp>, plan: AddressPlan, installI
     await app.engine.startDownload({
       address: card.address,
       ...(plan.versionId !== null ? { versionId: plan.versionId } : {}),
-      ...(plan.fileId !== null ? { fileId: plan.fileId } : {}),
+      ...(fileIdOf(plan) !== undefined ? { fileId: fileIdOf(plan)! } : {}),
       category: plan.category,
       installIds,
     });
-    // The ticks are the person's choice for next time, whatever this card held.
-    const held = new Set(
-      plan.installs.filter((i) => i.state !== "free").map((i) => i.installId),
-    );
-    const settings = await app.engine.getSettings().catch(() => null);
-    const kept = (settings?.downloadInstallIds ?? []).filter((id) => held.has(id));
-    await app.engine
-      .updateSettings({ downloadInstallIds: [...new Set([...kept, ...installIds])] })
-      .catch(() => undefined);
     app.dl.cancel();
     app.dl.setCard("address", "");
     await app.dl.load();
@@ -617,8 +637,8 @@ interface RefusalWords {
 
 /** What a refusal found while reading says, by service and kind. */
 export function refusalWords(
-  host: AddressPlan["host"],
-  kind: NonNullable<AddressPlan["refusal"]>["kind"],
+  host: DownloadHost,
+  kind: AddressRefusal["kind"],
 ): RefusalWords {
   const hf = host === "huggingface";
   switch (kind) {
@@ -681,12 +701,14 @@ export function refusalWords(
   }
 }
 
-function Refused(props: {
-  plan: AddressPlan;
-  refusal: NonNullable<AddressPlan["refusal"]>;
-}) {
+function Refused(props: { refusal: AddressRefusal }) {
   const app = useApp();
-  const words = () => refusalWords(props.plan.host, props.refusal.kind);
+  const host = () => props.refusal.host ?? "huggingface";
+  const words = () => {
+    const w = refusalWords(host(), props.refusal.kind);
+    // Only a Hugging Face refusal names a page ComfyVault can open.
+    return w.first === "page" && !props.refusal.page ? { ...w, first: null } : w;
+  };
   const again = () => void app.dl.read(app.dl.card.address);
 
   return (
@@ -698,10 +720,10 @@ function Refused(props: {
         </h4>
         <p>
           {words().cause}
-          <Show when={props.refusal.serviceMessage}> {hostName(props.plan.host)} says:</Show>
+          <Show when={props.refusal.serviceMessage}> {hostName(host())} says:</Show>
         </p>
         <Show when={props.refusal.serviceMessage}>
-          {(words) => <q>{words()}</q>}
+          {(said) => <q>{said()}</q>}
         </Show>
         <p style={{ "margin-top": "8px" }}>{words().next}</p>
       </div>
@@ -712,18 +734,20 @@ function Refused(props: {
               Open Settings
             </button>
           </Match>
-          <Match when={words().first === "page"}>
-            <button
-              class="btn pri"
-              onClick={() =>
-                void app.engine
-                  .openModelPage(app.dl.card.address)
-                  .catch((error: unknown) => app.actions.showToast(messageOf(error), "bad"))
-              }
-            >
-              <Icon name="external" size={13} />
-              Open the model's page
-            </button>
+          <Match when={words().first === "page" ? props.refusal.page : null}>
+            {(page) => (
+              <button
+                class="btn pri"
+                onClick={() =>
+                  void app.engine
+                    .openHuggingFacePage(page().owner, page().repo)
+                    .catch((error: unknown) => app.actions.showToast(messageOf(error), "bad"))
+                }
+              >
+                <Icon name="external" size={13} />
+                Open the model's page
+              </button>
+            )}
           </Match>
         </Switch>
         <button class="btn" classList={{ pri: words().first === null }} onClick={again}>
@@ -772,14 +796,14 @@ const ACTION_WORDS: Record<RowAction, string> = {
   library: "Show it in Library",
 };
 
-function DownloadRow(props: { record: DownloadRecord }) {
+function DownloadRow(props: { record: Download }) {
   const app = useApp();
   const r = () => props.record;
   const view = createMemo(() => rowView(r(), app.installs(), app.vaultVolume()));
 
   const act = (action: RowAction) => {
     const id = r().downloadId;
-    const take = (call: () => Promise<DownloadRecord>) =>
+    const take = (call: () => Promise<Download>) =>
       void call()
         .then((record) => app.dl.receive(record))
         .catch((error: unknown) => app.actions.showToast(messageOf(error), "bad"));
@@ -825,7 +849,7 @@ function DownloadRow(props: { record: DownloadRecord }) {
         <span class="nm" title={r().fileName}>
           {r().fileName}
         </span>
-        <span class="sz">{fmt(r().sizeBytes)}</span>
+        <span class="sz">{fmt(r().bytesTotal)}</span>
       </div>
       <div class="dlrow-s">
         <For each={view().parts}>

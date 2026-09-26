@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { parseAddress } from "~/ipc/fixture/downloads";
 import type { VaultError } from "~/ipc/contract";
-import type { DownloadRecord } from "~/ipc/draft";
+import type { Download } from "~/ipc/draft";
 
 /**
  * The development engine's downloader must answer the way the real engine
@@ -29,7 +29,7 @@ const refusal = async (p: Promise<unknown>): Promise<VaultError> => {
 
 function engine() {
   const e = new FixtureEngine({ manual: true });
-  const seen: DownloadRecord[] = [];
+  const seen: Download[] = [];
   e.onDownloadProgress((r) => seen.push(r));
   return { e, seen };
 }
@@ -95,6 +95,8 @@ describe("reading an address into a plan", () => {
     expect((await e.readModelAddress({ address: "https://drive.google.com/x" })).refusal).toEqual({
       kind: "badAddress",
       host: null,
+      title: null,
+      subtitle: null,
       serviceMessage: null,
       page: null,
     });
@@ -105,7 +107,7 @@ describe("reading an address into a plan", () => {
 
   it("chooses the newest Civitai version and its primary file, and the menus change it", async () => {
     const { e } = engine();
-    const plan = await e.readModelAddress({ address: DREAM });
+    const plan = (await e.readModelAddress({ address: DREAM })).plan!;
     expect(plan.title).toBe("DreamShaper");
     expect(plan.versions.map((v) => v.name)).toEqual(["8", "8 LCM", "8-inpainting", "7"]);
     expect(plan.versionId).toBe(plan.versions[0]!.id);
@@ -115,32 +117,33 @@ describe("reading an address into a plan", () => {
     expect(plan.suggestedBecause).toBe("Civitai calls it a Checkpoint");
     expect(plan.vaultRelPath).toBe("checkpoints\\dreamshaper_8.safetensors");
 
-    const seven = await e.readModelAddress({ address: DREAM, versionId: plan.versions[3]!.id });
+    const seven = (await e.readModelAddress({ address: DREAM, versionId: plan.versions[3]!.id })).plan!;
     expect(seven.fileName).toBe("dreamshaper_7.safetensors");
-    const full = await e.readModelAddress({
+    const full = (await e.readModelAddress({
       address: DREAM,
       versionId: seven.versionId!,
       fileId: seven.files[1]!.id,
-    });
+    })).plan!;
     expect(full.fileName).toBe("dreamshaper_7-full.safetensors");
   });
 
   it("suggests no folder for a Hugging Face file whose path gives no hint", async () => {
     const { e } = engine();
-    const plan = await e.readModelAddress({ address: FLUX_FP8 });
+    const plan = (await e.readModelAddress({ address: FLUX_FP8 })).plan!;
     expect(plan.category).toBeNull();
     expect(plan.suggestedCategory).toBeNull();
-    expect(plan.vaultRelPath).toBe("");
-    const chosen = await e.readModelAddress({ address: FLUX_FP8, category: "diffusion_models" });
+    expect(plan.vaultRelPath).toBeNull();
+    expect(plan.installs.every((i) => i.linkPath === null)).toBe(true);
+    const chosen = (await e.readModelAddress({ address: FLUX_FP8, category: "diffusion_models" })).plan!;
     expect(chosen.vaultRelPath).toBe("diffusion_models\\flux1-dev-fp8.safetensors");
-    expect(chosen.installs.every((i) => i.linkPath.endsWith("\\models\\diffusion_models\\flux1-dev-fp8.safetensors"))).toBe(
+    expect(chosen.installs.every((i) => i.linkPath!.endsWith("\\models\\diffusion_models\\flux1-dev-fp8.safetensors"))).toBe(
       true,
     );
   });
 
   it("suggests the folder a Hugging Face path names", async () => {
     const { e } = engine();
-    const plan = await e.readModelAddress({ address: WAN_VAE });
+    const plan = (await e.readModelAddress({ address: WAN_VAE })).plan!;
     expect(plan.category).toBe("vae");
     expect(plan.title).toBe("wan2.2_vae.safetensors");
     expect(plan.subtitle).toBe("Comfy-Org/Wan_2.2_ComfyUI_Repackaged");
@@ -148,7 +151,7 @@ describe("reading an address into a plan", () => {
 
   it("says the vault already holds a file with the same SHA-256", async () => {
     const { e } = await afterARun();
-    const plan = await e.readModelAddress({ address: T5 });
+    const plan = (await e.readModelAddress({ address: T5 })).plan!;
     expect(plan.alreadyInVault).toEqual({ vaultRelPath: "text_encoders\\t5xxl_fp16.safetensors" });
     expect(plan.installs.every((i) => i.state === "hasLink")).toBe(true);
   });
@@ -156,7 +159,7 @@ describe("reading an address into a plan", () => {
   it("holds an install whose folder has a different file with that name", async () => {
     const { e } = engine();
     e.downloads.devPlaceFile("sandbox", "diffusion_models", "flux1-dev-fp8.safetensors");
-    const plan = await e.readModelAddress({ address: FLUX_FP8, category: "diffusion_models" });
+    const plan = (await e.readModelAddress({ address: FLUX_FP8, category: "diffusion_models" })).plan!;
     expect(plan.installs.find((i) => i.installId === "sandbox")!.state).toBe("nameTaken");
     expect(plan.installs.find((i) => i.installId === "studio")!.state).toBe("free");
   });
@@ -164,9 +167,12 @@ describe("reading an address into a plan", () => {
   it("finds each refusal while reading, with the service's own words", async () => {
     const { e } = engine();
     const missing = await e.readModelAddress({ address: GATED });
+    expect(missing.plan).toBeNull();
     expect(missing.refusal).toEqual({
       kind: "tokenMissing",
       host: "huggingface",
+      title: "flux1-dev.safetensors",
+      subtitle: "black-forest-labs/FLUX.1-dev",
       serviceMessage:
         "Access to model black-forest-labs/FLUX.1-dev is restricted. You must have access to it and be authenticated to access it. Please log in.",
       page: { owner: "black-forest-labs", repo: "FLUX.1-dev" },
@@ -192,7 +198,7 @@ describe("the tokens", () => {
     const { e } = engine();
     expect(await e.getTokenStatus("huggingface")).toEqual({ saved: false, ok: null, account: null, message: null });
     const refused = await refusal(e.setToken("huggingface", "hf_bad"));
-    expect(refused.message).toBe("Invalid username or password.");
+    expect(refused.detail).toBe("Invalid username or password.");
     expect((await e.getTokenStatus("huggingface")).saved).toBe(false);
 
     expect(await e.setToken("huggingface", "hf_good")).toEqual({ ok: true, account: "example-user" });
@@ -278,7 +284,7 @@ describe("the queue", () => {
     const r = await e.startDownload({ address: T5, category: "text_encoders", installIds: ["studio"] });
     // Every install already links it, so there is nothing to link and nothing to transfer.
     expect(r.state).toBe("linkedOnly");
-    expect(r.alreadyInVault).toBe("before");
+    expect(r.alreadyInVault).toBe(true);
     expect(r.bytesDone).toBe(0);
   });
 
@@ -314,5 +320,29 @@ describe("the queue", () => {
     expect((await refusal(e.removeDownload(r.downloadId))).code).toBe("conflict");
     await e.discardDownload(r.downloadId);
     expect(await e.listDownloads()).toEqual([]);
+  });
+});
+
+describe("what the engine keeps for the person", () => {
+  it("ticks the installs ticked last time on the next plan", async () => {
+    const { e } = engine();
+    const first = (await e.readModelAddress({ address: DREAM })).plan!;
+    expect(first.installs.filter((i) => i.ticked).map((i) => i.installId)).toEqual(["studio", "sandbox"]);
+    await e.startDownload({ address: DREAM, category: "checkpoints", installIds: ["sandbox"] });
+    const next = (await e.readModelAddress({ address: "https://civitai.com/models/58390" })).plan!;
+    expect(next.installs.filter((i) => i.ticked).map((i) => i.installId)).toEqual(["sandbox"]);
+  });
+
+  it("asks for the file's size plus the margin free, and nothing for a file it holds", async () => {
+    const { e } = engine();
+    const plan = (await e.readModelAddress({ address: DREAM })).plan!;
+    expect(plan.spaceNeededBytes).toBe(plan.sizeBytes + 5_000_000_000);
+  });
+
+  it("refuses a token the site does not accept with the site's words as the detail", async () => {
+    const { e } = engine();
+    const refused = await refusal(e.setToken("civitai", "bad"));
+    expect(refused.code).toBe("conflict");
+    expect(refused.detail).toBe("Invalid API key");
   });
 });

@@ -10,10 +10,11 @@
 import type { Install, LinkRecord, VaultError } from "~/ipc/contract";
 import type {
   AddressPlan,
+  AddressReading,
   AddressRefusal,
   DownloadHost,
   HfPage,
-  DownloadRecord,
+  Download,
   TokenService,
   TokenStatus,
 } from "~/ipc/draft";
@@ -23,7 +24,7 @@ const GB = 1024 ** 3;
 const MB = 1024 ** 2;
 
 /** Room the engine keeps free on the vault drive after a download. */
-export const SPACE_MARGIN_BYTES = 5 * GB;
+export const SPACE_MARGIN_BYTES = 5_000_000_000;
 
 /** The categories ComfyUI knows itself, in its own order, for the folder menu. */
 export const CATEGORIES = [
@@ -298,10 +299,12 @@ const CIVITAI_BAD_TOKEN = "Invalid API key";
 function refuse(
   kind: AddressRefusal["kind"],
   host: DownloadHost | null,
+  title: string | null,
+  subtitle: string | null,
   serviceMessage: string | null,
   page: HfPage | null = null,
 ): AddressRefusal {
-  return { kind, host, serviceMessage, page };
+  return { kind, host, title, subtitle, serviceMessage, page };
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {
@@ -317,7 +320,11 @@ interface Token {
   message: string | null;
 }
 
-interface Job extends DownloadRecord {
+interface Job extends Download {
+  /** What the transfer reads again on a continue. Not part of the record. */
+  address: string;
+  versionId: number | null;
+  fileId: number | null;
   /** The expected hash, known or not before the transfer. */
   expected: string | null;
 }
@@ -334,15 +341,15 @@ export class DownloadDesk {
   /** The browser build's clock is paused, so a state stays on screen. */
   private held = false;
   private seq = 0;
-  /** The last settings choice, kept by the engine for the person. */
-  downloadInstallIds: string[] | null = null;
+  /** The installs ticked at the last download, kept by the engine for the person. */
+  private downloadInstallIds: string[] | null = null;
 
   constructor(
     private readonly world: () => World,
     private readonly manual: boolean,
     private readonly tickMs: () => number,
     private readonly opened: string[],
-    private readonly send: (r: DownloadRecord) => void,
+    private readonly send: (r: Download) => void,
   ) {}
 
   // ── tokens ─────────────────────────────────────────────────────────────────
@@ -352,8 +359,10 @@ export class DownloadDesk {
     if (!value) throw error("invalidArgument", "Paste a token first.");
     // The development engine accepts a token unless it says "bad".
     if (/bad/i.test(value)) {
+      // The engine's own sentence, and the site's words as the detail.
       throw error(
-        "invalidArgument",
+        "conflict",
+        `${service === "huggingface" ? "Hugging Face" : "Civitai"} did not accept this token, so it was not saved.`,
         service === "huggingface" ? HF_BAD_TOKEN : CIVITAI_BAD_TOKEN,
       );
     }
@@ -398,93 +407,110 @@ export class DownloadDesk {
     versionId?: number;
     fileId?: number;
     category?: string;
-  }): Promise<AddressPlan> {
+  }): Promise<AddressReading> {
     if (this.readDelayMs > 0) await new Promise((r) => setTimeout(r, this.readDelayMs));
+    const refused = (refusal: AddressRefusal): AddressReading => ({ plan: null, refusal });
     const parsed = parseAddress(args.address);
-    const base = (host: DownloadHost): AddressPlan => ({
-      host,
-      title: "",
-      subtitle: args.address.trim(),
-      versions: [],
-      versionId: null,
-      files: [],
-      fileId: null,
-      fileName: "",
-      sizeBytes: 0,
-      sha256: null,
-      categories: [...CATEGORIES],
-      category: null,
-      suggestedCategory: null,
-      suggestedBecause: null,
-      alreadyInVault: null,
-      vaultRelPath: "",
-      installs: [],
-      vaultFreeBytes: this.world().driveReadable ? this.world().freeBytes : null,
-      refusal: null,
-    });
-    if (parsed === "bad") return { ...base("huggingface"), refusal: refuse("badAddress", null, null) };
+    if (parsed === "bad") return refused(refuse("badAddress", null, null, null, null));
     if (parsed === "hfRepoNotFile") {
-      return { ...base("huggingface"), refusal: refuse("hfRepoNotFile", "huggingface", null) };
+      return refused(refuse("hfRepoNotFile", "huggingface", null, null, null));
     }
 
     if (parsed.host === "huggingface") {
-      const plan = base("huggingface");
       const name = parsed.path.split("/").pop()!;
-      plan.title = name;
-      plan.subtitle = `${parsed.owner}/${parsed.repo}`;
-      plan.fileName = name;
+      const subtitle = `${parsed.owner}/${parsed.repo}`;
+      const page = { owner: parsed.owner, repo: parsed.repo };
       const found = HF.find(
         (f) =>
           f.owner.toLowerCase() === parsed.owner.toLowerCase() &&
           f.repo.toLowerCase() === parsed.repo.toLowerCase() &&
           f.path === parsed.path,
       );
-      const page = { owner: parsed.owner, repo: parsed.repo };
-      if (!found) return { ...plan, refusal: refuse("notFound", "huggingface", "Entry not found", page) };
+      const hf = (kind: AddressRefusal["kind"], words: string) =>
+        refused(refuse(kind, "huggingface", name, subtitle, words, page));
+      if (!found) return hf("notFound", "Entry not found");
       const token = this.tokens.huggingface;
       if (found.gated) {
-        if (!token) {
-          return { ...plan, refusal: refuse("tokenMissing", "huggingface", HF_GATED_MESSAGE(found.owner, found.repo), page) };
-        }
-        if (!token.ok) {
-          return { ...plan, refusal: refuse("tokenRejected", "huggingface", token.message ?? HF_BAD_TOKEN, page) };
-        }
+        if (!token) return hf("tokenMissing", HF_GATED_MESSAGE(found.owner, found.repo));
+        if (!token.ok) return hf("tokenRejected", token.message ?? HF_BAD_TOKEN);
         if (!this.accepted.has(`${found.owner}/${found.repo}`.toLowerCase())) {
-          return { ...plan, refusal: refuse("noAccess", "huggingface", HF_NO_ACCESS_MESSAGE(found.owner, found.repo), page) };
+          return hf("noAccess", HF_NO_ACCESS_MESSAGE(found.owner, found.repo));
         }
       }
       const file = this.hfFile(found);
       // Hugging Face says nothing about kind: only a folder in the path hints.
       const hinted = parsed.path.split("/").slice(0, -1).find((p) => CATEGORIES.includes(p)) ?? null;
-      return this.finish(plan, file, hinted, hinted ? `its path in the repository is in ${hinted}` : null, args.category);
+      return {
+        plan: this.plan(
+          {
+            host: "huggingface",
+            title: name,
+            subtitle,
+            versions: [],
+            versionId: null,
+            files: [],
+            fileId: null,
+            page,
+            modelId: null,
+          },
+          file,
+          hinted,
+          hinted ? `its path in the repository is in ${hinted}` : null,
+          args.category,
+        ),
+        refusal: null,
+      };
     }
 
-    const plan = base("civitai");
     const model = CIVITAI.find(
       (m) =>
         (parsed.modelId !== null && m.id === parsed.modelId) ||
         (parsed.modelId === null && m.versions.some((v) => v.id === parsed.versionId)),
     );
-    if (!model) return { ...plan, refusal: refuse("notFound", "civitai", "Model not found") };
+    if (!model) {
+      return refused(refuse("notFound", "civitai", null, args.address.trim(), "Model not found", null));
+    }
     const versionId = args.versionId ?? parsed.versionId ?? model.versions[0]!.id;
     const version = model.versions.find((v) => v.id === versionId) ?? model.versions[0]!;
     const file = version.files.find((f) => f.id === args.fileId) ?? version.files[0]!;
-    plan.title = model.name;
-    plan.subtitle = args.address.trim();
-    plan.versions = model.versions.map((v) => ({ id: v.id, name: v.name }));
-    plan.versionId = version.id;
-    plan.files = version.files.map((f) => ({ id: f.id, name: f.name, sizeBytes: f.sizeBytes, detail: f.detail }));
-    plan.fileId = file.id;
-    plan.fileName = file.name;
     if (model.needsLogin) {
       const token = this.tokens.civitai;
-      if (!token) return { ...plan, refusal: refuse("tokenMissing", "civitai", CIVITAI_LOGIN) };
+      const title = `${model.name}, version ${version.name}`;
+      if (!token) {
+        return refused(refuse("tokenMissing", "civitai", title, args.address.trim(), CIVITAI_LOGIN, null));
+      }
       if (!token.ok) {
-        return { ...plan, refusal: refuse("tokenRejected", "civitai", token.message ?? CIVITAI_BAD_TOKEN) };
+        return refused(
+          refuse("tokenRejected", "civitai", title, args.address.trim(), token.message ?? CIVITAI_BAD_TOKEN, null),
+        );
       }
     }
     const folder = CIVITAI_FOLDER[model.type] ?? null;
-    return this.finish(plan, file, folder, folder ? `Civitai calls it a ${model.type}` : null, args.category);
+    return {
+      plan: this.plan(
+        {
+          host: "civitai",
+          title: model.name,
+          subtitle: args.address.trim(),
+          versions: model.versions.map((v) => ({ id: v.id, name: v.name })),
+          versionId: version.id,
+          files: version.files.map((f) => ({
+            id: f.id,
+            name: f.name,
+            sizeBytes: f.sizeBytes,
+            detail: f.detail,
+          })),
+          fileId: file.id,
+          page: null,
+          modelId: model.id,
+        },
+        file,
+        folder,
+        folder ? `Civitai calls it a ${model.type}` : null,
+        args.category,
+      ),
+      refusal: null,
+    };
   }
 
   /** A Hugging Face file, with the sample world's own hash where it has one. */
@@ -498,9 +524,12 @@ export class DownloadDesk {
     };
   }
 
-  /** The part of the plan that depends on the folder and on what is on disk. */
-  private finish(
-    plan: AddressPlan,
+  /** The plan: what the site said, and what depends on the folder and the disk. */
+  private plan(
+    site: Pick<
+      AddressPlan,
+      "host" | "title" | "subtitle" | "versions" | "versionId" | "files" | "fileId" | "page" | "modelId"
+    >,
     file: RemoteFile,
     suggested: string | null,
     because: string | null,
@@ -508,21 +537,12 @@ export class DownloadDesk {
   ): AddressPlan {
     const world = this.world();
     const held = file.sha256 ? world.vault.get(file.sha256) : undefined;
+    const heldContent = held ? world.contents.find((c) => c.sha256 === held.sha256) : undefined;
     // A file the vault holds already has its folder: the links go there.
-    const heldCategory = held
-      ? (world.contents.find((c) => c.sha256 === held.sha256)?.category ?? null)
+    const category = heldContent?.category ?? asked ?? suggested;
+    const alreadyInVault = held
+      ? { vaultRelPath: `${heldContent?.category ?? ""}\\${held.canonicalName}` }
       : null;
-    const category = heldCategory ?? asked ?? suggested;
-    plan.sizeBytes = file.sizeBytes;
-    plan.sha256 = file.sha256;
-    plan.suggestedCategory = suggested;
-    plan.suggestedBecause = because;
-    plan.category = category;
-
-    if (held) {
-      const content = world.contents.find((c) => c.sha256 === held.sha256);
-      plan.alreadyInVault = { vaultRelPath: `${content?.category ?? ""}\\${held.canonicalName}` };
-    }
 
     let vaultName = file.name;
     if (category && !held) {
@@ -532,15 +552,34 @@ export class DownloadDesk {
       });
       if (taken && file.sha256) vaultName = tagged(file.name, file.sha256);
     }
-    plan.vaultRelPath = held ? plan.alreadyInVault!.vaultRelPath : category ? `${category}\\${vaultName}` : "";
-
-    const linkCategory = category ?? plan.alreadyInVault?.vaultRelPath.split("\\")[0] ?? null;
-    plan.installs = world.installs.map((install) => ({
-      installId: install.id,
-      linkPath: linkCategory ? `${install.modelsDir}\\${linkCategory}\\${file.name}` : "",
-      state: this.stateIn(install, linkCategory, file),
-    }));
-    return plan;
+    const categories = [
+      ...new Set([...CATEGORIES, ...world.contents.map((c) => c.category)]),
+    ].sort();
+    const last = this.downloadInstallIds;
+    return {
+      ...site,
+      fileName: file.name,
+      sizeBytes: file.sizeBytes,
+      sha256: file.sha256,
+      categories,
+      category,
+      suggestedCategory: suggested,
+      suggestedBecause: because,
+      alreadyInVault,
+      vaultRelPath: alreadyInVault ? alreadyInVault.vaultRelPath : category ? `${category}\\${vaultName}` : null,
+      vaultNameTaken: vaultName !== file.name,
+      installs: world.installs.map((install) => {
+        const state = this.stateIn(install, category, file);
+        return {
+          installId: install.id,
+          linkPath: category ? `${install.modelsDir}\\${category}\\${file.name}` : null,
+          state,
+          ticked: state === "free" && (last === null || last.includes(install.id)),
+        };
+      }),
+      vaultFreeBytes: world.driveReadable ? world.freeBytes : null,
+      spaceNeededBytes: alreadyInVault ? 0 : file.sizeBytes + SPACE_MARGIN_BYTES,
+    };
   }
 
   private stateIn(
@@ -599,19 +638,11 @@ export class DownloadDesk {
     });
   }
 
-  async openModelPage(address: string): Promise<null> {
-    const parsed = parseAddress(address);
-    if (parsed === "bad" || parsed === "hfRepoNotFile") {
-      throw error("invalidArgument", "That is not the address of a model ComfyVault can open.");
+  async openHuggingFacePage(owner: string, repo: string): Promise<null> {
+    if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) {
+      throw error("invalidArgument", "That is not the name of a Hugging Face model.");
     }
-    if (parsed.host === "huggingface") {
-      this.opened.push(`https://huggingface.co/${parsed.owner}/${parsed.repo}`);
-    } else {
-      const model =
-        parsed.modelId ?? CIVITAI.find((m) => m.versions.some((v) => v.id === parsed.versionId))?.id;
-      if (!model) throw error("notFound", "Model not found");
-      this.opened.push(`https://civitai.com/models/${model}`);
-    }
+    this.opened.push(`https://huggingface.co/${owner}/${repo}`);
     return null;
   }
 
@@ -621,7 +652,7 @@ export class DownloadDesk {
     this.send(publicOf(job));
   }
 
-  async listDownloads(): Promise<DownloadRecord[]> {
+  async listDownloads(): Promise<Download[]> {
     return this.jobs.map(publicOf);
   }
 
@@ -631,14 +662,15 @@ export class DownloadDesk {
     fileId?: number;
     category: string;
     installIds: string[];
-  }): Promise<DownloadRecord> {
+  }): Promise<Download> {
     if (!CATEGORIES.includes(args.category)) {
       throw error("invalidArgument", "Choose a folder for the model first.");
     }
-    const plan = await this.readModelAddress(args);
-    if (plan.refusal) {
-      throw error("conflict", plan.refusal.serviceMessage ?? "That address cannot be downloaded.");
+    const reading = await this.readModelAddress(args);
+    if (reading.refusal) {
+      throw error("conflict", reading.refusal.serviceMessage ?? "That address cannot be downloaded.");
     }
+    const plan = reading.plan;
     const world = this.world();
     const installIds = args.installIds.filter((id) =>
       plan.installs.some((i) => i.installId === id && i.state === "free"),
@@ -646,41 +678,46 @@ export class DownloadDesk {
     const job: Job = {
       downloadId: `download-${++this.seq}`,
       host: plan.host,
+      title: plan.title,
       address: args.address.trim(),
       versionId: plan.versionId,
       fileId: plan.fileId,
       fileName: plan.fileName,
-      sizeBytes: plan.sizeBytes,
+      bytesTotal: plan.sizeBytes,
       bytesDone: 0,
       bytesPerSecond: null,
       state: "waiting",
-      category: args.category,
-      vaultRelPath: plan.vaultRelPath,
+      category: plan.category ?? args.category,
+      vaultRelPath: plan.vaultRelPath ?? `${args.category}\\${plan.fileName}`,
       sha256: plan.alreadyInVault ? plan.sha256 : null,
       installIds,
       linkedInstallIds: [],
-      alreadyInVault: null,
+      notLinked: [],
+      alreadyInVault: false,
       error: null,
       startedAt: new Date().toISOString(),
       finishedAt: null,
       expected: plan.sha256,
     };
+    // The engine remembers the ticks for the next card.
+    this.downloadInstallIds = [...args.installIds];
     if (plan.alreadyInVault) {
       // Nothing to transfer: the links are made at once.
       job.linkedInstallIds = this.link(job, plan.sha256!);
       job.state = "linkedOnly";
-      job.alreadyInVault = "before";
+      job.alreadyInVault = true;
       job.finishedAt = new Date().toISOString();
       this.jobs.push(job);
       this.emit(job);
       return publicOf(job);
     }
-    if (world.driveReadable && world.freeBytes - plan.sizeBytes < SPACE_MARGIN_BYTES) {
+    if (plan.vaultFreeBytes !== null && plan.vaultFreeBytes < plan.spaceNeededBytes) {
       throw error(
         "ioError",
-        `Drive C: has too little free space for this file and the ${SPACE_MARGIN_BYTES / GB} GB it keeps free.`,
+        "Drive C: has too little free space for this file and the 5 GB it keeps free.",
       );
     }
+    void world;
     this.jobs.push(job);
     this.emit(job);
     this.schedule();
@@ -693,7 +730,7 @@ export class DownloadDesk {
     return job;
   }
 
-  async stopDownload(downloadId: string): Promise<DownloadRecord> {
+  async stopDownload(downloadId: string): Promise<Download> {
     const job = this.find(downloadId);
     if (job.state !== "running") throw error("conflict", "That download is not running.");
     job.state = "stopped";
@@ -703,7 +740,7 @@ export class DownloadDesk {
     return publicOf(job);
   }
 
-  async continueDownload(downloadId: string): Promise<DownloadRecord> {
+  async continueDownload(downloadId: string): Promise<Download> {
     const job = this.find(downloadId);
     if (!["stopped", "failed", "cutOff", "mismatch"].includes(job.state)) {
       throw error("conflict", "That download cannot be continued.");
@@ -762,10 +799,10 @@ export class DownloadDesk {
     if (job.state === "checking") {
       this.settle(job);
     } else {
-      const chunk = Math.max(1, Math.ceil(job.sizeBytes / 60));
-      job.bytesDone = Math.min(job.sizeBytes, job.bytesDone + chunk);
+      const chunk = Math.max(1, Math.ceil(job.bytesTotal / 60));
+      job.bytesDone = Math.min(job.bytesTotal, job.bytesDone + chunk);
       job.bytesPerSecond = Math.min(chunk, 38 * MB);
-      if (job.bytesDone >= job.sizeBytes) {
+      if (job.bytesDone >= job.bytesTotal) {
         job.state = "checking";
         job.bytesPerSecond = null;
       }
@@ -800,7 +837,7 @@ export class DownloadDesk {
       // Found after the transfer: the new file goes, the links are made.
       job.linkedInstallIds = this.link(job, hash);
       job.state = "linkedOnly";
-      job.alreadyInVault = "after";
+      job.alreadyInVault = true;
       this.emit(job);
       return;
     }
@@ -809,14 +846,14 @@ export class DownloadDesk {
       sha256: hash,
       filename: name,
       category: job.category,
-      bytes: job.sizeBytes,
+      bytes: job.bytesTotal,
       workflowHits: 0,
       civitai: null,
       copies: [],
     };
     world.contents.push(content);
     world.vault.set(hash, { sha256: hash, canonicalName: name, aliases: [], addedAt: job.finishedAt });
-    world.freeBytes -= job.sizeBytes;
+    world.freeBytes -= job.bytesTotal;
     job.linkedInstallIds = this.link(job, hash);
     job.state = "done";
     this.emit(job);
@@ -878,7 +915,7 @@ export class DownloadDesk {
     this.failRunning({ kind: "refused", message: "The site refused the download.", serviceMessage: message });
   }
 
-  private failRunning(err: NonNullable<DownloadRecord["error"]>): void {
+  private failRunning(err: NonNullable<Download["error"]>): void {
     const job = this.jobs.find((j) => j.state === "running");
     if (!job) throw new Error("no download is running");
     job.state = "failed";
@@ -943,8 +980,8 @@ function tagged(name: string, hash: string): string {
   return dot <= 0 ? name + tag : name.slice(0, dot) + tag + name.slice(dot);
 }
 
-function publicOf(job: Job): DownloadRecord {
-  const { expected: _expected, ...record } = job;
+function publicOf(job: Job): Download {
+  const { expected: _expected, address: _address, versionId: _v, fileId: _f, ...record } = job;
   return { ...record, installIds: [...record.installIds], linkedInstallIds: [...record.linkedInstallIds] };
 }
 

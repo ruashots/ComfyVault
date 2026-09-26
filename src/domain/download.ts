@@ -14,12 +14,9 @@
 import { fmt, timeLeft } from "~/domain/format";
 import { installNameOf } from "~/domain/installname";
 import type { Install } from "~/ipc/contract";
-import type { AddressPlan, DownloadRecord } from "~/ipc/draft";
+import type { AddressPlan, Download } from "~/ipc/draft";
 
-/** Room left on the vault drive after the file, so Windows is never filled. */
-export const SPACE_MARGIN_BYTES = 5 * 1024 ** 3;
-
-export type Host = DownloadRecord["host"];
+export type Host = Download["host"];
 
 export function hostName(host: Host): string {
   return host === "huggingface" ? "Hugging Face" : "Civitai";
@@ -67,17 +64,17 @@ export function speedOf(bytesPerSecond: number | null): string | null {
   return `${mb >= 10 ? Math.round(mb) : mb.toFixed(1)} MB/s`;
 }
 
-const fraction = (r: DownloadRecord) =>
-  r.sizeBytes > 0 ? Math.min(1, Math.max(0, r.bytesDone / r.sizeBytes)) : 0;
+const fraction = (r: Download) =>
+  r.bytesTotal > 0 ? Math.min(1, Math.max(0, r.bytesDone / r.bytesTotal)) : 0;
 
 /** What one row of the Downloads list says, and which buttons it offers. */
 export function rowView(
-  r: DownloadRecord,
+  r: Download,
   installs: readonly Install[],
   vaultVolume: string,
 ): RowView {
   const host = hostName(r.host);
-  const at = `${fmt(r.bytesDone)} of ${fmt(r.sizeBytes)}`;
+  const at = `${fmt(r.bytesDone)} of ${fmt(r.bytesTotal)}`;
   const asked = installList(r.installIds, installs);
   const linked = installList(r.linkedInstallIds, installs);
   const kept = " The part already downloaded is kept.";
@@ -87,7 +84,7 @@ export function rowView(
     case "running": {
       const speed = speedOf(r.bytesPerSecond);
       const seconds =
-        speed && r.bytesPerSecond ? (r.sizeBytes - r.bytesDone) / r.bytesPerSecond : null;
+        speed && r.bytesPerSecond ? (r.bytesTotal - r.bytesDone) / r.bytesPerSecond : null;
       return {
         parts: [
           { text: "Downloading:", tone: "now" },
@@ -196,87 +193,99 @@ export function rowView(
         actions: ["continue", "discard"],
       };
     case "done":
-      if (r.alreadyInVault === "after") return linkedOnly(linked, "so the new file was deleted");
+      if (r.alreadyInVault) return linkedOnly(linked, "so the new file was deleted", r, installs);
       return {
         parts: [
           { text: "Downloaded", tone: "ok" },
           {
             text: ` into the vault as ${r.vaultRelPath}${linked ? `, and linked in ${linked}` : ""}.`,
           },
+          ...notLinkedParts(r, installs),
         ],
         bar: null,
         actions: ["library"],
       };
     case "linkedOnly":
-      return linkedOnly(
-        linked,
-        r.alreadyInVault === "after"
-          ? "so the new file was deleted"
-          : "so nothing was downloaded",
-      );
+      return linkedOnly(linked, "so nothing was downloaded", r, installs);
   }
 }
 
-function linkedOnly(linked: string, why: string): RowView {
+/** An install that could not get its link at the end, in the engine's words. */
+function notLinkedParts(r: Download, installs: readonly Install[]): Part[] {
+  return r.notLinked.map((n) => ({
+    text: ` It was not linked in ${installNameOf(n.installId, installs)}: ${n.reason}`,
+    tone: "bad" as const,
+  }));
+}
+
+function linkedOnly(
+  linked: string,
+  why: string,
+  r: Download,
+  installs: readonly Install[],
+): RowView {
   return {
-    parts: linked
-      ? [
-          { text: "Linked", tone: "ok" },
-          { text: ` in ${linked}. It was already in the vault, ${why}.` },
-        ]
-      : [{ text: `It was already in the vault, ${why}.`, tone: "ok" }],
+    parts: [
+      ...(linked
+        ? [
+            { text: "Linked", tone: "ok" as const },
+            { text: ` in ${linked}. It was already in the vault, ${why}.` },
+          ]
+        : [{ text: `It was already in the vault, ${why}.`, tone: "ok" as const }]),
+      ...notLinkedParts(r, installs),
+    ],
     bar: null,
     actions: ["library"],
   };
 }
 
-const FINISHED: ReadonlySet<DownloadRecord["state"]> = new Set(["done", "linkedOnly"]);
+const FINISHED: ReadonlySet<Download["state"]> = new Set(["done", "linkedOnly"]);
 
 /**
  * The order the list shows: what still needs the person or the queue first,
  * in the order it was started, then what is finished, newest first.
  */
-export function listOrder(records: readonly DownloadRecord[]): DownloadRecord[] {
+export function listOrder(records: readonly Download[]): Download[] {
   const open = records.filter((r) => !FINISHED.has(r.state));
   const done = records.filter((r) => FINISHED.has(r.state)).reverse();
   return [...open, ...done];
 }
 
 /** The count beside the Downloads title. */
-export function listCount(records: readonly DownloadRecord[]): string {
+export function listCount(records: readonly Download[]): string {
   const open = records.filter((r) => !FINISHED.has(r.state)).length;
   if (open === 0) return "all finished";
   return open === 1 ? "1 is not finished" : `${open} are not finished`;
 }
 
 /** Downloads under way or waiting their turn, for the badge on the rail. */
-export function activeCount(records: readonly DownloadRecord[]): number {
+export function activeCount(records: readonly Download[]): number {
   return records.filter(
     (r) => r.state === "running" || r.state === "waiting" || r.state === "checking",
   ).length;
 }
 
 /** The banner and the Home line for downloads ComfyVault closed on. */
-export function cutOffSentence(records: readonly DownloadRecord[]): string | null {
+export function cutOffSentence(records: readonly Download[]): string | null {
   const cut = records.filter((r) => r.state === "cutOff");
   if (cut.length === 0) return null;
   if (cut.length === 1) {
     const r = cut[0]!;
-    return `ComfyVault closed while ${r.fileName} was downloading. ${fmt(r.bytesDone)} of ${fmt(r.sizeBytes)} is kept. Continue it from there, or discard it.`;
+    return `ComfyVault closed while ${r.fileName} was downloading. ${fmt(r.bytesDone)} of ${fmt(r.bytesTotal)} is kept. Continue it from there, or discard it.`;
   }
   return `ComfyVault closed while ${cut.length} downloads were not finished. The parts already downloaded are kept. Continue them from there, or discard them.`;
 }
 
 /** Home's one line for the same fact, and the words of its link. */
 export function cutOffLine(
-  records: readonly DownloadRecord[],
+  records: readonly Download[],
 ): { text: string; link: string } | null {
   const cut = records.filter((r) => r.state === "cutOff");
   if (cut.length === 0) return null;
   if (cut.length === 1) {
     const r = cut[0]!;
     return {
-      text: `${r.fileName} was cut off at ${fmt(r.bytesDone)} of ${fmt(r.sizeBytes)} when ComfyVault closed.`,
+      text: `${r.fileName} was cut off at ${fmt(r.bytesDone)} of ${fmt(r.bytesTotal)} when ComfyVault closed.`,
       link: "Continue it or discard it",
     };
   }
@@ -289,8 +298,8 @@ export function cutOffLine(
 // ── the plan card ───────────────────────────────────────────────────────────
 
 /** Whether the vault drive has room for the file and the margin. */
-export function hasRoom(plan: Pick<AddressPlan, "sizeBytes" | "vaultFreeBytes">): boolean {
-  return plan.vaultFreeBytes === null || plan.vaultFreeBytes - plan.sizeBytes >= SPACE_MARGIN_BYTES;
+export function hasRoom(plan: Pick<AddressPlan, "spaceNeededBytes" | "vaultFreeBytes">): boolean {
+  return plan.vaultFreeBytes === null || plan.vaultFreeBytes >= plan.spaceNeededBytes;
 }
 
 /** "Then it will be linked in 2 installs." */

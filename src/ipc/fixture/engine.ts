@@ -10,7 +10,7 @@
 import { fileNameOf } from "~/domain/view";
 import { leafOf } from "~/domain/format";
 import { DownloadDesk } from "~/ipc/fixture/downloads";
-import type { DownloadRecord, TokenService } from "~/ipc/draft";
+import type { Download, TokenService } from "~/ipc/draft";
 import type {
   ApplyProgress,
   ApplyRecord,
@@ -279,7 +279,7 @@ export class FixtureEngine implements Engine {
   private revertProgressEvent = new Emitter<RevertProgress>();
   private revertDoneEvent = new Emitter<ApplyRecord>();
   private revertErrorEvent = new Emitter<VaultError>();
-  private downloadEvent = new Emitter<DownloadRecord>();
+  private downloadEvent = new Emitter<Download>();
 
   /** Everything is this many times faster. Tests pass a large number. */
   private readonly speed: number;
@@ -479,7 +479,6 @@ export class FixtureEngine implements Engine {
       scanOutputModelDirs: true,
       huggingFaceCacheDirs: null,
       verifyBeforeDelete: this.vaultOpen ? this.world.verifyBeforeDelete : true,
-      downloadInstallIds: this.downloads.downloadInstallIds,
     };
   }
 
@@ -490,9 +489,6 @@ export class FixtureEngine implements Engine {
     }
     if (patch.verifyBeforeDelete !== undefined) {
       this.world.verifyBeforeDelete = patch.verifyBeforeDelete;
-    }
-    if (patch.downloadInstallIds !== undefined) {
-      this.downloads.downloadInstallIds = patch.downloadInstallIds;
     }
     return this.getSettings();
   }
@@ -1923,8 +1919,8 @@ export class FixtureEngine implements Engine {
     this.requireVault();
     return this.downloads.readModelAddress(args);
   }
-  openModelPage(address: string) {
-    return this.downloads.openModelPage(address);
+  openHuggingFacePage(owner: string, repo: string) {
+    return this.downloads.openHuggingFacePage(owner, repo);
   }
   startDownload(args: Parameters<DownloadDesk["startDownload"]>[0]) {
     this.requireVault();
@@ -1946,7 +1942,7 @@ export class FixtureEngine implements Engine {
     this.requireVault();
     return this.downloads.listDownloads();
   }
-  onDownloadProgress(fn: (record: DownloadRecord) => void): Unsubscribe {
+  onDownloadProgress(fn: (record: Download) => void): Unsubscribe {
     return this.downloadEvent.on(fn);
   }
 
