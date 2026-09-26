@@ -84,6 +84,20 @@ export function minutesLeft(seconds: number | null): string {
   return `about ${Math.round(left / 60)} min left`;
 }
 
+/**
+ * "about 5 minutes left" / "about 2 hours left" for a transfer that can take
+ * hours. "working" until the speed is known.
+ */
+export function timeLeft(seconds: number | null): string {
+  if (!Number.isFinite(seconds as number) || (seconds as number) < 0) return "working";
+  const left = seconds as number;
+  if (left < 60) return "less than a minute left";
+  const minutes = Math.round(left / 60);
+  if (minutes < 60) return `about ${minutes} ${minutes === 1 ? "minute" : "minutes"} left`;
+  const hours = Math.round(left / 3600);
+  return `about ${hours} ${hours === 1 ? "hour" : "hours"} left`;
+}
+
 /** "about 41 seconds left" / "nearly done" for a run that takes seconds. */
 export function secondsLeft(seconds: number | null, overall: number): string {
   if (!Number.isFinite(seconds as number)) return "working";

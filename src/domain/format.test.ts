@@ -17,6 +17,7 @@ import {
   minutesLeft,
   relativeTime,
   secondsLeft,
+  timeLeft,
   shortHash,
   startedShort,
   usedPercent,
@@ -240,5 +241,22 @@ describe("when a process started", () => {
     expect(agoLong("2026-09-25T07:36:40Z", Date.UTC(2026, 8, 25, 9, 0, 0))).toBe(
       "1 hour ago",
     );
+  });
+});
+
+describe("how long a download has left", () => {
+  it("says minutes, then hours, in words", () => {
+    expect(timeLeft(300)).toBe("about 5 minutes left");
+    expect(timeLeft(61)).toBe("about 1 minute left");
+    expect(timeLeft(59 * 60)).toBe("about 59 minutes left");
+    expect(timeLeft(2 * 3600)).toBe("about 2 hours left");
+    expect(timeLeft(3600)).toBe("about 1 hour left");
+    expect(timeLeft(20)).toBe("less than a minute left");
+  });
+
+  it("says it is working until the speed is known", () => {
+    expect(timeLeft(null)).toBe("working");
+    expect(timeLeft(Number.NaN)).toBe("working");
+    expect(timeLeft(Number.POSITIVE_INFINITY)).toBe("working");
   });
 });
