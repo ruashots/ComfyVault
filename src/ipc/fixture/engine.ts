@@ -1530,10 +1530,18 @@ export class FixtureEngine implements Engine {
   ): Promise<Deleted> {
     if (removeLinks) return this.deleteModelAndLinks(sha256, confirm);
     if (confirm !== sha256) {
-      throw error("invalidArgument", "The confirmation did not match.");
+      throw error("invalidArgument", "This delete was not confirmed, so nothing was removed.");
     }
-    if (this.world.links.some((l) => l.sha256 === sha256)) {
-      throw error("conflict", "An install still links to that file.");
+    if (!this.world.vault.has(sha256)) {
+      throw error("notFound", "That model is not in the vault.");
+    }
+    const linked = this.world.links.filter((l) => l.sha256 === sha256 && this.stateOf(l) === "ok");
+    if (linked.length > 0) {
+      throw error(
+        "conflict",
+        "Some installs still link to that model, so it was kept. Remove those links first.",
+        linked.map((l) => l.absPath).join(", "),
+      );
     }
     const content = this.world.contents.find((c) => c.sha256 === sha256);
     this.world.vault.delete(sha256);

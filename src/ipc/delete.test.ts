@@ -58,6 +58,11 @@ describe("deleting a model and every link to it", () => {
     const { engine, model } = await afterARun();
     const e = await refusal(engine.deleteVaultFile(model.sha256, model.sha256));
     expect(e.code).toBe("conflict");
+    expect(e.message).toBe(
+      "Some installs still link to that model, so it was kept. Remove those links first.",
+    );
+    const links = await engine.listLinks({ sha256: model.sha256 });
+    expect(e.detail).toBe(links.map((l) => l.absPath).join(", "));
     expect((await engine.listLinks({ sha256: model.sha256 })).length).toBe(model.linkCount);
   });
 
@@ -101,9 +106,11 @@ describe("deleting a model and every link to it", () => {
 
   it("refuses a delete that was not confirmed, and one the vault does not hold", async () => {
     const { engine, model } = await afterARun();
-    expect((await refusal(engine.deleteVaultFile(model.sha256, "nope", true))).code).toBe(
-      "invalidArgument",
-    );
+    for (const removeLinks of [true, false]) {
+      const e = await refusal(engine.deleteVaultFile(model.sha256, "nope", removeLinks));
+      expect(e.code).toBe("invalidArgument");
+      expect(e.message).toBe("This delete was not confirmed, so nothing was removed.");
+    }
     expect((await refusal(engine.deleteVaultFile("F".repeat(64), "F".repeat(64), true))).code).toBe(
       "notFound",
     );
