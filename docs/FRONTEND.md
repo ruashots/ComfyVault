@@ -33,6 +33,7 @@ comfyVaultDev.processFacts({ startedAt: null, listeningPorts: [], holdsModelFile
 comfyVaultDev.taskManagerStarts(false) // Windows refuses to open Task Manager
 comfyVaultDev.reset(false)        // start over; pass true for a first run
 comfyVaultDev.breakLinks(1)       // point some links at nothing, for Cleanup
+comfyVaultDev.stopDelete(1)       // a delete cut off part way, after a run, for Cleanup
 comfyVaultDev.forgetVersions()    // installs that do not record a version
 comfyVaultDev.noWorkflows()       // no saved workflow files to search
 ```

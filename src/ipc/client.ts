@@ -34,6 +34,13 @@ export async function createEngine(): Promise<Engine> {
     comfyRunning: (on: boolean) => engine.devSetComfyRunning(on),
     reset: (empty = false) => engine.devReset(empty),
     breakLinks: (count = 1) => engine.devBreakLinks(count),
+    // The biggest model with two links or more loses this many of them, as a
+    // delete cut off by the power going would leave it.
+    stopDelete: async (linksGone = 1) => {
+      const { files } = await engine.listVaultFiles({ offset: 0, limit: 1000 });
+      const model = [...files].sort((a, b) => b.sizeBytes - a.sizeBytes).find((f) => f.linkCount >= 2);
+      return model ? engine.devStopDelete(model.sha256, linksGone) : [];
+    },
     forgetVersions: () => engine.devForgetVersions(),
     noWorkflows: () => engine.devSetWorkflowsOnDisk(0),
     runningIn: (...installIds: string[]) => engine.devSetRunningInstalls(installIds),

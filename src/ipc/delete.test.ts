@@ -157,3 +157,63 @@ describe("undoing a run after one of its models was deleted", () => {
     expect((await engine.listApplies())[0]!.state).not.toBe("partlyReverted");
   });
 });
+
+describe("a delete that stopped part way", () => {
+  const stoppedMessage =
+    "A delete of one of this run's models stopped part way, so this run was not undone. Nothing was changed. Finish the delete in Cleanup. After that, this run can no longer be undone.";
+
+  it("is listed by the health check until the same delete finishes it", async () => {
+    const { engine, model } = await afterARun();
+    const gone = engine.devStopDelete(model.sha256, 1);
+    expect(gone).toHaveLength(1);
+
+    const health = await engine.checkVaultHealth();
+    expect(health.stoppedDeletes.map((f) => f.sha256)).toEqual([model.sha256]);
+    expect(health.ok).toBe(false);
+
+    const done = await engine.deleteVaultFile(model.sha256, model.sha256, true);
+    // A link already gone is not counted.
+    expect(done.linksRemoved).not.toContain(gone[0]);
+    expect(done.linksRemoved).toHaveLength(model.linkCount - 1);
+    const after = await engine.checkVaultHealth();
+    expect(after.stoppedDeletes).toEqual([]);
+    expect(await engine.listLinks({ sha256: model.sha256 })).toEqual([]);
+  });
+
+  it("stops the undo of the run with its own reason, until it is finished", async () => {
+    const { engine, model } = await afterARun();
+    const gone = engine.devStopDelete(model.sha256, 1);
+    const applyId = (await engine.listApplies())[0]!.applyId;
+
+    for (const e of [
+      await refusal(engine.previewRevert(applyId)),
+      await refusal(engine.revertApply(applyId)),
+    ]) {
+      expect(e.code).toBe("conflict");
+      expect(e.message).toBe(stoppedMessage);
+      expect(e.detail).toBe(gone.join(", "));
+    }
+
+    await engine.deleteVaultFile(model.sha256, model.sha256, true);
+    const e = await refusal(engine.previewRevert(applyId));
+    expect(e.message).toBe(
+      "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed.",
+    );
+    expect(e.detail).toContain(gone[0]);
+  });
+});
+
+describe("changing a link while a model is being deleted", () => {
+  it("waits for the delete, and then finds the model gone", async () => {
+    const { engine, model } = await afterARun();
+    const install = (await engine.listInstalls())[0]!;
+    const [done, linked] = await Promise.allSettled([
+      engine.deleteVaultFile(model.sha256, model.sha256, true),
+      engine.createLink({ installId: install.id, sha256: model.sha256, relativeDir: "loras" }),
+    ]);
+    expect(done.status).toBe("fulfilled");
+    expect(linked.status).toBe("rejected");
+    expect((linked as PromiseRejectedResult).reason.code).toBe("notFound");
+    expect(await engine.listLinks({ sha256: model.sha256 })).toEqual([]);
+  });
+});

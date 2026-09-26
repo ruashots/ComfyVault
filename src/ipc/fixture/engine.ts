@@ -265,6 +265,8 @@ export class FixtureEngine implements Engine {
   private renamedSinceApply = new Set<string>();
   /** Paths of models this run put in the vault that Cleanup deleted since. */
   private deletedSinceApply: string[] = [];
+  /** Links a delete removed before it was cut off, by the model's SHA-256. */
+  private stoppedDeletes = new Map<string, string[]>();
 
   private scanProgressEvent = new Emitter<ScanProgress>();
   private scanDoneEvent = new Emitter<ScanRecord>();
@@ -1146,6 +1148,17 @@ export class FixtureEngine implements Engine {
         [...new Set(this.deletedSinceApply)].sort().join(", "),
       );
     }
+    const before = this.worldBeforeApply;
+    const stopped = [...this.stoppedDeletes]
+      .filter(([sha]) => !before.vault.has(sha))
+      .flatMap(([, paths]) => paths);
+    if (stopped.length > 0) {
+      return error(
+        "conflict",
+        "A delete of one of this run's models stopped part way, so this run was not undone. Nothing was changed. Finish the delete in Cleanup. After that, this run can no longer be undone.",
+        [...new Set(stopped)].sort().join(", "),
+      );
+    }
     if (this.renamedSinceApply.size > 0) {
       const paths = vaultFilesOf(this.world)
         .filter((f) => this.renamedSinceApply.has(f.sha256))
@@ -1609,8 +1622,9 @@ export class FixtureEngine implements Engine {
     const removed = new Set(links.map((l) => l.absPath));
     if (this.worldBeforeApply && !this.worldBeforeApply.vault.has(sha256)) {
       // The run put this model in the vault, and its undo needs the file.
-      this.deletedSinceApply.push(vaultPath, ...linksRemoved);
+      this.deletedSinceApply.push(vaultPath, ...(this.stoppedDeletes.get(sha256) ?? []), ...linksRemoved);
     }
+    this.stoppedDeletes.delete(sha256);
     if (content) content.copies = content.copies.filter((c) => !(c.isLink && removed.has(c.absPath)));
     this.world.links = this.world.links.filter((l) => l.sha256 !== sha256);
     this.world.vault.delete(sha256);
@@ -1626,6 +1640,19 @@ export class FixtureEngine implements Engine {
   devHoldOpen(sha256: string, open = true): void {
     if (open) this.heldOpen.add(sha256);
     else this.heldOpen.delete(sha256);
+  }
+
+  /**
+   * A delete with links is cut off, by the power going say, after it removed
+   * this many of the model's links. The rest and the vault file are still there.
+   */
+  devStopDelete(sha256: string, linksGone = 1): string[] {
+    const live = this.world.links.filter((l) => l.sha256 === sha256 && this.stateOf(l) === "ok");
+    const gone = live.slice(0, linksGone).map((l) => l.absPath);
+    const content = this.world.contents.find((c) => c.sha256 === sha256);
+    if (content) content.copies = content.copies.filter((c) => !gone.includes(c.absPath));
+    this.stoppedDeletes.set(sha256, [...(this.stoppedDeletes.get(sha256) ?? []), ...gone]);
+    return gone;
   }
 
   /** Someone puts a real file where a link was, at this path. */
@@ -1650,6 +1677,7 @@ export class FixtureEngine implements Engine {
       return copy !== undefined && !copy.isLink;
     });
     const missingVaultFiles = vaultFilesOf(this.world).filter((f) => !f.present);
+    const stoppedDeletes = vaultFilesOf(this.world).filter((f) => this.stoppedDeletes.has(f.sha256));
     return {
       checkedLinks: this.world.links.length,
       checkedFiles: this.world.vault.size,
@@ -1657,12 +1685,12 @@ export class FixtureEngine implements Engine {
       replacedLinks,
       missingVaultFiles,
       foreignFiles: [],
-      // A delete here removes everything at once, so none ever stops part way.
-      stoppedDeletes: [],
+      stoppedDeletes,
       ok:
         danglingLinks.length === 0 &&
         replacedLinks.length === 0 &&
-        missingVaultFiles.length === 0,
+        missingVaultFiles.length === 0 &&
+        stoppedDeletes.length === 0,
     };
   }
 
