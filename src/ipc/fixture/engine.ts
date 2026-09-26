@@ -263,6 +263,8 @@ export class FixtureEngine implements Engine {
   private appliedGroups = new Map<string, PlanGroup[]>();
   /** Vault files this run created that were renamed after it finished. */
   private renamedSinceApply = new Set<string>();
+  /** Paths of models this run put in the vault that Cleanup deleted since. */
+  private deletedSinceApply: string[] = [];
 
   private scanProgressEvent = new Emitter<ScanProgress>();
   private scanDoneEvent = new Emitter<ScanRecord>();
@@ -847,6 +849,7 @@ export class FixtureEngine implements Engine {
     this.applyCancelling = false;
     this.worldBeforeApply = cloneWorld(this.world);
     this.renamedSinceApply.clear();
+    this.deletedSinceApply = [];
     // Read from the drive before anything moves, the way the engine reads it.
     const freeBefore = this.world.freeBytes;
 
@@ -1135,6 +1138,14 @@ export class FixtureEngine implements Engine {
   /** Why an undo would refuse before it starts, or null when it would not. */
   private revertRefusal(): VaultError | null {
     if (!this.worldBeforeApply) return error("conflict", "There is nothing to put back.");
+    // A delete cannot be undone, so the person is told why, not sent to undo it.
+    if (this.deletedSinceApply.length > 0) {
+      return error(
+        "conflict",
+        "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed.",
+        [...new Set(this.deletedSinceApply)].sort().join(", "),
+      );
+    }
     if (this.renamedSinceApply.size > 0) {
       const paths = vaultFilesOf(this.world)
         .filter((f) => this.renamedSinceApply.has(f.sha256))
@@ -1307,6 +1318,7 @@ export class FixtureEngine implements Engine {
         this.world = before;
         this.worldBeforeApply = null;
         this.renamedSinceApply.clear();
+    this.deletedSinceApply = [];
         // Measured against the real engine: an undo stamps the record's
         // finishedAt again, so on a reverted run it is the time of the undo.
         // It does not record a scan.
@@ -1595,6 +1607,10 @@ export class FixtureEngine implements Engine {
     // A link already gone from the disk is not counted as removed.
     const linksRemoved = links.filter((l) => this.stateOf(l) === "ok").map((l) => l.absPath);
     const removed = new Set(links.map((l) => l.absPath));
+    if (this.worldBeforeApply && !this.worldBeforeApply.vault.has(sha256)) {
+      // The run put this model in the vault, and its undo needs the file.
+      this.deletedSinceApply.push(vaultPath, ...linksRemoved);
+    }
     if (content) content.copies = content.copies.filter((c) => !(c.isLink && removed.has(c.absPath)));
     this.world.links = this.world.links.filter((l) => l.sha256 !== sha256);
     this.world.vault.delete(sha256);

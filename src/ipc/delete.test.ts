@@ -136,3 +136,24 @@ describe("the name a new install gets when the person gives none", () => {
     );
   });
 });
+
+describe("undoing a run after one of its models was deleted", () => {
+  it("is refused with the reason, in the preview and the undo, and nothing changes", async () => {
+    const { engine, model } = await afterARun();
+    const done = await engine.deleteVaultFile(model.sha256, model.sha256, true);
+    const applyId = (await engine.listApplies())[0]!.applyId;
+    const message =
+      "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed.";
+    const expected = [`C:\\ComfyVault\\${model.vaultRelPath}`, ...done.linksRemoved].sort().join(", ");
+
+    for (const e of [
+      await refusal(engine.previewRevert(applyId)),
+      await refusal(engine.revertApply(applyId)),
+    ]) {
+      expect(e.code).toBe("conflict");
+      expect(e.message).toBe(message);
+      expect(e.detail).toBe(expected);
+    }
+    expect((await engine.listApplies())[0]!.state).not.toBe("partlyReverted");
+  });
+});
