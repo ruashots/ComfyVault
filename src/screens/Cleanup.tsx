@@ -45,18 +45,20 @@ function CleanupBody() {
     <>
       <Header
         title="Cleanup"
-        sub={
-          app.danglingLinks().length > 0
-            ? `${app.danglingLinks().length} broken links · ${groups().length} name groups · ${app.orphans().length} unused vault files`
-            : `${groups().length} name groups · ${app.orphans().length} unused vault files`
-        }
+        sub={cleanupSummary(
+          app.danglingLinks().length,
+          groups().length,
+          app.orphans().length,
+        )}
       />
       <div class="screen">
         <div class="scroll">
           <DanglingLinks />
           <div class="sec">
-            <span class="t">One model, more than one name</span>
-            <span class="n">{groups().length} groups</span>
+            <span class="t">One model with more than one name</span>
+            <span class="n">
+              {groups().length} {groups().length === 1 ? "model" : "models"}
+            </span>
           </div>
           <Show
             when={groups().length > 0}
@@ -80,9 +82,12 @@ function CleanupBody() {
           </Show>
 
           <div class="sec secgap">
-            <span class="t">Nothing points at these</span>
+            <span class="t">Vault files that nothing links to</span>
             <span class="n">
-              {app.orphans().length} files &middot; {fmt(orphanBytes())}
+              <Show when={app.orphans().length > 0} fallback="none">
+                {app.orphans().length} {app.orphans().length === 1 ? "file" : "files"},{" "}
+                {fmt(orphanBytes())}
+              </Show>
             </span>
           </div>
           <Show
@@ -104,6 +109,29 @@ function CleanupBody() {
       </div>
     </>
   );
+}
+
+/** The top bar's line: what Cleanup found, as sentences. */
+export function cleanupSummary(broken: number, named: number, unlinked: number): string {
+  const parts: string[] = [];
+  if (broken > 0) {
+    parts.push(broken === 1 ? "1 link leads to nothing." : `${broken} links lead to nothing.`);
+  }
+  parts.push(
+    named === 0
+      ? "Every model has one name."
+      : named === 1
+        ? "1 model has more than one name."
+        : `${named} models have more than one name.`,
+  );
+  parts.push(
+    unlinked === 0
+      ? "Every vault file is linked."
+      : unlinked === 1
+        ? "1 vault file is not linked from any install."
+        : `${unlinked} vault files are not linked from any install.`,
+  );
+  return parts.join(" ");
 }
 
 function NameGroupCard(props: { view: NameGroupView }) {
@@ -150,10 +178,8 @@ function NameGroupCard(props: { view: NameGroupView }) {
   return (
     <div class="cgrp">
       <div class="ch">
-        <span>{group().category}</span>
-        <span class="faint">
-          &middot; same bytes, {group().names.length} names
-        </span>
+        <span>{group().category}:</span>
+        <span class="faint">the same file under {group().names.length} names</span>
         <span class="sz">{fmt(group().sizeBytes)}</span>
       </div>
 
@@ -182,8 +208,7 @@ function NameGroupCard(props: { view: NameGroupView }) {
                       .join(" and ")}
                   </Show>
                   <Show when={choice.usedByLinks > 0}>
-                    {" "}
-                    &middot; {choice.usedByLinks}{" "}
+                    , where {choice.usedByLinks}{" "}
                     {choice.usedByLinks === 1 ? "link points" : "links point"} at it
                   </Show>
                 </span>
@@ -274,10 +299,10 @@ function OrphanRow(props: { file: VaultFile }) {
       body: [
         [
           { text: props.file.canonicalName, emph: true },
-          { text: " is deleted from the vault and " },
+          { text: " will be deleted from the vault, and " },
           { text: fmt(props.file.sizeBytes), emph: true },
           {
-            text: " comes back. Nothing points at it today. This cannot be undone: the bytes are gone.",
+            text: " will be freed. Nothing links to it today. This cannot be undone: the bytes are gone.",
           },
         ],
       ],
@@ -301,8 +326,8 @@ function OrphanRow(props: { file: VaultFile }) {
         </button>
       </div>
       <div class="grp-why">
-        {props.file.category} &middot; in the vault since{" "}
-        {dayMonth(props.file.addedAt)}, and no install links to it
+        in {props.file.category}, in the vault since {dayMonth(props.file.addedAt)}, and
+        no install links to it
       </div>
     </div>
   );
