@@ -57,6 +57,7 @@ const PLANS: TableDefinition<&str, &[u8]> = TableDefinition::new("plans");
 const APPLIES: TableDefinition<&str, &[u8]> = TableDefinition::new("applies");
 const JOURNAL: TableDefinition<&str, &[u8]> = TableDefinition::new("journal");
 const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
+const DOWNLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("downloads");
 
 /// Every table, created on open so a read never fails on a missing table.
 const ALL_TABLES: [TableDefinition<&str, &[u8]>; 10] = [
@@ -133,6 +134,7 @@ impl Store {
             }
             tx.open_table(LINKS_BY_PATH)?;
             tx.open_table(METADATA)?;
+            tx.open_table(DOWNLOADS)?;
         }
         tx.commit()?;
 
@@ -663,6 +665,43 @@ impl Store {
 
     pub fn put_metadata(&self, m: &crate::metadata::ModelMetadata) -> Result<()> {
         self.put(METADATA, &m.sha256, m)
+    }
+
+    // -- downloads --------------------------------------------------------
+
+    pub fn put_download(&self, d: &crate::download::DownloadRecord) -> Result<()> {
+        self.put(DOWNLOADS, &d.download.download_id, d)
+    }
+
+    pub fn download(&self, id: &str) -> Result<Option<crate::download::DownloadRecord>> {
+        self.get(DOWNLOADS, id)
+    }
+
+    /// Every download, in the order they were started.
+    pub fn downloads(&self) -> Result<Vec<crate::download::DownloadRecord>> {
+        let mut out: Vec<crate::download::DownloadRecord> = self.list(DOWNLOADS)?;
+        out.sort_by_key(|d| d.seq);
+        Ok(out)
+    }
+
+    pub fn delete_download(&self, id: &str) -> Result<bool> {
+        self.delete(DOWNLOADS, id)
+    }
+
+    /// The installs the person ticked for the last download.
+    pub fn last_download_installs(&self) -> Result<Option<Vec<String>>> {
+        self.get(META, "lastDownloadInstalls")
+    }
+
+    pub fn put_last_download_installs(&self, ids: &[String]) -> Result<()> {
+        self.put_meta("lastDownloadInstalls", &ids)
+    }
+
+    /// Where a download keeps its part while it runs. Inside the engine's own
+    /// folder, so a scan and the health check never take it for a model, and
+    /// on the vault's drive, so moving it into place is a rename.
+    pub fn downloads_dir(&self) -> PathBuf {
+        self.internal_dir().join("downloads")
     }
 
     pub fn clear_metadata(&self) -> Result<usize> {
