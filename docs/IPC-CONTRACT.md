@@ -196,7 +196,9 @@ The engine runs one long operation at a time. A scan, an apply, and a revert
 are long operations. If a second long operation starts, the engine rejects it
 with `vaultBusy`. All other commands stay callable during a long operation,
 except `delete_vault_file` with `removeLinks: true`, which section 8.8
-describes.
+describes. While that delete runs, the commands that change a link or a vault
+name wait for it to finish. It removes links and one file, so the wait is
+short.
 
 ---
 
@@ -1834,8 +1836,21 @@ undone." `detail` lists the paths the same way.
 **All or nothing.** If the disk refuses a removal, the engine puts back every
 link it already removed, and rejects with the disk's code (`ioError`,
 `permissionDenied` or `fileLocked`). The message ends with "Nothing was
-deleted, and every link is in place." `path` names the path that failed. This
-covers another program opening the file between the check and the delete.
+deleted, and every link it removed was put back." `path` names the path that
+failed. This covers another program opening the file between the check and
+the delete.
+
+Two more refusals can come after the removals started, and they put the links
+back the same way. Both reject with `conflict`, and `path` and `detail` name
+the path:
+
+- A link path stopped being the link that was checked: each link is checked
+  again right before it is removed, so a real file that took its place is
+  never removed.
+- A new link to the model was recorded while it was being deleted. The engine
+  makes `create_link`, `remove_link`, `set_canonical_name`, `remove_alias`,
+  `delete_vault_file` and `remove_dangling_links` wait while a delete with
+  links runs, so this refusal is for anything that did not wait.
 
 If a link cannot be put back, the message says how many were not, and `detail`
 lists them. The vault file is still there in that case, and the other installs

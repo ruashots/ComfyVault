@@ -136,6 +136,12 @@ pub struct Engine {
     platform: Arc<dyn Platform>,
     store: RwLock<Option<Arc<Store>>>,
     busy: Mutex<Option<(BusyOp, CancelToken)>>,
+    /// Held by every command that makes, removes or renames a link or a
+    /// name in the vault, outside the long operations. Deleting a model
+    /// checks its links and then removes them, and a link made in between
+    /// would be left pointing at nothing. These commands are quick, so one
+    /// waiting for another is never noticed.
+    vault_writes: Mutex<()>,
     config_path: PathBuf,
 }
 
@@ -150,6 +156,7 @@ impl Engine {
             platform,
             store: RwLock::new(None),
             busy: Mutex::new(None),
+            vault_writes: Mutex::new(()),
             config_path,
         })
     }
@@ -212,6 +219,13 @@ impl Engine {
         let cancel = CancelToken::new();
         *g = Some((BusyOp { kind, id: id.to_string() }, cancel.clone()));
         Ok(cancel)
+    }
+
+    /// Waits for any other command that changes links or vault names.
+    fn write_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        self.vault_writes
+            .lock()
+            .map_err(|_| VaultError::new(ErrorCode::StoreError, "The app got into a bad state. Restart it."))
     }
 
     pub fn busy(&self) -> Option<BusyOp> {
@@ -843,11 +857,13 @@ impl Engine {
 
     pub fn create_link(&self, req: &CreateLinkRequest) -> Result<LinkRecord> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Links::new(&store, self.platform.as_ref()).create(req)
     }
 
     pub fn remove_link(&self, link_id: &str) -> Result<()> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Links::new(&store, self.platform.as_ref()).remove(link_id)
     }
 
@@ -900,11 +916,13 @@ impl Engine {
 
     pub fn set_canonical_name(&self, sha256: &str, name: &str) -> Result<VaultFile> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Vault::new(&store, self.platform.as_ref()).set_canonical_name(sha256, name)
     }
 
     pub fn remove_alias(&self, sha256: &str, name: &str) -> Result<()> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Vault::new(&store, self.platform.as_ref()).remove_alias(sha256, name)
     }
 
@@ -915,6 +933,7 @@ impl Engine {
 
     pub fn delete_vault_file(&self, sha256: &str, confirm: &str) -> Result<u64> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Vault::new(&store, self.platform.as_ref()).delete_file(sha256, confirm)
     }
 
@@ -925,7 +944,9 @@ impl Engine {
     /// could link new copies to this file, and an undo could reach for it,
     /// while it is being deleted. Holding the lock makes either one wait for
     /// the delete to finish and then see the vault as it left it. The delete
-    /// only removes links and one file, so the wait is short.
+    /// only removes links and one file, so the wait is short. The lock on
+    /// link and name changes is held too, so a link made in the Library
+    /// cannot land between the delete's checks and its removals.
     pub fn delete_vault_file_and_links(&self, sha256: &str, confirm: &str) -> Result<crate::vault::DeletedModel> {
         let store = self.store()?;
         let slot = self
@@ -935,7 +956,9 @@ impl Engine {
         if let Some((op, _)) = slot.as_ref() {
             return Err(VaultError::busy(op.kind.word()));
         }
+        let writes = self.write_lock()?;
         let out = Vault::new(&store, self.platform.as_ref()).delete_file_and_links(sha256, confirm);
+        drop(writes);
         drop(slot);
         out
     }
@@ -947,6 +970,7 @@ impl Engine {
 
     pub fn remove_dangling_links(&self) -> Result<u64> {
         let store = self.store()?;
+        let _writes = self.write_lock()?;
         Vault::new(&store, self.platform.as_ref()).remove_dangling_links()
     }
 

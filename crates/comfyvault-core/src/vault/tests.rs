@@ -937,6 +937,85 @@ fn a_delete_does_not_block_the_undo_of_a_run_made_after_it() {
 }
 
 #[test]
+fn a_link_made_while_a_model_is_deleted_is_never_left_pointing_at_nothing() {
+    // The Library can link the model into another install after the delete
+    // read its links and before it removed the file.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    let hooked = Hooked::new(&w.platform);
+    let (store, inner, sha2, c_id) = (&w.store, &w.platform, sha.clone(), c.id.clone());
+    for p in [&pa, &pb] {
+        let (sha2, c_id) = (sha2.clone(), c_id.clone());
+        hooked.before_removing(p, move || {
+            // Only the first removal finds no link in C yet.
+            let _ = crate::links::Links::new(store, inner).create(&CreateLinkRequest {
+                install_id: c_id,
+                sha256: sha2,
+                relative_dir: "models/loras".into(),
+                link_name: None,
+                create_dir: true,
+            });
+        });
+    }
+
+    let err = Vault::new(&w.store, &hooked).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict, "{err:?}");
+
+    let pc = c.root.join("models/loras/m.safetensors");
+    assert!(w.is_link(&pc), "the link made in the Library is gone");
+    assert_eq!(w.read(&pc), weights("m"), "install C holds a link to nothing");
+    assert!(file.is_file(), "the model was deleted from under the new link");
+    for p in [&pa, &pb] {
+        assert!(w.is_link(p), "{p:?} was not put back");
+    }
+    assert!(vault(&w).health().unwrap().ok);
+}
+
+#[test]
+fn a_real_file_that_replaces_a_link_after_the_check_is_never_deleted() {
+    // Removing a link removes a real file just as readily, so each link is
+    // checked again right before it goes.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let pb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_as(&w, "ap-1", &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    // Whichever goes first swaps the other for the person's own file.
+    let hooked = Hooked::new(&w.platform);
+    for (now, other) in [(&pa, pb.clone()), (&pb, pa.clone())] {
+        hooked.before_removing(now, move || {
+            if std::fs::symlink_metadata(&other).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                std::fs::remove_file(&other).unwrap();
+                std::fs::write(&other, b"the person's own file").unwrap();
+            }
+        });
+    }
+
+    let err = Vault::new(&w.store, &hooked).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict, "{err:?}");
+
+    let (theirs, ours): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        [&pa, &pb].into_iter().partition(|p| !w.is_link(p));
+    assert_eq!(theirs.len(), 1);
+    assert_eq!(std::fs::read(theirs[0]).unwrap(), b"the person's own file", "the person's file was deleted");
+    assert!(names(err.path.as_deref().unwrap_or_default(), theirs[0]));
+    assert_eq!(w.read(ours[0]), weights("m"), "the removed link was not put back");
+    assert!(file.is_file());
+}
+
+#[test]
 fn a_delete_cut_off_part_way_is_reported_and_finished_by_running_it_again() {
     // The computer stops after one link went and before the file did. The
     // model is still in the vault, and one install lost it.

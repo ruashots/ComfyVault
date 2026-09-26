@@ -384,6 +384,55 @@ fn two_launcher_installs_get_two_different_names() {
 }
 
 #[test]
+fn link_and_name_changes_wait_for_a_delete_in_progress() {
+    // A link made between a delete's checks and its removals would be left
+    // pointing at nothing. The delete holds this lock, and so does every
+    // command that changes a link or a name, so one waits for the other.
+    let f = Fixture::new();
+    f.open_vault();
+    let held = f.engine.write_lock().unwrap();
+
+    // One thread per command, so each one is shown to wait on its own.
+    let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
+    let sha = weights_hash("m");
+    type Call = fn(&Engine, &str) -> bool;
+    let calls: Vec<(&'static str, Call)> = vec![
+        ("create_link", |e, sha| {
+            e.create_link(&CreateLinkRequest {
+                install_id: "none".into(),
+                sha256: sha.into(),
+                relative_dir: "models/loras".into(),
+                link_name: None,
+                create_dir: false,
+            })
+            .is_err()
+        }),
+        ("remove_link", |e, _| e.remove_link("none").is_err()),
+        ("set_canonical_name", |e, sha| e.set_canonical_name(sha, "x.safetensors").is_err()),
+        ("remove_alias", |e, sha| e.remove_alias(sha, "x.safetensors").is_err()),
+        ("delete_vault_file", |e, sha| e.delete_vault_file(sha, sha).is_err()),
+        ("remove_dangling_links", |e, _| e.remove_dangling_links().is_ok()),
+        ("delete_vault_file_and_links", |e, sha| e.delete_vault_file_and_links(sha, sha).is_err()),
+    ];
+    let count = calls.len();
+    for (name, call) in calls {
+        let (engine, tx, sha) = (Arc::clone(&f.engine), tx.clone(), sha.clone());
+        std::thread::spawn(move || {
+            assert!(call(&engine, &sha), "{name} answered unexpectedly");
+            tx.send(name).unwrap();
+        });
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let early: Vec<&str> = rx.try_iter().collect();
+    assert!(early.is_empty(), "these went ahead while a delete held the lock: {early:?}");
+    drop(held);
+    for _ in 0..count {
+        rx.recv_timeout(std::time::Duration::from_secs(10)).expect("a command never finished");
+    }
+}
+
+#[test]
 fn a_model_is_not_deleted_with_its_links_while_a_long_operation_runs() {
     // A consolidation could be linking new copies to this very file.
     let f = Fixture::new();

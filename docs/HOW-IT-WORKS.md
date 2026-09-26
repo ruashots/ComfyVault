@@ -459,6 +459,10 @@ refused afterwards, because the file it needs is gone. The refusal says that
 one of the run's models was deleted in Cleanup, and nothing is changed. A run
 made after the delete can still be undone.
 
+While a model is being deleted, nothing else can make or remove a link. Each
+link is checked again right before it is removed, so a real file that took its
+place is never deleted.
+
 If the computer stops part way through a delete, some installs can lose their
 link while the model is still in the vault. The health check in Cleanup lists
 the model, and deleting it again finishes the delete.

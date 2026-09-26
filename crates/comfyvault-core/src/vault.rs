@@ -973,12 +973,38 @@ impl<'a> Vault<'a> {
                     link: link.clone(),
                     target: target.clone(),
                 })?;
+                // Checked again at the last moment, as removing one link does.
+                // Removing a link removes a real file just as readily, and the
+                // check above was made before any removal started.
+                if let Err(e) = self.still_the_link(&link, &target) {
+                    let _ = journal.failed(seq, &e);
+                    return Err(e);
+                }
                 if let Err(e) = self.platform.remove_symlink(&link) {
                     let _ = journal.failed(seq, &e);
                     return Err(e);
                 }
                 removed.push(Removed { link, target, seq });
                 journal.done(seq)?;
+            }
+
+            // A link made to this model since the records were read would be
+            // left pointing at nothing. The engine makes such a command wait
+            // for the delete; this is the check for anything that did not.
+            let known: std::collections::HashSet<&str> = records.iter().map(|l| l.id.as_str()).collect();
+            let arrived: Vec<PathBuf> = self
+                .store
+                .links_for_hash(&sha)?
+                .into_iter()
+                .filter(|l| !known.contains(l.id.as_str()))
+                .map(|l| l.abs_path)
+                .collect();
+            if !arrived.is_empty() {
+                return Err(VaultError::conflict(
+                    "A new link to this model was made while it was being deleted, so it was not deleted.",
+                )
+                .with_detail(arrived.iter().map(|p| crate::paths::display_path(p)).collect::<Vec<_>>().join(", "))
+                .with_path(&arrived[0]));
             }
 
             // Written even when the file was already gone, so the journal
@@ -1055,6 +1081,20 @@ impl<'a> Vault<'a> {
         }
     }
 
+    /// Refuses unless `link` is still the link a delete checked, pointing
+    /// where it pointed then.
+    fn still_the_link(&self, link: &Path, target: &Path) -> Result<()> {
+        let is_link = std::fs::symlink_metadata(link).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+        if is_link && self.platform.read_symlink(link).ok().as_deref() == Some(target) {
+            return Ok(());
+        }
+        Err(VaultError::conflict(
+            "Something replaced one of this model's links while it was being deleted, so it was not deleted.",
+        )
+        .with_detail(crate::paths::display_path(link))
+        .with_path(link))
+    }
+
     /// Puts back the links a delete removed before the disk refused a step,
     /// newest first, and turns the refusal into the answer.
     fn put_back(&self, journal: &mut DeleteJournal<'_>, removed: Vec<Removed>, cause: VaultError) -> VaultError {
@@ -1072,7 +1112,7 @@ impl<'a> Vault<'a> {
 
         let mut err = cause.clone();
         if not_back.is_empty() {
-            err.message = format!("{} Nothing was deleted, and every link is in place.", cause.message);
+            err.message = format!("{} Nothing was deleted, and every link it removed was put back.", cause.message);
             return err;
         }
         not_back.sort();
