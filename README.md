@@ -27,6 +27,17 @@ C:\ComfyUI-C\models\loras\style.safetensors          ->  the vault file
 288 MB goes back to the drive. Every path is the path it was before, so no
 workflow changes and no ComfyUI setting changes.
 
+**Then clean up.** After a run, open the Cleanup screen. It shows what the run
+could not settle by itself:
+
+- **One model under more than one name.** The same file came in as, for
+  example, `style.safetensors` in one install and `style_v2.safetensors` in
+  another. Pick the name to keep. The other names stay as links, so saved
+  workflows still open, and ComfyUI's model list shows one entry for the model
+  instead of two.
+- **Vault files that nothing links to.** Delete these to free their space.
+- **Links that point at a missing file.** Remove them.
+
 Every step goes into a journal before it happens. You can stop a run, finish a
 run that a crash cut off, and undo a run.
 
@@ -132,6 +143,10 @@ the check that tells you the build is good, are in
    duplicate copies. You can press **Stop now** at any time. Each model is done
    completely or not at all, and each path always holds its own file or a
    working link, so every model keeps loading in ComfyUI during the run.
+
+6. **Clean up.** Open Cleanup and settle what the run left: pick one name for
+   each model that arrived under several names, and delete the vault files
+   that nothing links to.
 
 **Later runs.** Scan again whenever you add models or installs, and
 Consolidate shows a new plan. A new copy of a model the vault already holds
