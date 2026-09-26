@@ -143,6 +143,8 @@ export interface ConfirmModal {
   body: ConfirmLine[];
   /** Paths the person must see before confirming, one per line. */
   list: readonly string[];
+  /** What follows the paths, when a line only makes sense after them. */
+  after: ConfirmLine[];
   /** Null when the action is refused before it starts, so none is offered. */
   cta: string | null;
   action: () => Promise<void> | void;

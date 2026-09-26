@@ -16,7 +16,9 @@ import type {
   NameGroup,
   PlanGroup,
   ScanTotals,
+  UsageMatch,
   UsageResult,
+  VaultFile,
 } from "~/ipc/contract";
 
 // ── the Consolidate view ────────────────────────────────────────────────────
@@ -508,6 +510,44 @@ export function buildNameGroupView(group: NameGroup): NameGroupView {
   }
 
   return { group, choices, suggestion: { name: best.name, reason } };
+}
+
+/** What the saved workflows say about one vault model, over all its names. */
+export interface ModelUsage {
+  /**
+   * Null when there is no answer for any of its names, false when there were
+   * no saved workflow files to search, so "not named" means nothing.
+   */
+  searched: boolean | null;
+  /** Each workflow once, however many of the model's names it uses. */
+  matches: readonly UsageMatch[];
+  /** The engine's sentence for what the check did. */
+  method: string | null;
+}
+
+export function usageOfModel(
+  file: Pick<VaultFile, "canonicalName" | "aliases">,
+  answers: ReadonlyMap<string, UsageResult>,
+): ModelUsage {
+  const found = [file.canonicalName, ...file.aliases]
+    .map((name) => answers.get(name))
+    .filter((a): a is UsageResult => a !== undefined);
+  if (found.length === 0) return { searched: null, matches: [], method: null };
+  const seen = new Set<string>();
+  const matches: UsageMatch[] = [];
+  for (const answer of found) {
+    for (const match of answer.matches) {
+      if (seen.has(match.workflowPath.toLowerCase())) continue;
+      seen.add(match.workflowPath.toLowerCase());
+      matches.push(match);
+    }
+  }
+  const searched = found.some((a) => a.searched);
+  return {
+    searched,
+    matches,
+    method: (found.find((a) => a.searched === searched) ?? found[0]!).method,
+  };
 }
 
 /** The sentence the engine requires next to every used or not-used answer. */

@@ -1,15 +1,20 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { DanglingLinks, ReplacedLinks } from "~/components/DanglingLinks";
 import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
-import { dayMonth, fmt } from "~/domain/format";
-import { buildNameGroupView, type NameGroupView } from "~/domain/view";
+import { dayMonth, fmt, joinPath } from "~/domain/format";
+import {
+  buildNameGroupView,
+  usageOfModel,
+  type ModelUsage,
+  type NameGroupView,
+} from "~/domain/view";
 import { installNameOf } from "~/domain/installname";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
-import type { VaultFile } from "~/ipc/contract";
+import type { Install, VaultFile } from "~/ipc/contract";
 
 export function CleanupScreen() {
   const app = useApp();
@@ -105,6 +110,7 @@ function CleanupBody() {
             <For each={app.orphans()}>{(file) => <OrphanRow file={file} />}</For>
           </Show>
           <ReplacedLinks />
+          <DeleteModels />
         </div>
       </div>
     </>
@@ -329,6 +335,217 @@ function OrphanRow(props: { file: VaultFile }) {
         in {props.file.category}, in the vault since {dayMonth(props.file.addedAt)}, and
         no install links to it
       </div>
+    </div>
+  );
+}
+
+/** How many of the biggest models show before "Show all". */
+const FIRST_SHOWN = 12;
+
+/**
+ * Every model the installs link to, biggest first, each with one button that
+ * deletes it from the vault and removes every link to it. A file nothing links
+ * to is already listed above with its own Delete, so it is not listed twice.
+ */
+function DeleteModels() {
+  const app = useApp();
+  const [onlyUnused, setOnlyUnused] = createSignal(false);
+  const [showAll, setShowAll] = createSignal(false);
+
+  const models = createMemo(() =>
+    app
+      .vaultFiles()
+      .filter((f) => f.linkCount > 0)
+      .map((file) => ({ file, usage: usageOfModel(file, app.usage()) }))
+      .sort((a, b) => b.file.sizeBytes - a.file.sizeBytes),
+  );
+  const total = createMemo(() => models().reduce((sum, m) => sum + m.file.sizeBytes, 0));
+  // Nothing was checked when no name was searched at all, and then no model
+  // can be called unused.
+  const checked = createMemo(() => models().some((m) => m.usage.searched === true));
+  const unused = createMemo(() =>
+    models().filter((m) => m.usage.searched === true && m.usage.matches.length === 0),
+  );
+  const listed = createMemo(() => (onlyUnused() && checked() ? unused() : models()));
+  const shown = createMemo(() => (showAll() ? listed() : listed().slice(0, FIRST_SHOWN)));
+
+  return (
+    <>
+      <div class="sec secgap">
+        <span class="t">Delete a model</span>
+        <span class="n">
+          {models().length} {models().length === 1 ? "model" : "models"} in the vault,{" "}
+          {fmt(total())}
+        </span>
+      </div>
+      <Show
+        when={models().length > 0}
+        fallback={<div class="note">No model in the vault is linked from an install.</div>}
+      >
+        <div class="note lead">
+          Deleting a model frees its space and removes every link to it, in every
+          install.
+        </div>
+        <Show when={checked()}>
+          <div class="vtools">
+            <button
+              class="chip"
+              classList={{ on: onlyUnused() }}
+              aria-pressed={onlyUnused()}
+              onClick={() => setOnlyUnused(!onlyUnused())}
+            >
+              Only models no saved workflow uses ({unused().length})
+            </button>
+          </div>
+          <Show when={onlyUnused()}>
+            <div class="lib-method box" role="note">
+              {app.usageMethod()} A workflow you never saved lives in the browser,
+              where ComfyVault cannot see it, so this list is not a list of models
+              that are safe to delete.
+            </div>
+          </Show>
+        </Show>
+        <Show
+          when={shown().length > 0}
+          fallback={
+            <div class="note" style={{ padding: "8px 0" }}>
+              Every model in the vault is named in a saved workflow.
+            </div>
+          }
+        >
+          <For each={shown()}>{(m) => <ModelRow file={m.file} usage={m.usage} />}</For>
+        </Show>
+        <Show when={listed().length > FIRST_SHOWN}>
+          <div class="more">
+            <button class="btn sm" onClick={() => setShowAll(!showAll())}>
+              {showAll() ? `Show the ${FIRST_SHOWN} biggest only` : `Show all ${listed().length}`}
+            </button>
+          </div>
+        </Show>
+      </Show>
+    </>
+  );
+}
+
+/** The installs a model's links are in, each once, by the name shown for it. */
+function installsOf(file: VaultFile, installs: readonly Install[]): string[] {
+  return [
+    ...new Set(
+      file.links.map((l) =>
+        installs.some((i) => i.id === l.installId)
+          ? installNameOf(l.installId, installs)
+          : "an install no longer in the list",
+      ),
+    ),
+  ];
+}
+
+function ModelRow(props: { file: VaultFile; usage: ModelUsage }) {
+  const app = useApp();
+  const installs = () => installsOf(props.file, app.installs());
+  const used = () => props.usage.matches.length;
+
+  const remove = () => {
+    const file = props.file;
+    const n = file.links.length;
+    const where = installs();
+    const usage = props.usage;
+    const usageLine =
+      usage.searched === null
+        ? []
+        : !usage.searched
+          ? [[{ text: usage.method ?? "" }]]
+          : usage.matches.length === 0
+            ? [
+                [
+                  {
+                    text: "No saved workflow names it. A workflow you never saved lives in the browser, where ComfyVault cannot see it.",
+                  },
+                ],
+              ]
+            : [
+                [
+                  {
+                    text: `It is named in ${usage.matches.length === 1 ? "a saved workflow" : `${usage.matches.length} saved workflows`}: `,
+                  },
+                  {
+                    text: usage.matches
+                      .map((m) => `${m.workflowName} (${installNameOf(m.installId, app.installs())})`)
+                      .join(", "),
+                    emph: true,
+                  },
+                  {
+                    text: `. ${usage.matches.length === 1 ? "It" : "They"} will show the model as missing.`,
+                  },
+                ],
+              ];
+    openConfirm(app, {
+      title: "Delete a model",
+      cta: n === 1 ? "Delete the model and its link" : `Delete the model and its ${n} links`,
+      body: [
+        [
+          { text: file.canonicalName, emph: true },
+          { text: " will be deleted, and " },
+          { text: fmt(file.sizeBytes), emph: true },
+          { text: ` will be freed on drive ${app.vaultVolume()}.` },
+        ],
+        [
+          { text: "This is the only copy ComfyVault knows of. " },
+          { text: "This cannot be undone.", emph: true },
+          { text: " To use the model again, you must download it again." },
+        ],
+        [
+          {
+            text: `${n === 1 ? "Its link is" : `Its ${n} links are`} removed too, so it disappears from ${where.length <= 2 ? where.join(" and ") : "these installs"}:`,
+          },
+        ],
+      ],
+      list: file.links.map((l) => l.absPath),
+      after: usageLine,
+      action: async () => {
+        const done = await app.engine.deleteVaultFile(file.sha256, file.sha256, true);
+        const k = done.linksRemoved.length;
+        app.actions.showToast(
+          `Deleted ${file.canonicalName}. ${fmt(done.bytesFreed)} freed, ${k} ${k === 1 ? "link" : "links"} removed.`,
+        );
+      },
+    });
+  };
+
+  return (
+    <div class="vrow">
+      <div class="vl">
+        <span
+          class="grp-n"
+          title={joinPath(app.vault()?.root ?? "", props.file.vaultRelPath)}
+        >
+          {props.file.canonicalName}
+        </span>
+        <div class="vmeta">
+          <span>in {props.file.category},</span>
+          <span class="lk" title={props.file.links.map((l) => l.absPath).join("\n")}>
+            linked in {installs().join(" and ")}
+            <Show when={props.usage.searched === true}>,</Show>
+          </span>
+          <Show when={props.usage.searched === true}>
+            <span class="wf">
+              <span class="dot" classList={{ used: used() > 0, unused: used() === 0 }} />
+              {used() === 0
+                ? "used by no saved workflow"
+                : `used by ${used()} saved ${used() === 1 ? "workflow" : "workflows"}`}
+            </span>
+          </Show>
+        </div>
+      </div>
+      <span class="grp-s">{fmt(props.file.sizeBytes)}</span>
+      <button
+        class="drop"
+        title="Delete this model"
+        aria-label={`Delete ${props.file.canonicalName}`}
+        onClick={remove}
+      >
+        <Icon name="trash" size={13} />
+      </button>
     </div>
   );
 }

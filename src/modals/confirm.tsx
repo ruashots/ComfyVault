@@ -18,6 +18,8 @@ export function openConfirm(
     body: ConfirmLine[];
     /** Paths the person must see before confirming. */
     list?: readonly string[];
+    /** Lines under the paths. */
+    after?: ConfirmLine[];
     action: () => Promise<void> | void;
     /** Why the action cannot happen, known before the person presses it. */
     refusal?: { head: string; message: string; detail: readonly string[] };
@@ -29,6 +31,7 @@ export function openConfirm(
     cta: options.cta,
     body: options.body,
     list: options.list ?? [],
+    after: options.after ?? [],
     action: options.action,
     running: false,
     errorHead: options.refusal?.head ?? "That did not happen",
@@ -96,32 +99,13 @@ export function ConfirmModalView() {
               <h2>{current().title}</h2>
             </div>
             <div class="mb">
-              <For each={current().body}>
-                {(line) => (
-                  <div
-                    class="note"
-                    style={{
-                      "line-height": "1.6",
-                      color: "var(--t-body)",
-                      "font-size": "11px",
-                      "margin-bottom": "8px",
-                    }}
-                  >
-                    <For each={line}>
-                      {(part) => (
-                        <Show when={part.emph} fallback={<>{part.text}</>}>
-                          <span class="emph">{part.text}</span>
-                        </Show>
-                      )}
-                    </For>
-                  </div>
-                )}
-              </For>
+              <For each={current().body}>{(line) => <Line line={line} />}</For>
               <Show when={current().list.length > 0}>
                 <ul class="paths" style={{ "margin-bottom": "8px" }}>
                   <For each={current().list}>{(line) => <li>{line}</li>}</For>
                 </ul>
               </Show>
+              <For each={current().after}>{(line) => <Line line={line} />}</For>
               <Show when={current().error}>
                 {(message) => (
                   <div class="verdict no" role="alert">
@@ -166,5 +150,27 @@ export function ConfirmModalView() {
         </div>
       )}
     </Show>
+  );
+}
+
+function Line(props: { line: ConfirmLine }) {
+  return (
+    <div
+      class="note"
+      style={{
+        "line-height": "1.6",
+        color: "var(--t-body)",
+        "font-size": "11px",
+        "margin-bottom": "8px",
+      }}
+    >
+      <For each={props.line}>
+        {(part) => (
+          <Show when={part.emph} fallback={<>{part.text}</>}>
+            <span class="emph">{part.text}</span>
+          </Show>
+        )}
+      </For>
+    </div>
   );
 }

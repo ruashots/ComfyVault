@@ -752,9 +752,28 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
 
+/* Cleanup: delete a model, with every link to it */
+.vtools{display:flex;gap:8px;margin:0 0 6px}
+.vrow{display:flex;align-items:center;gap:10px;padding:6px 0 7px;border-bottom:1px solid var(--div)}
+.vrow:last-of-type{border-bottom:none}
+.vrow .vl{flex:1;min-width:0}
+.vrow .grp-n{display:block}
+.vmeta{display:flex;gap:6px;margin-top:3px;font-size:9.5px;color:var(--t-faint);white-space:nowrap;min-width:0}
+.vmeta .lk{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.vmeta .wf{flex:none;display:inline-flex;align-items:center;gap:5px}
+.vmeta .dot{width:5px;height:5px;flex:none;border-radius:50%;display:inline-block}
+.vmeta .dot.used{background:var(--green);box-shadow:0 0 6px rgba(62,147,86,.7)}
+.vmeta .dot.unused{border:1px solid var(--t-off)}
+/* faint until pointed at, so a list of bins never reads as a list of alarms */
+.vrow .drop{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--t-faint);border-radius:var(--r2)}
+.vrow .drop:hover,.vrow .drop:focus-visible{color:var(--red-br);background:rgba(220,58,31,.12)}
+/* a confirmation's own list shows three paths whole before it scrolls */
+.modal .mb > .paths{max-height:132px}
+
 /* the sentence that says what the workflow check actually did */
 .lib-method{
   padding:8px 12px;font-size:9.5px;line-height:1.55;color:var(--t-dim);
   border-bottom:1px solid var(--div);background:rgba(172,163,138,.022);
 }
+.lib-method.box{border:1px solid var(--div);margin-bottom:4px;max-width:720px}
 .tnode .hint.red{color:var(--red-br)}

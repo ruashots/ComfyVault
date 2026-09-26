@@ -12,6 +12,7 @@ import {
   modelTitleOf,
   placesOf,
   thumbnailStateOf,
+  usageOfModel,
 } from "~/domain/view";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import type {
@@ -21,6 +22,7 @@ import type {
   PlanGroup,
   PlanLink,
   ScanTotals,
+  UsageResult,
 } from "~/ipc/contract";
 
 // ── the plan the engine hands over, arranged for the screen ─────────────────
@@ -582,5 +584,44 @@ describe("which name the vault should keep", () => {
       ]),
     );
     expect(view.choices.map((c) => c.removable)).toEqual([false, false, true]);
+  });
+});
+
+describe("what the saved workflows say about one vault model", () => {
+  const match = (path: string) => ({
+    installId: "studio",
+    installLabel: "ComfyUI-Studio",
+    workflowPath: path,
+    workflowName: path.split("\\").pop()!,
+  });
+  const result = (name: string, over: Partial<UsageResult> = {}): UsageResult => ({
+    name,
+    used: false,
+    searched: true,
+    matches: [],
+    method: "searched",
+    ...over,
+  });
+
+  it("counts a workflow once when it names the model by two of its names", () => {
+    const answers = new Map([
+      ["a.safetensors", result("a.safetensors", { used: true, matches: [match("C:\\w\\one.json")] })],
+      ["b.safetensors", result("b.safetensors", { used: true, matches: [match("C:\\W\\ONE.json"), match("C:\\w\\two.json")] })],
+    ]);
+    const usage = usageOfModel({ canonicalName: "a.safetensors", aliases: ["b.safetensors"] }, answers);
+    expect(usage.searched).toBe(true);
+    expect(usage.matches.map((m) => m.workflowName)).toEqual(["one.json", "two.json"]);
+  });
+
+  it("is not an answer when nothing was searched, and no answer when none came back", () => {
+    const notSearched = new Map([
+      ["a.safetensors", result("a.safetensors", { searched: false, method: "nothing was searched" })],
+    ]);
+    expect(usageOfModel({ canonicalName: "a.safetensors", aliases: [] }, notSearched)).toEqual({
+      searched: false,
+      matches: [],
+      method: "nothing was searched",
+    });
+    expect(usageOfModel({ canonicalName: "x.safetensors", aliases: [] }, notSearched).searched).toBeNull();
   });
 });
