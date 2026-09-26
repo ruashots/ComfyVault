@@ -2,6 +2,7 @@ import { screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { ConfirmModalView } from "~/modals/confirm";
 import { CleanupScreen, cleanupSummary } from "~/screens/Cleanup";
@@ -271,5 +272,36 @@ describe("deleting a model from Cleanup, with every link to it", () => {
     });
     expect(document.body.textContent).toContain("No model in the vault is linked from an install.");
     expect(deleteRows()).toHaveLength(0);
+  });
+});
+
+describe("backing out of the delete", () => {
+  it("closes on Escape and deletes nothing", async () => {
+    const engine = new FixtureEngine({ manual: true });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const scan = (await engine.getLastScan())!;
+    const plan = await engine.buildPlan(scan.scanId);
+    await engine.startApply({ planId: plan.planId, groupIds: plan.groups.map((g) => g.groupId) });
+    engine.devFinish();
+    // The whole window, because Escape is the window's key, not the dialog's.
+    harness = await renderWithApp(() => <App />, { engine });
+    harness.app.actions.go("cleanup");
+    await waitFor(() => deleteRows().length > 0);
+    const file = shownModels(harness.app).find((f) => f.linkCount >= 2)!;
+    let deletes = 0;
+    const original = engine.deleteVaultFile.bind(engine);
+    engine.deleteVaultFile = async (...args) => {
+      deletes += 1;
+      return original(...args);
+    };
+
+    await openDelete(file.canonicalName);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => document.querySelector(".modal") === null);
+
+    expect(deletes).toBe(0);
+    expect((await engine.listLinks({ sha256: file.sha256 })).length).toBe(file.links.length);
+    expect(rowOf(file.canonicalName)).toBeDefined();
   });
 });
