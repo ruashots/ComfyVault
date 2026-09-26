@@ -1060,6 +1060,12 @@ impl<'a> Applier<'a> {
                 }
                 self.platform.create_file_symlink(link, target)
             }
+            // Only a delete writes this, under a journal no run owns, so no
+            // undo reaches it. If one ever does, it refuses: the bytes are gone.
+            JournalStep::DeleteVaultFile { path, .. } => Err(VaultError::conflict(
+                "That model was deleted from the vault, and a delete cannot be undone.",
+            )
+            .with_path(path)),
         }
     }
 
@@ -1260,7 +1266,9 @@ impl<'a> Applier<'a> {
             place: place.to_path_buf(),
         };
         match &entry.step {
-            JournalStep::CreateDir { .. } | JournalStep::RemoveLink { .. } => UndoAction::Tidy,
+            JournalStep::CreateDir { .. }
+            | JournalStep::RemoveLink { .. }
+            | JournalStep::DeleteVaultFile { .. } => UndoAction::Tidy,
             JournalStep::MoveToVault { from, to, copied, size_bytes, .. } => {
                 if is_real_file(from) {
                     // The move never happened. Undoing it only drops a copy.
@@ -1842,6 +1850,7 @@ fn step_paths_touched(step: &JournalStep) -> Vec<PathBuf> {
         JournalStep::MoveToVault { to, .. } => vec![to.clone()],
         JournalStep::CreateLink { link, target } => vec![link.clone(), target.clone()],
         JournalStep::RemoveLink { link, target } => vec![link.clone(), target.clone()],
+        JournalStep::DeleteVaultFile { path, .. } => vec![path.clone()],
         _ => Vec::new(),
     }
 }
@@ -1854,6 +1863,7 @@ fn step_path(step: &JournalStep) -> Option<PathBuf> {
         JournalStep::CreateLink { link, .. } => Some(link.clone()),
         JournalStep::DeleteStash { original, .. } => Some(original.clone()),
         JournalStep::RemoveLink { link, .. } => Some(link.clone()),
+        JournalStep::DeleteVaultFile { path, .. } => Some(path.clone()),
     }
 }
 

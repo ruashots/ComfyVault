@@ -138,6 +138,9 @@ impl Places {
                 want(is_stash_of(original, stash), stash);
                 want(self.model_in_vault(vault_path), vault_path);
             }
+            JournalStep::DeleteVaultFile { path, .. } => {
+                want(self.model_in_vault(path), path);
+            }
         }
         bad
     }

@@ -360,6 +360,10 @@ pub enum JournalStep {
     },
     /// A link removed. Undone by creating it again.
     RemoveLink { link: PathBuf, target: PathBuf },
+    /// A vault file deleted on the person's request, with every name and link
+    /// it had. Never undone: its bytes were the only copy. Recorded so that an
+    /// undo of the run that put the file there refuses before it starts.
+    DeleteVaultFile { path: PathBuf, sha256: String, size_bytes: u64 },
 }
 
 /// One row of the journal.
@@ -461,6 +465,11 @@ mod tests {
             JournalStep::RemoveLink {
                 link: "/i/c.safetensors".into(),
                 target: "/v/loras/a.safetensors".into(),
+            },
+            JournalStep::DeleteVaultFile {
+                path: "/v/loras/a.safetensors".into(),
+                sha256: "AA".into(),
+                size_bytes: 10,
             },
         ];
         for s in steps {

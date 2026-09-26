@@ -1599,6 +1599,7 @@ fn every_step_is_written_down_before_it_happens() {
             JournalStep::CreateLink { .. } => "link",
             JournalStep::DeleteStash { .. } => "delete",
             JournalStep::RemoveLink { .. } => "unlink",
+            JournalStep::DeleteVaultFile { .. } => "delete the vault file",
         })
         .collect();
     assert_eq!(kinds, vec!["dir", "move", "link", "stash", "link", "delete"]);
