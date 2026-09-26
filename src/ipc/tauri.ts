@@ -14,6 +14,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { AddressPlan, DownloadRecord, TokenStatus } from "~/ipc/draft";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
@@ -171,6 +172,21 @@ export function createTauriEngine(): Engine {
 
     getRunningComfy: () => callNoArgs<RunningComfy[]>("get_running_comfy"),
     checkLockedFiles: (paths) => call<LockState[]>("check_locked_files", { paths }),
+
+    setToken: (service, token) =>
+      call<{ ok: true; account: string | null }>("set_token", { service, token }),
+    getTokenStatus: (service) => call<TokenStatus>("get_token_status", { service }),
+    removeToken: (service) => call<{ removed: true }>("remove_token", { service }),
+    readModelAddress: (args) => call<AddressPlan>("read_model_address", { ...args }),
+    openModelPage: (address) => call<null>("open_model_page", { address }),
+    startDownload: (args) => call<DownloadRecord>("start_download", { ...args }),
+    stopDownload: (downloadId) => call<DownloadRecord>("stop_download", { downloadId }),
+    continueDownload: (downloadId) =>
+      call<DownloadRecord>("continue_download", { downloadId }),
+    discardDownload: (downloadId) => call<{ removed: true }>("discard_download", { downloadId }),
+    removeDownload: (downloadId) => call<{ removed: true }>("remove_download", { downloadId }),
+    listDownloads: () => callNoArgs<DownloadRecord[]>("list_downloads"),
+    onDownloadProgress: (fn) => subscribe<DownloadRecord>("download:progress", fn),
 
     openExternal: (target) => openUrl(target),
     openCivitaiPage: (modelId, versionId) =>

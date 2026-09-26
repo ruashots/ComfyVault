@@ -47,6 +47,24 @@ export async function createEngine(): Promise<Engine> {
     processFacts: (facts: Parameters<typeof engine.devSetProcessFacts>[0]) =>
       engine.devSetProcessFacts(facts),
     taskManagerStarts: (starts: boolean) => engine.devSetTaskManagerStarts(starts),
+    // The downloader. Each switch makes one state of the Download screen.
+    download: {
+      hold: (on = true) => engine.downloads.devHold(on),
+      step: (n = 1) => {
+        for (let i = 0; i < n; i++) engine.downloads.devStep();
+      },
+      finish: () => engine.downloads.devFinishDownloads(),
+      dropConnection: () => engine.downloads.devDropConnection(),
+      refuse: (message: string) => engine.downloads.devRefuseMidway(message),
+      corruptNext: () => engine.downloads.devCorruptNext(),
+      cutOff: () => engine.downloads.devCutOff(),
+      freeGB: (gb: number) => engine.downloads.devSetFreeBytes(gb * 1024 ** 3),
+      readDelay: (ms: number) => engine.downloads.devSetReadDelay(ms),
+      placeFile: (installId: string, category: string, name: string) =>
+        engine.downloads.devPlaceFile(installId, category, name),
+      revokeToken: (service: "huggingface" | "civitai") => engine.downloads.devRevokeToken(service),
+      acceptTerms: (owner: string, repo: string) => engine.downloads.devAcceptTerms(owner, repo),
+    },
   };
   return engine;
 }

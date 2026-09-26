@@ -9,6 +9,8 @@
 
 import { fileNameOf } from "~/domain/view";
 import { leafOf } from "~/domain/format";
+import { DownloadDesk } from "~/ipc/fixture/downloads";
+import type { DownloadRecord, TokenService } from "~/ipc/draft";
 import type {
   ApplyProgress,
   ApplyRecord,
@@ -277,6 +279,7 @@ export class FixtureEngine implements Engine {
   private revertProgressEvent = new Emitter<RevertProgress>();
   private revertDoneEvent = new Emitter<ApplyRecord>();
   private revertErrorEvent = new Emitter<VaultError>();
+  private downloadEvent = new Emitter<DownloadRecord>();
 
   /** Everything is this many times faster. Tests pass a large number. */
   private readonly speed: number;
@@ -288,11 +291,15 @@ export class FixtureEngine implements Engine {
    */
   private tick: (() => void) | null = null;
 
+  /** The downloader: its services, its tokens and its queue. */
+  downloads: DownloadDesk;
+
   constructor(
     options: { empty?: boolean; speed?: number; manual?: boolean } = {},
   ) {
     this.speed = options.speed ?? 1;
     this.manual = options.manual === true;
+    this.downloads = this.newDesk();
     if (options.empty === true) {
       this.emptyWorld();
       // A person who has never opened this program has no vault either, and
@@ -300,6 +307,16 @@ export class FixtureEngine implements Engine {
       this.vaultOpen = false;
     }
     else this.recordScan("scan-1");
+  }
+
+  private newDesk(): DownloadDesk {
+    return new DownloadDesk(
+      () => this.world,
+      this.manual,
+      () => this.tickMs,
+      this.opened,
+      (record) => this.downloadEvent.emit(record),
+    );
   }
 
   private get tickMs(): number {
@@ -462,6 +479,7 @@ export class FixtureEngine implements Engine {
       scanOutputModelDirs: true,
       huggingFaceCacheDirs: null,
       verifyBeforeDelete: this.vaultOpen ? this.world.verifyBeforeDelete : true,
+      downloadInstallIds: this.downloads.downloadInstallIds,
     };
   }
 
@@ -472,6 +490,9 @@ export class FixtureEngine implements Engine {
     }
     if (patch.verifyBeforeDelete !== undefined) {
       this.world.verifyBeforeDelete = patch.verifyBeforeDelete;
+    }
+    if (patch.downloadInstallIds !== undefined) {
+      this.downloads.downloadInstallIds = patch.downloadInstallIds;
     }
     return this.getSettings();
   }
@@ -1886,6 +1907,49 @@ export class FixtureEngine implements Engine {
     }));
   }
 
+  // ── downloads ─────────────────────────────────────────────────────────────
+
+  setToken(service: TokenService, token: string) {
+    this.requireVault();
+    return this.downloads.setToken(service, token);
+  }
+  getTokenStatus(service: TokenService) {
+    return this.downloads.getTokenStatus(service);
+  }
+  removeToken(service: TokenService) {
+    return this.downloads.removeToken(service);
+  }
+  readModelAddress(args: Parameters<DownloadDesk["readModelAddress"]>[0]) {
+    this.requireVault();
+    return this.downloads.readModelAddress(args);
+  }
+  openModelPage(address: string) {
+    return this.downloads.openModelPage(address);
+  }
+  startDownload(args: Parameters<DownloadDesk["startDownload"]>[0]) {
+    this.requireVault();
+    return this.downloads.startDownload(args);
+  }
+  stopDownload(downloadId: string) {
+    return this.downloads.stopDownload(downloadId);
+  }
+  continueDownload(downloadId: string) {
+    return this.downloads.continueDownload(downloadId);
+  }
+  discardDownload(downloadId: string) {
+    return this.downloads.discardDownload(downloadId);
+  }
+  removeDownload(downloadId: string) {
+    return this.downloads.removeDownload(downloadId);
+  }
+  async listDownloads() {
+    this.requireVault();
+    return this.downloads.listDownloads();
+  }
+  onDownloadProgress(fn: (record: DownloadRecord) => void): Unsubscribe {
+    return this.downloadEvent.on(fn);
+  }
+
   // ── the window ────────────────────────────────────────────────────────────
 
   /** Every address the app asked the system to open, in order. */
@@ -2105,6 +2169,8 @@ export class FixtureEngine implements Engine {
     this.applies = [];
     this.worldBeforeApply = null;
     this.busy = null;
+    this.downloads.dispose();
+    this.downloads = this.newDesk();
     if (empty) this.emptyWorld();
     else this.recordScan("scan-1");
   }

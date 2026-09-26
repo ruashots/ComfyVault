@@ -34,9 +34,31 @@ comfyVaultDev.taskManagerStarts(false) // Windows refuses to open Task Manager
 comfyVaultDev.reset(false)        // start over; pass true for a first run
 comfyVaultDev.breakLinks(1)       // point some links at nothing, for Cleanup
 comfyVaultDev.stopDelete(1)       // a delete cut off part way, after a run, for Cleanup
+comfyVaultDev.download.hold()     // pause the clock that moves a download, to look at one state
+comfyVaultDev.download.step(20)   // move the running download on, one sixtieth of the file a step
+comfyVaultDev.download.finish()   // run every download to the end
+comfyVaultDev.download.dropConnection()  // the connection drops under the running download
+comfyVaultDev.download.refuse("Forbidden")  // the site refuses in the middle, in these words
+comfyVaultDev.download.corruptNext()     // the next file does not match its SHA-256
+comfyVaultDev.download.cutOff()   // ComfyVault closes under the running download
+comfyVaultDev.download.freeGB(12) // the vault drive has this much free
+comfyVaultDev.download.readDelay(5000)  // the sites take this long to answer a read
+comfyVaultDev.download.placeFile("sandbox", "diffusion_models", "flux1-dev-fp8.safetensors")
+                                  // a different file already has that name in an install
+comfyVaultDev.download.revokeToken("huggingface")  // the site stops accepting a saved token
+comfyVaultDev.download.acceptTerms("black-forest-labs", "FLUX.1-dev")
+                                  // the saved account accepts a gated model's terms
 comfyVaultDev.forgetVersions()    // installs that do not record a version
 comfyVaultDev.noWorkflows()       // no saved workflow files to search
 ```
+
+The development engine's downloader knows a few real models: DreamShaper
+(`civitai.com/models/4384`), a Civitai model that needs a token
+(`civitai.com/models/123456`), and on Hugging Face `Comfy-Org/flux1-dev`
+(`flux1-dev-fp8.safetensors`), the gated `black-forest-labs/FLUX.1-dev`
+(`flux1-dev.safetensors`) and `comfyanonymous/flux_text_encoders`
+(`t5xxl_fp16.safetensors`, already in the vault after a run). A token is
+accepted unless it contains "bad".
 
 `runningIn` takes install ids. The two sample installs are `studio` and
 `sandbox`. An install added in the browser gets its folder name in lower case,
