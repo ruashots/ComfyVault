@@ -1,4 +1,8 @@
 {
   "bytesFreed": 151119872,
-  "deleted": true
+  "deleted": true,
+  "linksRemoved": [
+    "C:\\ComfyUI-A\\models\\loras\\style.safetensors",
+    "C:\\ComfyUI-B\\models\\loras\\new\\style.safetensors"
+  ]
 }

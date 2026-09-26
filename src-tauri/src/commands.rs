@@ -628,6 +628,10 @@ pub struct DeleteVaultFileArgs {
     pub sha256: String,
     /// Must equal `sha256`. This delete cannot be undone.
     pub confirm: String,
+    /// Also remove every link to the file, in every install. Without it, a
+    /// file any install links to is refused, as it always was.
+    #[serde(default)]
+    pub remove_links: bool,
 }
 
 #[tauri::command]
@@ -637,8 +641,16 @@ pub async fn delete_vault_file(
 ) -> Reply<Deleted> {
     let e = engine(&state);
     blocking(move || {
+        if args.remove_links {
+            let done = e.delete_vault_file_and_links(&args.sha256, &args.confirm)?;
+            return Ok(Deleted {
+                deleted: true,
+                bytes_freed: done.bytes_freed,
+                links_removed: done.links_removed.iter().map(|p| comfyvault_core::paths::display_path(p)).collect(),
+            });
+        }
         let bytes_freed = e.delete_vault_file(&args.sha256, &args.confirm)?;
-        Ok(Deleted { deleted: true, bytes_freed })
+        Ok(Deleted { deleted: true, bytes_freed, links_removed: Vec::new() })
     })
     .await
 }

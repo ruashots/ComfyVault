@@ -586,7 +586,17 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             },
         ),
         s("VaultFile", vault_file()),
-        s("Deleted", Deleted { deleted: true, bytes_freed: 151_119_872 }),
+        s(
+            "Deleted",
+            Deleted {
+                deleted: true,
+                bytes_freed: 151_119_872,
+                links_removed: vec![
+                    "C:\\ComfyUI-A\\models\\loras\\style.safetensors".into(),
+                    "C:\\ComfyUI-B\\models\\loras\\new\\style.safetensors".into(),
+                ],
+            },
+        ),
         s(
             "VaultHealth",
             VaultHealth {

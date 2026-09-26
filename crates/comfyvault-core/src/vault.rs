@@ -24,7 +24,7 @@ use crate::error::{ErrorCode, Result, VaultError};
 use crate::links::Links;
 use crate::platform::Platform;
 use crate::progress::CancelToken;
-use crate::store::{LinkRecord, LinkState, Store, VaultFileRecord};
+use crate::store::{JournalStep, LinkRecord, LinkState, Store, VaultFileRecord};
 
 /// One content in the vault, with everything the interface shows about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +160,88 @@ pub struct VaultPage {
     pub total: u64,
     pub offset: u64,
     pub files: Vec<VaultFile>,
+}
+
+/// What deleting a model with its links did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletedModel {
+    pub bytes_freed: u64,
+    /// Every install link that was removed.
+    pub links_removed: Vec<PathBuf>,
+}
+
+/// What a delete found at one of a model's link paths.
+enum Removable {
+    /// Nothing is there. Nothing to remove.
+    Gone,
+    /// A link that leads to the model, with where it points as written, so it
+    /// can be put back exactly.
+    Yes(PathBuf),
+    /// Something else: a real file, or a link that leads somewhere else.
+    No,
+}
+
+/// A link a delete removed, kept so it can be put back.
+struct Removed {
+    link: PathBuf,
+    target: PathBuf,
+    seq: u64,
+}
+
+/// The journal of one delete. Each step is written before it happens and
+/// marked after, as a consolidation writes its own.
+struct DeleteJournal<'a> {
+    store: &'a Store,
+    id: String,
+    sha256: String,
+    entries: Vec<crate::store::JournalEntry>,
+}
+
+impl<'a> DeleteJournal<'a> {
+    fn new(store: &'a Store, sha256: &str) -> Self {
+        Self {
+            store,
+            id: format!("delete-{}", uuid::Uuid::new_v4().simple()),
+            sha256: sha256.to_string(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn pending(&mut self, step: crate::store::JournalStep) -> Result<u64> {
+        let e = crate::store::JournalEntry {
+            apply_id: self.id.clone(),
+            seq: self.entries.len() as u64,
+            group_id: self.sha256.clone(),
+            step,
+            state: crate::store::JournalState::Pending,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            error: None,
+        };
+        self.store.append_journal(&e)?;
+        self.entries.push(e);
+        Ok(self.entries.len() as u64 - 1)
+    }
+
+    fn mark(&mut self, seq: u64, state: crate::store::JournalState, error: Option<String>) -> Result<()> {
+        let e = &mut self.entries[seq as usize];
+        e.state = state;
+        e.finished_at = Some(crate::time_util::Timestamp::now());
+        e.error = error;
+        self.store.update_journal(e)
+    }
+
+    fn done(&mut self, seq: u64) -> Result<()> {
+        self.mark(seq, crate::store::JournalState::Done, None)
+    }
+
+    fn failed(&mut self, seq: u64, error: &VaultError) -> Result<()> {
+        self.mark(seq, crate::store::JournalState::Failed, Some(error.to_string()))
+    }
+
+    fn reverted(&mut self, seq: u64) -> Result<()> {
+        self.mark(seq, crate::store::JournalState::Reverted, None)
+    }
 }
 
 pub struct Vault<'a> {
@@ -745,6 +827,255 @@ impl<'a> Vault<'a> {
         }
         self.store.delete_vault_file(&sha)?;
         Ok(freed)
+    }
+
+    /// Deletes a vault file, every name it carries, and every link to it in
+    /// every install.
+    ///
+    /// **This cannot be undone.** The vault file is the only copy, and once it
+    /// is gone the model is gone from every install at once.
+    ///
+    /// Everything that will be removed is checked before anything is. Each
+    /// recorded link must still be a link that leads to this file, each
+    /// second name must still be a link beside it, and the file must still be
+    /// the one the record describes. Any surprise refuses the whole delete
+    /// and names the paths, with nothing touched.
+    ///
+    /// The links go first, then the names, then the file, so a stop part way
+    /// never leaves a link pointing at nothing. If the disk refuses any
+    /// removal, the links already removed are put back, and the model loads
+    /// in every install as it did before.
+    ///
+    /// The link records are forgotten only once the file is gone. A crash
+    /// before that leaves records for links that are no longer on the disk,
+    /// which nothing counts, and running the delete again finishes it.
+    pub fn delete_file_and_links(&self, sha256: &str, confirm: &str) -> Result<DeletedModel> {
+        let Some(sha) = crate::scan::hash::normalize_sha256(sha256) else {
+            return Err(VaultError::invalid("That is not a file hash."));
+        };
+        if crate::scan::hash::normalize_sha256(confirm).as_deref() != Some(sha.as_str()) {
+            return Err(VaultError::invalid(
+                "This delete was not confirmed, so nothing was removed.",
+            ));
+        }
+        let record = self
+            .store
+            .vault_file(&sha)?
+            .ok_or_else(|| VaultError::not_found("That model is not in the vault."))?;
+
+        // Every path is proved inside the vault before anything is removed, so
+        // a record that points outside fails closed instead of deleting there.
+        let path = self.inside(&record.vault_rel_path())?;
+        let alias_paths: Vec<PathBuf> = record
+            .aliases
+            .iter()
+            .map(|a| self.inside(&PathBuf::from(&record.category).join(a)))
+            .collect::<Result<Vec<_>>>()?;
+
+        // The file itself. Gone is allowed: a delete cut off after the file
+        // went is finished by running it again, and a model whose file was
+        // lost still has links to clear. Anything else that is not the
+        // recorded file is not deleted.
+        let present = match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(VaultError::from_io(&e, &path, "reading the vault file")),
+            Ok(m) if m.file_type().is_file() && m.len() == record.size_bytes => true,
+            Ok(_) => {
+                return Err(VaultError::conflict(
+                    "The file in the vault is not the one the vault recorded, so nothing was deleted. Check the vault first.",
+                )
+                .with_detail(format!(
+                    "{} is not a file of {} bytes",
+                    crate::paths::display_path(&path),
+                    record.size_bytes
+                ))
+                .with_path(&path));
+            }
+        };
+
+        // Every recorded link, not only the live ones: a real file where a
+        // link was is somebody's file, and it is exactly what must stop this.
+        let mut install_links: Vec<(LinkRecord, PathBuf)> = Vec::new();
+        let mut names: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut surprises: Vec<PathBuf> = Vec::new();
+        let records = self.store.links_for_hash(&sha)?;
+        for l in &records {
+            match self.link_to_this_file(&l.abs_path, &path, &alias_paths, present) {
+                Removable::Gone => {}
+                Removable::Yes(target) => install_links.push((l.clone(), target)),
+                Removable::No => surprises.push(l.abs_path.clone()),
+            }
+        }
+        for p in &alias_paths {
+            match self.link_to_this_file(p, &path, &[], present) {
+                Removable::Gone => {}
+                Removable::Yes(target) => names.push((p.clone(), target)),
+                Removable::No => surprises.push(p.clone()),
+            }
+        }
+        if !surprises.is_empty() {
+            surprises.sort();
+            surprises.dedup();
+            return Err(VaultError::conflict(
+                "Some of this model's links are not links to it any more, so nothing was deleted. Something else sits at these paths now.",
+            )
+            .with_detail(
+                surprises
+                    .iter()
+                    .map(|p| crate::paths::display_path(p))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .with_path(&surprises[0]));
+        }
+
+        // A file another program holds open cannot be deleted on Windows.
+        // Asked first, so the links are not taken away for nothing.
+        if present {
+            let lock = self.platform.lock_state(&path);
+            if lock.locked {
+                return Err(VaultError::new(
+                    ErrorCode::FileLocked,
+                    "Another program has this model open, so nothing was deleted. ComfyUI keeps a model open while it is loaded. Close it and try again.",
+                )
+                .with_detail(lock.detail.unwrap_or_else(|| crate::paths::display_path(&path)))
+                .with_path(&path));
+            }
+        }
+
+        let freed = if present {
+            std::fs::metadata(&path).map(|m| m.len()).unwrap_or(record.size_bytes)
+        } else {
+            0
+        };
+
+        let mut journal = DeleteJournal::new(self.store, &sha);
+        let mut removed: Vec<Removed> = Vec::new();
+        let steps: Vec<(PathBuf, PathBuf)> = install_links
+            .iter()
+            .map(|(l, t)| (l.abs_path.clone(), t.clone()))
+            .chain(names.iter().cloned())
+            .collect();
+
+        // Any failure from the first removal to the file's own delete, a
+        // journal write included, puts back what was removed.
+        let removal = (|| -> Result<()> {
+            for (link, target) in steps {
+                let seq = journal.pending(JournalStep::RemoveLink {
+                    link: link.clone(),
+                    target: target.clone(),
+                })?;
+                if let Err(e) = self.platform.remove_symlink(&link) {
+                    let _ = journal.failed(seq, &e);
+                    return Err(e);
+                }
+                removed.push(Removed { link, target, seq });
+                journal.done(seq)?;
+            }
+            if present {
+                let seq = journal.pending(JournalStep::DeleteVaultFile {
+                    path: path.clone(),
+                    sha256: sha.clone(),
+                    size_bytes: record.size_bytes,
+                })?;
+                if let Err(e) = std::fs::remove_file(&path) {
+                    let e = VaultError::from_io(&e, &path, "deleting the file from the vault");
+                    let _ = journal.failed(seq, &e);
+                    return Err(e);
+                }
+                // The file is gone. A journal write that fails now cannot
+                // bring it back, so it does not stop the records going.
+                let _ = journal.done(seq);
+            }
+            Ok(())
+        })();
+        if let Err(e) = removal {
+            return Err(self.put_back(&mut journal, removed, e));
+        }
+
+        for l in &records {
+            self.store.delete_link(&l.id)?;
+        }
+        self.store.delete_vault_file(&sha)?;
+
+        Ok(DeletedModel {
+            bytes_freed: freed,
+            links_removed: install_links.into_iter().map(|(l, _)| l.abs_path).collect(),
+        })
+    }
+
+    /// Whether the entry at `at` is a link this delete may remove, and where
+    /// it points.
+    ///
+    /// With the file present, the link must lead to it, followed through
+    /// every link on the way, the way ComfyUI opens it. With the file gone
+    /// there is nothing to follow, so the link must name the file or one of
+    /// its second names.
+    fn link_to_this_file(&self, at: &Path, file: &Path, names: &[PathBuf], present: bool) -> Removable {
+        match std::fs::symlink_metadata(at) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Removable::Gone,
+            Err(_) => return Removable::No,
+            Ok(m) if !m.file_type().is_symlink() => return Removable::No,
+            Ok(_) => {}
+        }
+        let Ok(target) = self.platform.read_symlink(at) else {
+            return Removable::No;
+        };
+        let leads_here = if present {
+            matches!(
+                (std::fs::canonicalize(at), std::fs::canonicalize(file)),
+                (Ok(a), Ok(b)) if a == b
+            )
+        } else {
+            let named = if target.is_relative() {
+                at.parent().map(|d| d.join(&target)).unwrap_or_else(|| target.clone())
+            } else {
+                target.clone()
+            };
+            let key = crate::paths::compare_key(&crate::paths::lexical_normalize(&named));
+            std::iter::once(file)
+                .chain(names.iter().map(PathBuf::as_path))
+                .any(|p| crate::paths::compare_key(&crate::paths::lexical_normalize(p)) == key)
+        };
+        if leads_here {
+            Removable::Yes(target)
+        } else {
+            Removable::No
+        }
+    }
+
+    /// Puts back the links a delete removed before the disk refused a step,
+    /// newest first, and turns the refusal into the answer.
+    fn put_back(&self, journal: &mut DeleteJournal<'_>, removed: Vec<Removed>, cause: VaultError) -> VaultError {
+        let mut not_back: Vec<PathBuf> = Vec::new();
+        for r in removed.iter().rev() {
+            let back = std::fs::symlink_metadata(&r.link).is_err()
+                && self.platform.create_file_symlink(&r.link, &r.target).is_ok();
+            if back {
+                // A failed journal write here must not hide the answer.
+                let _ = journal.reverted(r.seq);
+            } else {
+                not_back.push(r.link.clone());
+            }
+        }
+
+        let mut err = cause.clone();
+        if not_back.is_empty() {
+            err.message = format!("{} Nothing was deleted, and every link is in place.", cause.message);
+            return err;
+        }
+        not_back.sort();
+        err.message = format!(
+            "{} The model was not deleted, but {} of its links could not be put back. The model still loads in the other installs.",
+            cause.message,
+            not_back.len()
+        );
+        let listed = not_back.iter().map(|p| crate::paths::display_path(p)).collect::<Vec<_>>().join(", ");
+        err.detail = Some(match &cause.detail {
+            Some(d) => format!("{d}; links not put back: {listed}"),
+            None => format!("links not put back: {listed}"),
+        });
+        err
     }
 
     /// Checks that the vault and the links out in the installs still agree.

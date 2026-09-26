@@ -671,6 +671,8 @@ struct FakeState {
     disk_space_fails: bool,
     /// Paths where a rename fails outright, with the error kind to raise.
     rename_failures: HashMap<PathBuf, std::io::ErrorKind>,
+    /// Paths where removing a link fails, with the error kind to raise.
+    unlink_failures: HashMap<PathBuf, std::io::ErrorKind>,
     /// Stands in for a computer with several drives.
     drive_roots: Option<Vec<PathBuf>>,
     drives: Option<Vec<DriveInfo>>,
@@ -740,6 +742,11 @@ impl FakePlatform {
         self
     }
 
+    pub fn fail_remove_symlink_at(&self, path: impl Into<PathBuf>, kind: std::io::ErrorKind) -> &Self {
+        self.state.lock().unwrap().unlink_failures.insert(path.into(), kind);
+        self
+    }
+
     pub fn set_processes(&self, procs: Vec<ProcessInfo>) -> &Self {
         self.state.lock().unwrap().processes = Some(procs);
         self
@@ -803,6 +810,10 @@ impl Platform for FakePlatform {
     }
 
     fn remove_symlink(&self, link: &Path) -> Result<()> {
+        if let Some(kind) = self.state.lock().unwrap().unlink_failures.get(link).copied() {
+            let e = std::io::Error::new(kind, "a test made removing this link fail");
+            return Err(VaultError::from_io(&e, link, "removing the link"));
+        }
         self.inner.remove_symlink(link)
     }
 

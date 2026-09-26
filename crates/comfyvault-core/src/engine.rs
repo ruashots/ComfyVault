@@ -912,6 +912,28 @@ impl Engine {
         Vault::new(&store, self.platform.as_ref()).delete_file(sha256, confirm)
     }
 
+    /// Deletes a model from the vault together with every link to it.
+    ///
+    /// The long-operation slot stays locked for the whole delete, rather than
+    /// being checked and released. A consolidation that starts in between
+    /// could link new copies to this file, and an undo could reach for it,
+    /// while it is being deleted. Holding the lock makes either one wait for
+    /// the delete to finish and then see the vault as it left it. The delete
+    /// only removes links and one file, so the wait is short.
+    pub fn delete_vault_file_and_links(&self, sha256: &str, confirm: &str) -> Result<crate::vault::DeletedModel> {
+        let store = self.store()?;
+        let slot = self
+            .busy
+            .lock()
+            .map_err(|_| VaultError::new(ErrorCode::StoreError, "The app got into a bad state. Restart it."))?;
+        if let Some((op, _)) = slot.as_ref() {
+            return Err(VaultError::busy(op.kind.word()));
+        }
+        let out = Vault::new(&store, self.platform.as_ref()).delete_file_and_links(sha256, confirm);
+        drop(slot);
+        out
+    }
+
     pub fn vault_health(&self) -> Result<VaultHealth> {
         let store = self.store()?;
         Vault::new(&store, self.platform.as_ref()).health()

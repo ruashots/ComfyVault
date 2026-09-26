@@ -1751,16 +1751,78 @@ reverted.** The bytes are gone.
 Arguments:
 
 ```ts
-{ sha256: string, confirm: string }    // confirm must equal the sha256
+{
+  sha256: string
+  confirm: string        // must equal the sha256
+  removeLinks?: boolean  // default false
+}
 ```
 
-Returns `{ deleted: true, bytesFreed: number }`.
+Returns:
 
-The engine rejects with `conflict` when any install link points at the file.
-Remove the links first.
+```ts
+type Deleted = {
+  deleted: true
+  bytesFreed: number
+  linksRemoved: string[]   // every install link removed, as an absolute path
+}
+```
 
 The user interface must ask the person to confirm, and must say that the action
 cannot be undone.
+
+#### Without `removeLinks`
+
+The engine rejects with `conflict` when any install link points at the file.
+Remove the links first. `linksRemoved` is empty.
+
+#### With `removeLinks: true`
+
+The engine also removes every link to the file, in every install, and in
+installs that are no longer registered. The model disappears from every
+ComfyUI that used it. The user interface must say so before the person
+confirms.
+
+The engine checks everything it will remove before it removes anything. It
+refuses, and removes nothing, when:
+
+| Code | When |
+|---|---|
+| `vaultBusy` | A scan, a consolidation, or an undo runs. |
+| `conflict` | A recorded link path now holds a real file, or a link that leads somewhere other than this file. `detail` lists every such path, and `path` is the first one. |
+| `conflict` | A second name of the file inside the vault is no longer a link to it. Same `detail` and `path`. |
+| `conflict` | The vault file is not the file the vault recorded: it is not a regular file, or its size differs. |
+| `fileLocked` | Another program holds the vault file open. `path` names the file. |
+
+It also refuses with `invalidArgument` when `confirm` does not match, and with
+`notFound` when the vault does not hold the model.
+
+Then it removes, in this order:
+
+1. Every install link.
+2. Every second name inside the vault.
+3. The vault file.
+4. The records of every link to the file, and the vault file's own record.
+
+Each removal is written to the journal before it happens. The journal belongs
+to no run, so it never appears as a run to finish or undo. It makes an undo of
+the run that put the file in the vault refuse with `conflict` before it moves
+anything, because that undo needs the file.
+
+**All or nothing.** If the disk refuses a removal, the engine puts back every
+link it already removed, and rejects with the disk's code (`ioError`,
+`permissionDenied` or `fileLocked`). The message ends with "Nothing was
+deleted, and every link is in place." `path` names the path that failed. This
+covers another program opening the file between the check and the delete.
+
+If a link cannot be put back, the message says how many were not, and `detail`
+lists them. The vault file is still there in that case, and the other installs
+still load the model.
+
+A delete stopped by a crash leaves links that point at a file that still
+exists, or no links and a file that is gone. Run the same delete again to
+finish it. A link already gone is not counted in `linksRemoved`, and a file
+already gone frees `0` bytes.
 
 ### 8.9 `check_vault_health`
 

@@ -357,6 +357,25 @@ fn a_second_long_operation_is_refused_while_one_runs() {
 }
 
 #[test]
+fn a_model_is_not_deleted_with_its_links_while_a_long_operation_runs() {
+    // A consolidation could be linking new copies to this very file.
+    let f = Fixture::new();
+    f.open_vault();
+    let sha = weights_hash("m");
+
+    f.engine.take_slot(BusyKind::Apply, "ap-1").unwrap();
+    let err = f.engine.delete_vault_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::VaultBusy);
+    assert!(err.message.contains("consolidation"), "{}", err.message);
+
+    // The control: with nothing running, the same call reaches the vault,
+    // which does not hold that model.
+    f.engine.clear_slot();
+    let err = f.engine.delete_vault_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
 fn cancelling_something_that_is_not_running_says_so() {
     let f = Fixture::new();
     assert_eq!(f.engine.cancel("nothing").unwrap_err().code, ErrorCode::NotFound);

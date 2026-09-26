@@ -345,6 +345,439 @@ fn an_orphan_can_be_deleted_and_every_name_goes_with_it() {
     assert!(w.store.vault_file(&sha).unwrap().is_none());
 }
 
+// --- deleting a model together with its links -------------------------------
+
+/// One model held three times in two installs, one copy under another name,
+/// consolidated. The vault ends up with the file, a second name beside it,
+/// and three links out in the installs.
+fn three_links_two_installs(w: &TestWorld) -> (Vec<PathBuf>, String) {
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let places = vec![
+        w.write_model(&a, "models/loras/m.safetensors", &weights("m")),
+        w.write_model(&a, "models/loras/sub/m.safetensors", &weights("m")),
+        w.write_model(&b, "models/loras/other-name.safetensors", &weights("m")),
+    ];
+    consolidate_all(w, &[a, b]);
+    for p in &places {
+        assert!(w.is_link(p), "{p:?} should be a link after the run");
+    }
+    (places, weights_hash("m"))
+}
+
+fn consolidate_all(w: &TestWorld, installs: &[crate::install::Install]) {
+    let plan = w.plan(installs);
+    Applier::new(&w.store, &w.platform)
+        .apply(
+            "ap-1",
+            &plan,
+            &ApplyRequest {
+                plan_id: plan.plan_id.clone(),
+                group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                verify: VerifyModeArg::SizeAndMtime,
+                stop_on_error: false,
+            },
+            &CancelToken::new(),
+            &NullSink,
+        )
+        .unwrap();
+}
+
+fn vault_file_of(w: &TestWorld, sha: &str) -> PathBuf {
+    w.vault_root.join(w.store.vault_file(sha).unwrap().unwrap().vault_rel_path())
+}
+
+fn alias_of(w: &TestWorld, sha: &str) -> PathBuf {
+    let r = w.store.vault_file(sha).unwrap().unwrap();
+    assert_eq!(r.aliases.len(), 1, "the setup gives the model a second name");
+    w.vault_root.join(r.alias_rel_path(&r.aliases[0]))
+}
+
+/// Whether an error's text names this path, written either way round.
+fn names(text: &str, p: &Path) -> bool {
+    crate::paths::compare_key(Path::new(text)).contains(&crate::paths::compare_key(p))
+}
+
+/// Everything a refused delete must leave exactly as it was.
+fn assert_untouched(w: &TestWorld, places: &[PathBuf], sha: &str, file: &Path) {
+    assert!(file.is_file(), "the vault file must stay");
+    assert_eq!(std::fs::read(file).unwrap(), weights("m"));
+    for p in places {
+        assert!(w.is_link(p), "{p:?} is no longer a link");
+        assert_eq!(w.read(p), weights("m"), "{p:?} no longer loads the model");
+    }
+    assert!(w.store.vault_file(sha).unwrap().is_some(), "the vault record must stay");
+    assert_eq!(w.store.links_for_hash(sha).unwrap().len(), places.len(), "the link records must stay");
+}
+
+#[test]
+fn a_model_is_deleted_with_every_link_to_it_in_every_install() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+
+    let done = vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+
+    assert_eq!(done.bytes_freed, weights("m").len() as u64);
+    let mut reported = done.links_removed.clone();
+    reported.sort();
+    let mut expected = places.clone();
+    expected.sort();
+    assert_eq!(reported, expected, "every install link is reported, and nothing else");
+
+    for p in &places {
+        assert!(std::fs::symlink_metadata(p).is_err(), "{p:?} is still there");
+    }
+    assert!(std::fs::symlink_metadata(&file).is_err(), "the vault file is still there");
+    assert!(std::fs::symlink_metadata(&alias).is_err(), "the second name is still there");
+    assert!(w.store.vault_file(&sha).unwrap().is_none());
+    assert!(w.store.links_for_hash(&sha).unwrap().is_empty(), "the link records must go too");
+    assert!(vault(&w).orphans().unwrap().is_empty(), "a deleted model is not an orphan");
+    assert_eq!(vault(&w).list(0, 100, &Default::default(), VaultSort::Name, false).unwrap().total, 0);
+    assert!(vault(&w).health().unwrap().ok, "nothing is left dangling");
+}
+
+#[test]
+fn every_removal_is_journaled_and_the_file_goes_last() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+
+    let id = w
+        .store
+        .journal_ids()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.starts_with("delete-"))
+        .expect("the delete keeps a journal");
+    let journal = w.store.journal(&id).unwrap();
+    assert!(journal.iter().all(|e| e.state == crate::store::JournalState::Done));
+    assert_eq!(journal.len(), places.len() + 2, "three links, one name, one file");
+
+    let removed_links: Vec<&PathBuf> = journal[..places.len()]
+        .iter()
+        .map(|e| match &e.step {
+            JournalStep::RemoveLink { link, .. } => link,
+            other => panic!("an install link must go first, found {other:?}"),
+        })
+        .collect();
+    for p in &places {
+        assert!(removed_links.contains(&p));
+    }
+    assert!(
+        matches!(&journal[places.len()].step, JournalStep::RemoveLink { link, .. } if *link == alias),
+        "the second name goes after the install links"
+    );
+    assert!(
+        matches!(&journal[places.len() + 1].step, JournalStep::DeleteVaultFile { path, .. } if *path == file),
+        "the file goes last"
+    );
+}
+
+#[test]
+fn without_being_asked_to_remove_links_a_linked_model_is_still_refused() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+
+    let err = vault(&w).delete_file(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_untouched(&w, &places, &sha, &file);
+}
+
+#[test]
+fn a_delete_with_links_needs_the_hash_repeated_back() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+
+    let err = vault(&w).delete_file_and_links(&sha, &weights_hash("other")).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_untouched(&w, &places, &sha, &file);
+}
+
+#[test]
+fn a_real_file_where_a_link_was_refuses_the_whole_delete() {
+    // Somebody replaced a link with a file of their own. It is not this
+    // engine's to remove, and deleting the model around it is a surprise.
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+
+    std::fs::remove_file(&places[1]).unwrap();
+    std::fs::write(&places[1], b"somebody's own file").unwrap();
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    let detail = err.detail.clone().unwrap_or_default();
+    assert!(names(&detail, &places[1]), "the path is not named: {detail}");
+
+    assert_eq!(std::fs::read(&places[1]).unwrap(), b"somebody's own file");
+    assert!(file.is_file());
+    for p in [&places[0], &places[2]] {
+        assert!(w.is_link(p));
+        assert_eq!(w.read(p), weights("m"));
+    }
+    assert!(w.store.vault_file(&sha).unwrap().is_some());
+    assert_eq!(w.store.links_for_hash(&sha).unwrap().len(), 3);
+}
+
+#[test]
+fn a_link_that_now_leads_to_another_file_refuses_the_whole_delete() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+
+    let elsewhere = w.path().join("elsewhere.safetensors");
+    std::fs::write(&elsewhere, weights("another")).unwrap();
+    std::fs::remove_file(&places[2]).unwrap();
+    w.platform.create_file_symlink(&places[2], &elsewhere).unwrap();
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(names(&err.detail.unwrap_or_default(), &places[2]));
+
+    assert!(w.is_link(&places[2]), "the other link is not the delete's to remove");
+    assert_eq!(w.read(&places[2]), weights("another"));
+    assert!(elsewhere.is_file());
+    assert!(file.is_file());
+    for p in [&places[0], &places[1]] {
+        assert!(w.is_link(p));
+    }
+}
+
+#[test]
+fn a_second_name_that_is_no_longer_a_link_refuses_the_whole_delete() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+
+    std::fs::remove_file(&alias).unwrap();
+    std::fs::write(&alias, b"a real file under the second name").unwrap();
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(names(&err.detail.unwrap_or_default(), &alias));
+    assert_eq!(std::fs::read(&alias).unwrap(), b"a real file under the second name");
+    for p in &places {
+        // The links that went through the old second name point at a real
+        // file now, but none of them may have been removed.
+        assert!(w.is_link(p), "{p:?} was removed");
+    }
+    assert!(file.is_file());
+}
+
+#[test]
+fn a_vault_file_that_is_not_the_recorded_one_is_never_deleted() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+
+    std::fs::write(&file, b"different bytes of a different size").unwrap();
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(std::fs::read(&file).unwrap(), b"different bytes of a different size");
+    for p in &places {
+        assert!(w.is_link(p), "{p:?} was removed");
+    }
+    assert!(w.store.vault_file(&sha).unwrap().is_some());
+}
+
+#[test]
+fn a_model_another_program_holds_open_is_refused_before_any_link_goes() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    w.platform.lock_file(&file);
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::FileLocked);
+    assert!(names(err.path.as_deref().unwrap_or_default(), &file));
+    assert_untouched(&w, &places, &sha, &file);
+}
+
+#[test]
+fn a_link_the_disk_refuses_to_remove_puts_back_the_ones_already_gone() {
+    // The second name is removed after every install link, so failing it
+    // proves the three install links come back.
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+    w.platform.fail_remove_symlink_at(&alias, std::io::ErrorKind::PermissionDenied);
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+    assert!(err.message.contains("Nothing was deleted"), "{}", err.message);
+    assert!(names(err.path.as_deref().unwrap_or_default(), &alias));
+
+    assert_untouched(&w, &places, &sha, &file);
+    assert!(w.is_link(&alias));
+
+    // The journal says what happened: removed, then put back.
+    let id = w.store.journal_ids().unwrap().into_iter().find(|i| i.starts_with("delete-")).unwrap();
+    let states: Vec<crate::store::JournalState> =
+        w.store.journal(&id).unwrap().iter().map(|e| e.state).collect();
+    use crate::store::JournalState::{Failed, Reverted};
+    assert_eq!(states, vec![Reverted, Reverted, Reverted, Failed]);
+
+    // Once the disk lets it, the same delete goes through.
+    w.platform.clear_injections();
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+    assert!(!file.exists());
+}
+
+#[test]
+fn a_link_that_cannot_be_put_back_is_named() {
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+    w.platform.fail_remove_symlink_at(&alias, std::io::ErrorKind::PermissionDenied);
+    w.platform.fail_symlink_at(&places[0], VaultError::new(ErrorCode::IoError, "refused by a test"));
+
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    assert!(err.message.contains("could not be put back"), "{}", err.message);
+    assert!(names(&err.detail.unwrap_or_default(), &places[0]));
+
+    assert!(file.is_file(), "the model itself is never deleted when a step fails");
+    for p in [&places[1], &places[2]] {
+        assert!(w.is_link(p));
+        assert_eq!(w.read(p), weights("m"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_vault_file_the_disk_refuses_to_delete_puts_every_link_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let places = vec![
+        w.write_model(&a, "models/loras/m.safetensors", &weights("m")),
+        w.write_model(&b, "models/loras/m.safetensors", &weights("m")),
+    ];
+    consolidate_all(&w, &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    // A folder nobody may write to refuses the delete of a file inside it.
+    let folder = file.parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = vault(&w).delete_file_and_links(&sha, &sha);
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let err = result.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+    assert!(err.message.contains("Nothing was deleted"), "{}", err.message);
+    assert_untouched(&w, &places, &sha, &file);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_vault_file_windows_holds_open_puts_every_link_back() {
+    // The fake says nobody holds the file, the way a check made a moment too
+    // early would. A real handle then makes Windows refuse the delete itself.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let places = vec![
+        w.write_model(&a, "models/loras/m.safetensors", &weights("m")),
+        w.write_model(&b, "models/loras/m.safetensors", &weights("m")),
+    ];
+    consolidate_all(&w, &[a, b]);
+    let sha = weights_hash("m");
+    let file = vault_file_of(&w, &sha);
+
+    // Opened the way Python opens a file: others may read and write it, but
+    // not delete it. Rust's own default would let the delete through.
+    use std::os::windows::fs::OpenOptionsExt;
+    let held = std::fs::OpenOptions::new().read(true).share_mode(0x1 | 0x2).open(&file).unwrap();
+    let err = vault(&w).delete_file_and_links(&sha, &sha).unwrap_err();
+    drop(held);
+
+    assert_eq!(err.code, ErrorCode::FileLocked, "{err:?}");
+    assert!(err.message.contains("Nothing was deleted"), "{}", err.message);
+    assert_untouched(&w, &places, &sha, &file);
+}
+
+#[test]
+fn a_delete_cut_off_after_some_links_went_is_finished_by_running_it_again() {
+    // What a crash between two removals leaves: a link gone from the disk,
+    // its record still there.
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    std::fs::remove_file(&places[0]).unwrap();
+
+    let done = vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+    assert_eq!(done.links_removed.len(), 2, "only the links that were still there");
+    assert!(!file.exists());
+    assert!(w.store.links_for_hash(&sha).unwrap().is_empty(), "the record of the gone link goes too");
+    assert!(w.store.vault_file(&sha).unwrap().is_none());
+}
+
+#[test]
+fn a_delete_cut_off_after_the_file_went_is_finished_by_running_it_again() {
+    // What a crash between the file and the records leaves, and also what a
+    // model whose file was lost looks like: links that point at nothing.
+    let w = TestWorld::new();
+    let (places, sha) = three_links_two_installs(&w);
+    let file = vault_file_of(&w, &sha);
+    let alias = alias_of(&w, &sha);
+    std::fs::remove_file(&file).unwrap();
+
+    let done = vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+    assert_eq!(done.bytes_freed, 0, "nothing was there to free");
+    assert_eq!(done.links_removed.len(), 3);
+    for p in places.iter().chain([&alias]) {
+        assert!(std::fs::symlink_metadata(p).is_err(), "{p:?} was left pointing at nothing");
+    }
+    assert!(w.store.links_for_hash(&sha).unwrap().is_empty());
+    assert!(w.store.vault_file(&sha).unwrap().is_none());
+    assert!(vault(&w).health().unwrap().ok);
+}
+
+#[test]
+fn undoing_the_run_that_made_a_deleted_model_refuses_before_touching_anything() {
+    // The run's steps describe a vault file that is gone. Undoing them would
+    // stop part way. The delete's journal is what lets the undo see that.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let kept = vec![
+        w.write_model(&a, "models/loras/keep.safetensors", &weights("keep")),
+        w.write_model(&b, "models/loras/keep.safetensors", &weights("keep")),
+    ];
+    w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    consolidate_all(&w, &[a, b]);
+
+    let sha = weights_hash("m");
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict, "{err:?}");
+    for p in &kept {
+        assert!(w.is_link(p), "{p:?} was put back by an undo that should have refused");
+        assert_eq!(w.read(p), weights("keep"));
+    }
+    assert_eq!(
+        w.store.apply("ap-1").unwrap().unwrap().state,
+        crate::store::ApplyState::Completed,
+        "the run must not be marked as partly undone"
+    );
+}
+
 // --- health ----------------------------------------------------------------
 
 #[test]

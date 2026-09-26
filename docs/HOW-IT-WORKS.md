@@ -441,8 +441,21 @@ a broken link points at nothing.
 ComfyVault reports it and does not touch it.
 
 **A vault file nothing points at** is listed in Cleanup. Deleting one does free
-space, and it cannot be undone, so it asks you to type the file's hash back.
-While any install still links to a file, deleting it is refused.
+space, and it cannot be undone.
+
+**A model that installs still link to** can be deleted from Cleanup as well.
+The same delete removes every link to it, in every install, so the model
+disappears from every ComfyUI that used it. It cannot be undone.
+
+ComfyVault checks everything first. Each link must still be a link to that
+file, each second name in the vault must still be a link beside it, the file
+must still be the size the vault recorded, and no other program may hold it
+open. If any check fails, nothing is removed, and the paths are named.
+
+The links go first, then the second names, then the file. If Windows refuses
+any of those, ComfyVault puts back the links it already removed, and the model
+loads as before. An undo of the run that brought the file into the vault is
+refused afterwards, because the file it needs is gone.
 
 **A file in the vault folder that the record does not know about** is reported
 as well, rather than quietly adopted.

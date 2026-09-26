@@ -49,6 +49,9 @@ pub struct CreatedFolder {
 pub struct Deleted {
     pub deleted: bool,
     pub bytes_freed: u64,
+    /// Every install link the delete removed. Empty unless it was asked to
+    /// remove them.
+    pub links_removed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
