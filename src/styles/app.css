@@ -770,6 +770,84 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 /* a confirmation's own list shows three paths whole before it scrolls */
 .modal .mb > .paths{max-height:132px}
 
+/* ── Download ─────────────────────────────────────────────── */
+/* the address field */
+.paste{display:flex;gap:8px;align-items:center}
+.paste .field{height:28px;padding:0 9px;gap:7px;flex:1;min-width:0}
+.paste .field input{flex:1;min-width:0;width:auto}
+.field.bad{border-color:color-mix(in srgb,var(--red) 55%,transparent)}
+.paste-help{margin-top:6px;font-size:9.5px;color:var(--t-faint);line-height:1.55}
+.paste-help b{font-weight:400;color:var(--t-muted)}
+.paste-err{margin-top:7px;font-size:10px;line-height:1.5;color:var(--red-br)}
+.paste-err span{color:var(--t-dim)}
+/* the plan card */
+.card.plan-card{margin-top:12px;padding:12px 13px}
+.card-h{display:flex;align-items:baseline;gap:10px;min-width:0}
+.card-h .nm{font-size:12px;color:var(--t-emph);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-h .src{margin-left:auto;font-size:9.5px;color:var(--t-faint);white-space:nowrap;flex:none}
+.card-sub{margin-top:3px;font-size:9.5px;color:var(--t-faint);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px}
+.pick label{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--t-muted)}
+.pick-sel{border:1px solid var(--div2);border-radius:var(--r2);background:var(--bg-inset);color:var(--t-body);font-size:10.5px;padding:3px 6px;max-width:320px}
+.pick-sel.need{border-color:var(--accent-line);color:var(--amber)}
+.plan-card .plan{margin-top:10px}
+/* keys that read as the start of a sentence, not as labels */
+.plan-card .kv{padding:6px 0}
+.plan-card .kv .k{width:170px;font-size:10px;letter-spacing:0;text-transform:none;color:var(--t-faint)}
+.plan-card .kv .v .red{color:var(--red-br)}
+.plan-card .verdict q{quotes:none;display:block;margin-top:5px;padding-left:9px;border-left:2px solid var(--div2);color:var(--t-dim);font-size:10px}
+.plan-card .verdict p + p{margin-top:6px}
+.plan-card .verdict .emph{color:var(--t-cream)}
+/* one install the file will be linked in */
+.dl-inst{display:flex;align-items:center;gap:9px;padding:2px 0;min-width:0}
+.dl-inst .nm{width:170px;flex:none;font-size:10.5px;color:var(--t-cream);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl-inst.off .nm{color:var(--t-off)}
+.dl-inst .pp{flex:1;min-width:0;display:flex;white-space:nowrap;font-size:9.5px}
+.dl-inst .pd{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--t-faint)}
+.dl-inst .pf{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--t-dim)}
+.dl-inst .why{flex:1;min-width:0;font-size:9.5px;color:var(--t-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl-inst .why.bad{color:var(--red-br)}
+/* a box the person cannot change: already linked, or the name is taken */
+.cb.held{border-style:dashed;cursor:not-allowed}
+.cb.held.on{border-color:var(--div2);background:none}
+.cb.held.on svg{color:var(--t-muted)}
+.plan-acts{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.plan-acts .hint{font-size:9.5px;color:var(--t-faint)}
+/* the list of downloads */
+.dlrow{padding:9px 0 10px;border-bottom:1px solid var(--div)}
+.dlrow:last-child{border-bottom:none}
+.dlrow-h{display:flex;align-items:baseline;gap:10px;min-width:0}
+.dlrow-h .nm{flex:1;min-width:0;font-size:11px;color:var(--t-cream);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlrow-h .sz{font-size:11px;color:var(--t-body);font-variant-numeric:tabular-nums;flex:none}
+.dlrow.wait .nm{color:var(--t-muted)}
+.dlrow-s{margin-top:4px;font-size:10px;color:var(--t-dim);line-height:1.5}
+.dlrow-s .ok{color:var(--green-br)} .dlrow-s .bad{color:var(--red-br)} .dlrow-s .now{color:var(--t-cream)}
+.dlrow .bar{margin-top:7px}
+.dlrow .bar.stop i{background:var(--t-off)}
+.dlrow-a{display:flex;gap:7px;margin-top:7px;flex-wrap:wrap}
+/* a download ComfyVault closed on, in the accent of the hero */
+.banner{border:1px solid var(--accent-line);border-radius:var(--r2);background:rgba(245,144,30,.045);padding:11px 12px;margin-bottom:14px}
+.banner h3{font-size:10px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;color:var(--amber);margin-bottom:4px}
+.banner p{font-size:10.5px;line-height:1.55;color:var(--t-body)}
+/* Settings: the tokens */
+.tok{padding:9px 0 10px;border-bottom:1px solid var(--div)}
+.tok:last-child{border-bottom:none}
+.tok-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tok-h .lb{width:150px;flex:none;font-size:11px;color:var(--t-cream)}
+.tok-h .field{flex:1;max-width:360px;height:25px;min-width:160px}
+.tok-h .field input{flex:1;min-width:0;width:auto}
+.tok-s{margin:6px 0 0 160px;font-size:10px;line-height:1.5;color:var(--t-dim)}
+.tok-s .ok{color:var(--green-br)} .tok-s .bad{color:var(--red-br)}
+@media (max-width:999.98px){
+  .plan-card .kv .k{width:140px}
+  .dl-inst{flex-wrap:wrap;padding:3px 0}
+  .dl-inst .nm{width:auto;flex:1 1 auto}
+  .dl-inst .pp,.dl-inst .why{flex:1 1 100%;margin-left:22px}
+}
+@media (max-width:800px){
+  .tok-s{margin-left:0}
+}
+
 /* the sentence that says what the workflow check actually did */
 .lib-method{
   padding:8px 12px;font-size:9.5px;line-height:1.55;color:var(--t-dim);
