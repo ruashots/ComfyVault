@@ -54,6 +54,8 @@ impl VaultFileRecord {
 pub enum LinkOrigin {
     Apply,
     Manual,
+    /// Made when a downloaded model went into the vault.
+    Download,
 }
 
 /// What a recorded link looks like on disk right now.

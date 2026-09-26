@@ -1515,7 +1515,7 @@ type LinkRecord = {
   sha256: string
   vaultRelPath: string
   createdAt: string
-  createdBy: 'apply' | 'manual'
+  createdBy: 'apply' | 'manual' | 'download'
   applyId: string | null         // the run that made it, null when made by hand
 }
 

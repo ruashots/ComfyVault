@@ -85,8 +85,38 @@ impl<'a> Links<'a> {
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
             // Its folders come from the disk, not from the database row.
             .proved()?;
+        let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
+        self.make(&install, &req.sha256, target_dir, req.link_name.clone(), LinkOrigin::Manual, None)
+    }
 
-        let sha = crate::scan::hash::normalize_sha256(&req.sha256)
+    /// Creates one link in a folder given as a full path, which must be one
+    /// of the install's model folders, like every other link.
+    ///
+    /// A download uses this, because the folder ComfyUI saves a category into
+    /// can be a shared folder outside the install.
+    pub fn create_in(
+        &self,
+        install: &Install,
+        folder: &Path,
+        sha256: &str,
+        name: &str,
+        origin: LinkOrigin,
+        apply_id: Option<String>,
+    ) -> Result<LinkRecord> {
+        let target_dir = self.prove_dir(install, folder.to_path_buf(), true)?;
+        self.make(install, sha256, target_dir, Some(name.to_string()), origin, apply_id)
+    }
+
+    fn make(
+        &self,
+        install: &Install,
+        sha256: &str,
+        target_dir: PathBuf,
+        link_name: Option<String>,
+        origin: LinkOrigin,
+        apply_id: Option<String>,
+    ) -> Result<LinkRecord> {
+        let sha = crate::scan::hash::normalize_sha256(sha256)
             .ok_or_else(|| VaultError::invalid("That is not a file hash."))?;
         let vault_file = self
             .store
@@ -102,8 +132,8 @@ impl<'a> Links<'a> {
             .with_path(&vault_path));
         }
 
-        let name = match &req.link_name {
-            Some(n) => n.clone(),
+        let name = match link_name {
+            Some(n) => n,
             None => vault_file.canonical_name.clone(),
         };
         crate::paths::validate_file_name(&name)?;
@@ -120,7 +150,6 @@ impl<'a> Links<'a> {
             )));
         }
 
-        let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
         let link_path = target_dir.join(&name);
 
         // Never overwrite. Something already here is the person's file, and
@@ -152,8 +181,8 @@ impl<'a> Links<'a> {
             sha256: sha,
             vault_rel_path: vault_file.vault_rel_path(),
             created_at: Timestamp::now(),
-            created_by: LinkOrigin::Manual,
-            apply_id: None,
+            created_by: origin,
+            apply_id,
         };
         self.store.put_link(&record)?;
         Ok(record)
@@ -276,6 +305,12 @@ impl<'a> Links<'a> {
     /// roots.
     fn resolve_dir(&self, install: &Install, relative_dir: &str, create: bool) -> Result<PathBuf> {
         let candidate = self.resolve_dir_path(install, relative_dir)?;
+        self.prove_dir(install, candidate, create)
+    }
+
+    /// Proves a folder lands inside one of the install's model roots, and
+    /// creates it if asked.
+    fn prove_dir(&self, install: &Install, candidate: PathBuf, create: bool) -> Result<PathBuf> {
         let boundaries = install.link_boundaries();
 
         // Checked before anything is created. A refused request must leave no

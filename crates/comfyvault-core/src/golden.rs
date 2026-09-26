@@ -1218,10 +1218,11 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("ApplyState", wire(&a), expected));
     }
 
-    for o in [O::Apply, O::Manual] {
+    for o in [O::Apply, O::Manual, O::Download] {
         let expected = match o {
             O::Apply => "apply",
             O::Manual => "manual",
+            O::Download => "download",
         };
         out.push(("LinkOrigin", wire(&o), expected));
     }
