@@ -449,64 +449,64 @@ export function isAtLeast(
 
 export interface NameChoice {
   name: string;
+  /** The vault file has this name now. The others are links beside it. */
   isCanonical: boolean;
-  /** Install links that resolve through this name. */
-  usedByLinks: number;
-  seenInInstalls: readonly string[];
-  /** True when nothing on disk uses this name, so removing it is safe. */
+  /** The installs whose links carry this name, each once. */
+  installIds: readonly string[];
+  /** How many links in the installs carry this name. */
+  linksNamed: number;
+  /** Nothing reaches the file through this vault name, so it can go. */
   removable: boolean;
 }
 
 export interface NameGroupView {
   group: NameGroup;
   choices: readonly NameChoice[];
-  /** The name the vault should keep, and why. */
+  /** The name the vault file should carry, and why, in a sentence. */
   suggestion: { name: string; reason: string };
 }
 
 /**
- * Which name the vault should keep: the one the most install links already
- * resolve through, then the one seen in the most installs, then the longer one.
- * The reason is printed under the choices, so the rule is never a secret.
+ * What each name of one model is, from the links themselves: a link keeps the
+ * name its install uses, whatever the vault file is called. The suggestion is
+ * the name the most links carry, then the one the most installs use, then the
+ * longer one, and the reason is printed, so the rule is never a secret.
  */
-export function buildNameGroupView(group: NameGroup): NameGroupView {
-  const choices: NameChoice[] = group.names.map((n) => ({
-    name: n.name,
-    isCanonical: n.isCanonical,
-    usedByLinks: n.usedByLinks,
-    seenInInstalls: n.seenInInstalls,
-    removable: n.usedByLinks === 0 && !n.isCanonical,
-  }));
+export function buildNameGroupView(
+  group: NameGroup,
+  links: readonly Pick<LinkRecord, "installId" | "linkName">[],
+): NameGroupView {
+  const choices: NameChoice[] = group.names.map((n) => {
+    const named = links.filter((l) => l.linkName === n.name);
+    return {
+      name: n.name,
+      isCanonical: n.isCanonical,
+      installIds: [...new Set(named.map((l) => l.installId))],
+      linksNamed: named.length,
+      // The engine refuses to remove a name a link reaches the file through.
+      removable: !n.isCanonical && n.usedByLinks === 0,
+    };
+  });
 
-  const ranked = [...group.names].sort(
+  const ranked = [...choices].sort(
     (a, b) =>
-      b.usedByLinks - a.usedByLinks ||
-      b.seenInInstalls.length - a.seenInInstalls.length ||
+      b.linksNamed - a.linksNamed ||
+      b.installIds.length - a.installIds.length ||
       b.name.length - a.name.length,
   );
   const best = ranked[0]!;
-  const rest = ranked.slice(1);
-
-  const linksPoint = (n: number) =>
-    `${n} ${n === 1 ? "link points" : "links point"}`;
+  const next = ranked[1];
+  const links1 = (n: number) => `${n} ${n === 1 ? "link" : "links"}`;
 
   let reason: string;
-  if (best.usedByLinks > 0) {
-    const other = rest[0];
-    if (other && other.usedByLinks === best.usedByLinks) {
-      reason = `the same number of links point at either, so this is the longer name`;
-    } else if (other && other.usedByLinks > 0) {
-      reason = `${linksPoint(best.usedByLinks)} at this name already, ${other.usedByLinks} at the next one`;
-    } else {
-      reason = `${linksPoint(best.usedByLinks)} at this name and none at ${rest.length === 1 ? "the other" : "the others"}`;
-    }
-  } else if (best.seenInInstalls.length > 0) {
-    reason = `this is the name ${best.seenInInstalls.join(" and ")} ${best.seenInInstalls.length === 1 ? "uses" : "use"}`;
+  if (best.linksNamed === 0) {
+    reason = "No link in the installs has any of these names, so the longer name is suggested.";
+  } else if (next && next.linksNamed === best.linksNamed) {
+    reason = `As many links in the installs have each name, ${links1(best.linksNamed)} each, so the longer name is suggested.`;
+  } else if (next && next.linksNamed > 0) {
+    reason = `Suggested because more of the installs' links have this name: ${links1(best.linksNamed)}, against ${next.linksNamed} for the next name.`;
   } else {
-    reason =
-      rest.length === 1
-        ? "longer name, and no link points at either"
-        : "longest name, and no link points at any of them";
+    reason = `Suggested because it is the only name the installs' links use: ${links1(best.linksNamed)} have it.`;
   }
 
   return { group, choices, suggestion: { name: best.name, reason } };

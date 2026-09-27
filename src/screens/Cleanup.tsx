@@ -41,7 +41,14 @@ export function CleanupScreen() {
 
 function CleanupBody() {
   const app = useApp();
-  const groups = createMemo(() => app.nameGroups().map(buildNameGroupView));
+  // A name is used by the installs whose links carry it, whatever the vault file is called.
+  const groups = createMemo(() =>
+    app
+      .nameGroups()
+      .map((g) =>
+        buildNameGroupView(g, app.vaultFiles().find((f) => f.sha256 === g.sha256)?.links ?? []),
+      ),
+  );
   const orphanBytes = createMemo(() =>
     app.orphans().reduce((sum, f) => sum + f.sizeBytes, 0),
   );
@@ -78,12 +85,10 @@ function CleanupBody() {
             }
           >
             <div class="note" style={{ margin: "-4px 0 10px", "max-width": "700px" }}>
-              These files are byte for byte identical and carry different names. The
-              vault keeps one as the real file and the others as links beside it, so
-              any saved workflow that names them still opens. Pick the one the vault
-              keeps. <span class="emph">This frees no disk space.</span> What it
-              gives you is one entry per model in ComfyUI&rsquo;s dropdown instead
-              of two.
+              Each model below is one file that your installs know under more than
+              one name. The vault file carries one of the names. Each install keeps
+              the name it uses now, as its link, so its workflows still open.{" "}
+              <span class="emph">Choosing a name here frees no disk space.</span>
             </div>
             <For each={groups()}>{(group) => <NameGroupCard view={group} />}</For>
           </Show>
@@ -155,23 +160,12 @@ export function cleanupSummary(
 function NameGroupCard(props: { view: NameGroupView }) {
   const app = useApp();
   const group = () => props.view.group;
-  const renaming = () => app.renaming()?.sha256 === group().sha256;
 
   const choose = (name: string) => {
     if (name === group().canonicalName) return;
     void app.actions.run(
       () => app.engine.setCanonicalName(group().sha256, name),
-      `The vault keeps ${name}`,
-    );
-  };
-
-  const saveTypedName = () => {
-    const value = app.renaming()?.value.trim() ?? "";
-    if (!value) return;
-    app.actions.cancelRename();
-    void app.actions.run(
-      () => app.engine.setCanonicalName(group().sha256, value),
-      `The vault keeps ${value}`,
+      `The vault file is now named ${name}.`,
     );
   };
 
@@ -183,7 +177,7 @@ function NameGroupCard(props: { view: NameGroupView }) {
         [
           { text: name, emph: true },
           {
-            text: " stops existing inside the vault. Any saved workflow that names this file will fail to load it, and ComfyUI will show it as missing. The model itself is not deleted and no disk space is returned.",
+            text: " is removed from the vault, where it is only a link beside the file. Every install keeps its links and their names, so nothing in ComfyUI changes. The model is not deleted and no disk space is freed.",
           },
         ],
       ],
@@ -192,6 +186,12 @@ function NameGroupCard(props: { view: NameGroupView }) {
       },
     });
   };
+
+  /** "ComfyUI-Studio and ComfyUI-Sandbox use this name." */
+  const usedBy = (ids: readonly string[]) =>
+    ids.length === 0
+      ? "No install uses this name."
+      : `${ids.map((id) => installNameOf(id, app.installs())).join(" and ")} ${ids.length === 1 ? "uses" : "use"} this name.`;
 
   return (
     <div class="cgrp">
@@ -216,19 +216,10 @@ function NameGroupCard(props: { view: NameGroupView }) {
                   <Wrap text={choice.name} />
                 </span>
                 <span class="rs">
-                  <Show
-                    when={choice.seenInInstalls.length > 0}
-                    fallback={<>a name you typed, new to the vault</>}
-                  >
-                    the name used in{" "}
-                    {choice.seenInInstalls
-                      .map((id) => installNameOf(id, app.installs()))
-                      .join(" and ")}
-                  </Show>
-                  <Show when={choice.usedByLinks > 0}>
-                    , where {choice.usedByLinks}{" "}
-                    {choice.usedByLinks === 1 ? "link points" : "links point"} at it
-                  </Show>
+                  {choice.isCanonical
+                    ? "The vault file has this name now."
+                    : "The vault keeps this name as a link beside the file."}{" "}
+                  {usedBy(choice.installIds)}
                 </span>
               </span>
               <Show when={choice.name === props.view.suggestion.name}>
@@ -249,60 +240,12 @@ function NameGroupCard(props: { view: NameGroupView }) {
         )}
       </For>
 
-      <div class="why">Suggested because {props.view.suggestion.reason}.</div>
-
-      <Show
-        when={renaming()}
-        fallback={
-          <div class="foot">
-            <button
-              class="btn sm"
-              onClick={() =>
-                app.actions.startRename(
-                  group().sha256,
-                  props.view.suggestion.name,
-                )
-              }
-            >
-              <Icon name="file" size={11} />
-              Type a different name
-            </button>
-            <span class="note" style={{ "font-size": "9.5px" }}>
-              The names you do not keep stay as links. Remove one only if nothing
-              uses it.
-            </span>
-          </div>
-        }
-      >
-        <div class="renamer">
-          <label class="field">
-            <Icon name="file" size={12} />
-            <input
-              value={app.renaming()?.value ?? ""}
-              aria-label="A different name for the vault"
-              ref={(el) => queueMicrotask(() => el.select())}
-              onInput={(e) => app.actions.setRenameValue(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  saveTypedName();
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  app.actions.cancelRename();
-                }
-              }}
-            />
-          </label>
-          <button class="btn sm pri" onClick={saveTypedName}>
-            Use this name
-          </button>
-          <button class="btn sm" onClick={() => app.actions.cancelRename()}>
-            Cancel
-          </button>
-        </div>
-      </Show>
+      <div class="why">{props.view.suggestion.reason}</div>
+      <div class="why">
+        Choosing a name renames the file in the vault and keeps{" "}
+        {group().names.length > 2 ? "the other names as links" : "the other name as a link"}{" "}
+        beside it. No install changes, and no disk space is freed.
+      </div>
     </div>
   );
 }

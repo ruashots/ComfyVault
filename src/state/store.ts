@@ -334,7 +334,6 @@ export interface AppStore {
   readonly showAllDuplicates: Accessor<boolean>;
   readonly showSingles: Accessor<boolean>;
   readonly categoryMenuOpen: Accessor<boolean>;
-  readonly renaming: Accessor<{ sha256: string; value: string } | null>;
 
   readonly lib: LibraryView;
   readonly setLib: SetStoreFunction<LibraryView>;
@@ -357,9 +356,6 @@ export interface Actions {
   setShowAllDuplicates(on: boolean): void;
   setShowSingles(on: boolean): void;
   setCategoryMenuOpen(on: boolean): void;
-  startRename(sha256: string, value: string): void;
-  setRenameValue(value: string): void;
-  cancelRename(): void;
 }
 
 const StoreContext = createContext<AppStore>();
@@ -508,9 +504,6 @@ export function createAppStore(engine: Engine): AppStore {
   const [showAllDuplicates, setShowAllDuplicates] = createSignal(false);
   const [showSingles, setShowSingles] = createSignal(false);
   const [categoryMenuOpen, setCategoryMenuOpen] = createSignal(false);
-  const [renaming, setRenaming] = createSignal<{ sha256: string; value: string } | null>(
-    null,
-  );
   const [modal, setModalStore] = createStore<{ current: Modal | null }>({
     current: null,
   });
@@ -971,15 +964,6 @@ export function createAppStore(engine: Engine): AppStore {
     setShowAllDuplicates,
     setShowSingles,
     setCategoryMenuOpen,
-    startRename(sha256, value) {
-      setRenaming({ sha256, value });
-    },
-    setRenameValue(value) {
-      setRenaming((current) => (current ? { ...current, value } : null));
-    },
-    cancelRename() {
-      setRenaming(null);
-    },
   };
 
   return {
@@ -1034,7 +1018,6 @@ export function createAppStore(engine: Engine): AppStore {
     showAllDuplicates,
     showSingles,
     categoryMenuOpen,
-    renaming,
     lib,
     setLib,
     dl,

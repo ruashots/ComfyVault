@@ -17,14 +17,14 @@ import { useApp } from "~/state/store";
 export function App() {
   const app = useApp();
 
-  /** Esc closes whatever is on top: a modal, a menu, the drawer, a rename. */
+  /** Esc closes whatever is on top: a modal, a menu, the drawer. */
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
     if (app.modal()) app.setModal(null);
     else if (app.categoryMenuOpen()) app.actions.setCategoryMenuOpen(false);
     else if (app.lib.drawerOpen && app.screen() === "library") {
       app.setLib("drawerOpen", false);
-    } else if (app.renaming()) app.actions.cancelRename();
+    }
   };
 
   /** A click anywhere else closes the folder menu. */

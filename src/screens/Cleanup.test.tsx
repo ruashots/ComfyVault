@@ -83,21 +83,49 @@ describe("the Cleanup sections, after a run", () => {
     for (const count of counts()) expect(count).not.toContain("·");
   });
 
-  it("says what one model's names are, and where each is used, in a sentence", async () => {
-    const { app } = await afterARun();
+  it("says of each name whether the vault file has it, and which installs use it", async () => {
+    const { app, engine } = await afterARun();
     await waitFor(() => app.nameGroups().length > 0);
     const group = app.nameGroups()[0]!;
     const card = document.querySelector(".cgrp")!;
     expect(card.querySelector(".ch")!.textContent).toContain(
       `${group.category}:the same file under ${group.names.length} names`,
     );
-    const used = group.names.find((n) => n.usedByLinks > 0 && n.seenInInstalls.length > 0)!;
-    const lines = [...card.querySelectorAll(".rs")].map((r) => r.textContent);
-    expect(lines.some((l) => /^the name used in .+, where \d+ links? points? at it$/.test(l ?? ""))).toBe(
-      true,
+    const links = await engine.listLinks({ sha256: group.sha256 });
+    const rows = [...card.querySelectorAll(".optrow")];
+    group.names.forEach((n, i) => {
+      const ids = [...new Set(links.filter((l) => l.linkName === n.name).map((l) => l.installId))];
+      const who = ids.map((id) => (id === "studio" ? "ComfyUI-Studio" : "ComfyUI-Sandbox"));
+      const usedBy =
+        who.length === 0
+          ? "No install uses this name."
+          : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
+      expect(rows[i]!.querySelector(".rs")!.textContent).toBe(
+        `${n.isCanonical ? "The vault file has this name now." : "The vault keeps this name as a link beside the file."} ${usedBy}`,
+      );
+    });
+    // Each name in the sample is used by the install whose link carries it.
+    expect(card.textContent).not.toContain("a name you typed");
+    expect(card.textContent).not.toContain("links point at it");
+    expect(screen.queryByRole("button", { name: /Type a different name/ })).toBeNull();
+    expect(card.textContent).toContain(
+      "Choosing a name renames the file in the vault and keeps the other name as a link beside it. No install changes, and no disk space is freed.",
     );
-    expect(used).toBeDefined();
     expect(card.textContent).not.toContain("·");
+  });
+
+  it("renames the vault file when another of its names is chosen", async () => {
+    const { app, engine } = await afterARun();
+    await waitFor(() => app.nameGroups().length > 0);
+    const group = app.nameGroups()[0]!;
+    const other = group.names.find((n) => !n.isCanonical)!;
+    const radio = [...document.querySelectorAll('.cgrp')][0]!.querySelectorAll('[role="radio"]');
+    const target = [...radio].find((r) => r.textContent?.includes(other.name)) as HTMLButtonElement;
+    await userEvent.click(target);
+    await waitFor(() => app.toast() !== null);
+    expect(app.toast()!.message).toBe(`The vault file is now named ${other.name}.`);
+    const file = (await engine.listVaultFiles({ offset: 0, limit: 1000 })).files.find((f) => f.sha256 === group.sha256)!;
+    expect(file.canonicalName).toBe(other.name);
   });
 
   it("says a vault file nothing links to will be freed, not that it comes back", async () => {
