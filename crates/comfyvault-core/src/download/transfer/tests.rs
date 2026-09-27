@@ -13,9 +13,16 @@ fn data(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i * 7 % 251) as u8).collect()
 }
 
+thread_local! {
+    /// The size of the file the test's world serves, which is the size the
+    /// site states for it.
+    static SIZE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// A site that redirects to storage, and storage that serves `content`.
 /// `storage` can replace the storage's answer, per request number.
 fn world(content: Vec<u8>, storage: impl Fn(usize, &Req, &[u8]) -> Option<Canned> + Send + Sync + 'static) -> (Server, Arc<AtomicUsize>) {
+    SIZE.with(|c| c.set(content.len() as u64));
     let hits = Arc::new(AtomicUsize::new(0));
     let h = hits.clone();
     let server = Server::start(move |req| match req.path() {
@@ -39,7 +46,7 @@ fn file(server: &Server) -> RemoteFile {
         files: vec![],
         file_id: None,
         file_name: "m.safetensors".into(),
-        size_bytes: 0,
+        size_bytes: SIZE.with(|c| c.get()),
         sha256: None,
         suggested_category: None,
         suggested_because: None,
@@ -233,3 +240,57 @@ fn progress_is_reported_as_bytes_arrive() {
     assert_eq!(seen.last(), Some(&(2_500_000, Some(2_500_000))));
     assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0));
 }
+
+#[test]
+fn a_storage_that_sends_more_than_the_file_is_stopped_at_its_size() {
+    // No length up front: the size is only known by counting.
+    let (s, _) = world(data(10_000), |_, _, _| {
+        Some(Canned { chunked: true, ..Canned::new(200).with_body(&data(3_000_000)) })
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    let most = std::sync::atomic::AtomicU64::new(0);
+    let err = run(&UreqWeb::new(), &file(&s), None, &part, None, &mut None, &CancelToken::new(), &mut |d, _| {
+        most.fetch_max(d, Ordering::SeqCst);
+    })
+    .unwrap_err();
+    assert_eq!(err.kind, FailureKind::Mismatch, "{err:?}");
+    assert!(most.load(Ordering::SeqCst) <= 10_000, "the part grew past the file's size");
+    assert!(!part.exists(), "the oversized part is deleted");
+}
+
+#[test]
+fn a_stated_length_over_the_files_size_is_refused_before_a_byte_is_kept() {
+    let (s, _) = world(data(10_000), |_, _, _| Some(Canned::new(200).with_body(&data(20_000))));
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    let mut wrote = false;
+    let err = run(&UreqWeb::new(), &file(&s), None, &part, None, &mut None, &CancelToken::new(), &mut |_, _| wrote = true)
+        .unwrap_err();
+    assert_eq!(err.kind, FailureKind::Mismatch);
+    assert!(!wrote && !part.exists());
+}
+
+#[test]
+fn a_compressed_answer_is_refused_and_never_unpacked() {
+    // A small compressed answer could unpack to fill the drive.
+    let (s, _) = world(data(10_000), |_, _, _| {
+        Some(Canned::new(200).with_header("content-encoding", "gzip").with_body(&data(500)))
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    let err = go(&s, &part, None, None).unwrap_err();
+    assert!(err.message.contains("compressed"), "{}", err.message);
+    assert!(!part.exists() || std::fs::metadata(&part).unwrap().len() == 0);
+}
+
+#[test]
+fn a_hugging_face_file_shorter_than_its_stated_size_is_not_the_file() {
+    let (s, _) = world(data(10_000), |_, _, _| Some(Canned::new(200).with_body(&data(9_000))));
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    let err = go(&s, &part, None, None).unwrap_err();
+    assert_eq!(err.kind, FailureKind::Mismatch);
+    assert!(!part.exists());
+}
+

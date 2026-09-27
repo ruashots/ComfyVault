@@ -2685,6 +2685,13 @@ What happens, in order:
    part continues with an HTTP `Range` request, and `If-Range` names the
    version it came from. A file that changed on the site is then sent whole,
    and the old part is dropped, never joined to the new one.
+   The transfer is held to the size the site gave: exactly, for Hugging Face,
+   and to one kilobyte more for Civitai, which states whole kilobytes. An
+   answer that states a larger size is refused before a byte is kept, and one
+   that sends more is stopped at the limit. Either way the part is deleted and
+   the state is `mismatch`. So is a Hugging Face file that ends short of its
+   size. A compressed answer is refused, since it could unpack to any size.
+   A Civitai file with no size, or a size below nothing, is not offered.
 2. **Checking.** The whole file is hashed. If it does not match the SHA-256 the
    site gave, the file is deleted, nothing goes into the vault, nothing is
    linked, and the state is `mismatch`. With no SHA-256 known, the hash just

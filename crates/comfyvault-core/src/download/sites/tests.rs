@@ -251,3 +251,22 @@ fn a_token_is_checked_with_the_site_and_the_account_is_named() {
     assert_eq!(check_token(&web, &sites, Host::Civitai, "good").unwrap(), Ok(None));
     assert_eq!(check_token(&web, &sites, Host::Civitai, "bad").unwrap(), Err("Unauthorized".into()));
 }
+
+#[test]
+fn a_civitai_file_with_no_size_or_a_size_below_nothing_is_not_offered() {
+    let s = Server::start(|req| match req.path() {
+        "/api/v1/models/4384" => Canned::json(
+            200,
+            r#"{"name":"X","type":"LORA","modelVersions":[{"id":1,"name":"1","files":[
+                {"id":1,"name":"neg.safetensors","sizeKB":-5,"primary":true,"downloadUrl":"BASE/api/download/models/1"},
+                {"id":2,"name":"none.safetensors","primary":false,"downloadUrl":"BASE/api/download/models/1"}
+            ]}]}"#,
+        ),
+        _ => Canned::new(404),
+    });
+    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let addr = parse("https://civitai.com/models/4384").unwrap();
+    let err = read(&UreqWeb::new(), &sites, &addr, None, None, None, &[], &is_model).unwrap_err();
+    assert!(err.message.contains("no model file"), "{}", err.message);
+}
+

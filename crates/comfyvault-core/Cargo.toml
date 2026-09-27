@@ -21,7 +21,7 @@ rayon = "1"
 sysinfo = { version = "0.38", default-features = false, features = ["system", "disk"] }
 serde_yaml_ng = "0.10"
 tempfile = "3"
-ureq = { version = "3", default-features = false, features = ["json", "native-tls", "gzip"] }
+ureq = { version = "3", default-features = false, features = ["json", "native-tls"] }
 native-tls = "0.2"
 
 [target.'cfg(windows)'.dependencies]

@@ -439,7 +439,10 @@ fn civitai(
                 .filter_map(|k| meta.and_then(|m| m.get(*k)).and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let size_bytes = (f.get("sizeKB").and_then(Value::as_f64).unwrap_or(0.0) * 1024.0).round() as u64;
+            // A file with no size, or a size below nothing, is not offered:
+            // the size is what holds the download to the file.
+            let kb = f.get("sizeKB").and_then(Value::as_f64).filter(|k| k.is_finite() && *k > 0.0)?;
+            let size_bytes = (kb * 1024.0).round() as u64;
             let sha = f.get("hashes").and_then(|h| h.get("SHA256")).and_then(Value::as_str).and_then(sha_in);
             let url = f.get("downloadUrl").and_then(Value::as_str).unwrap_or("").to_string();
             let primary = f.get("primary").and_then(Value::as_bool).unwrap_or(false);

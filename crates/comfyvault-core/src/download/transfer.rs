@@ -93,7 +93,12 @@ pub fn run(
     on_bytes: &mut OnBytes<'_>,
 ) -> Result<Outcome, Failure> {
     let host = file.host.name();
+    let limit = most_bytes(file);
     let mut have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    if have > limit {
+        truncate(part)?;
+        have = 0;
+    }
     let ranged = |req: Request, have: u64| match (have, etag) {
         (0, _) => req,
         (n, Some(tag)) => req.header("range", format!("bytes={n}-")).header("if-range", tag),
@@ -156,6 +161,19 @@ pub fn run(
             ))
         }
     };
+    // A file is sent as it is. ComfyVault asks for no compression, and an
+    // answer that is compressed anyway could unpack to any size.
+    if reply.header("content-encoding").map(|e| !e.trim().eq_ignore_ascii_case("identity")).unwrap_or(false) {
+        return Err(Failure::new(
+            FailureKind::Connection,
+            format!("{host} sent the file compressed, which ComfyVault does not accept. Nothing was written."),
+        ));
+    }
+    // More than the site said the file is: refused before a byte is kept.
+    if total.map(|t| t > limit).unwrap_or(false) {
+        let _ = std::fs::remove_file(part);
+        return Err(too_big(host));
+    }
     let new_etag = reply.header("etag").map(str::to_string);
     *version = new_etag.clone();
     if start == 0 && have > 0 {
@@ -186,6 +204,12 @@ pub fn run(
                 return Err(dropped(host, &e.to_string()));
             }
         };
+        // Held to the size the site gave, whatever the storage says.
+        if have + n as u64 > limit {
+            drop(out);
+            let _ = std::fs::remove_file(part);
+            return Err(too_big(host));
+        }
         out.write_all(&buf[..n]).map_err(|e| disk(&e, part))?;
         have += n as u64;
         on_bytes(have, total);
@@ -196,7 +220,31 @@ pub fn run(
             return Err(dropped(host, &format!("ended at {have} of {t} bytes")));
         }
     }
+    // Hugging Face states the exact size, so anything short is not the file.
+    if file.host == Host::HuggingFace && have != file.size_bytes {
+        let _ = std::fs::remove_file(part);
+        return Err(Failure::new(
+            FailureKind::Mismatch,
+            format!("The download was {have} bytes, and {host} said the file is {} bytes, so it was deleted. Nothing went into the vault and nothing was linked.", file.size_bytes),
+        ));
+    }
     Ok(Outcome::Complete { total: have, etag: new_etag })
+}
+
+/// The most bytes a download of this file may bring. Hugging Face states
+/// sizes exactly. Civitai states whole kilobytes, so one more is allowed.
+fn most_bytes(file: &RemoteFile) -> u64 {
+    match file.host {
+        Host::HuggingFace => file.size_bytes,
+        Host::Civitai => file.size_bytes + 1024,
+    }
+}
+
+fn too_big(host: &str) -> Failure {
+    Failure::new(
+        FailureKind::Mismatch,
+        format!("The download was larger than the size {host} gave, so it was stopped and deleted. Nothing went into the vault and nothing was linked."),
+    )
 }
 
 fn refused(host: Host, reply: Reply, had_token: bool) -> Failure {

@@ -39,6 +39,8 @@ pub struct Canned {
     pub cut_after: Option<usize>,
     /// Send this many bytes, then say nothing for this long.
     pub stall_after: Option<(usize, std::time::Duration)>,
+    /// Send the body in chunks, with no length stated up front.
+    pub chunked: bool,
 }
 
 impl Canned {
@@ -139,6 +141,20 @@ fn serve(stream: TcpStream, handler: &Handler, requests: &Mutex<Vec<Req>>) {
     let mut head = format!("HTTP/1.1 {} X\r\n", answer.status);
     for (k, v) in &answer.headers {
         head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if answer.chunked {
+        head.push_str("transfer-encoding: chunked\r\nconnection: close\r\n\r\n");
+        if out.write_all(head.as_bytes()).is_err() {
+            return;
+        }
+        for piece in answer.body.chunks(64 * 1024) {
+            let _ = out.write_all(format!("{:x}\r\n", piece.len()).as_bytes());
+            let _ = out.write_all(piece);
+            let _ = out.write_all(b"\r\n");
+        }
+        let _ = out.write_all(b"0\r\n\r\n");
+        let _ = out.flush();
+        return;
     }
     head.push_str(&format!("content-length: {}\r\nconnection: close\r\n\r\n", answer.body.len()));
     if out.write_all(head.as_bytes()).is_err() || req.method == "HEAD" {
