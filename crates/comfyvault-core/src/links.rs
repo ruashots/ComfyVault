@@ -201,7 +201,7 @@ impl<'a> Links<'a> {
             .vault_file(&sha)?
             .ok_or_else(|| VaultError::not_found("That model is not in the vault."))?
             .category;
-        crate::download::folders::inside_roots(&install, &category, dir)?;
+        crate::download::folders::inside_roots(&install, &category, dir, self.store.vault_root())?;
         if !dir.is_dir() && !req.create_dir {
             return Err(VaultError::new(
                 ErrorCode::NotFound,
@@ -233,7 +233,7 @@ impl<'a> Links<'a> {
             .install(install_id)?
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
             .proved()?;
-        let roots = crate::download::folders::roots(&install, category);
+        let roots = crate::download::folders::roots(&install, category, self.store.vault_root());
         let Some(dir) = dir else {
             let folders = roots
                 .into_iter()
@@ -247,7 +247,7 @@ impl<'a> Links<'a> {
                 .collect();
             return Ok((folders, install));
         };
-        crate::download::folders::inside_roots(&install, category, dir)?;
+        crate::download::folders::inside_roots(&install, category, dir, self.store.vault_root())?;
         let origin = roots
             .iter()
             .find(|r| dir.starts_with(&r.path))
@@ -287,17 +287,17 @@ impl<'a> Links<'a> {
         let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         crate::paths::validate_file_name(&name)?;
         // Made where it really is: the place just proved, not the text given.
-        let dir = &crate::download::folders::inside_roots(&install, category, dir)?;
+        let dir = &crate::download::folders::inside_roots(&install, category, dir, self.store.vault_root())?;
         if dir.is_dir() {
             return Ok((dir.to_path_buf(), false));
         }
         let parent = dir.parent().filter(|p| p.is_dir()).ok_or_else(|| {
             VaultError::new(ErrorCode::NotFound, "The folder it goes in does not exist. Choose another place.").with_path(dir)
         })?;
-        crate::download::folders::inside_roots(&install, category, parent)?;
+        crate::download::folders::inside_roots(&install, category, parent, self.store.vault_root())?;
         std::fs::create_dir(dir).map_err(|e| VaultError::from_io(&e, dir, "making the folder"))?;
         // Checked again where it really landed, and removed if that is out.
-        if let Err(e) = crate::download::folders::inside_roots(&install, category, dir) {
+        if let Err(e) = crate::download::folders::inside_roots(&install, category, dir, self.store.vault_root()) {
             let _ = std::fs::remove_dir(dir);
             return Err(e);
         }
@@ -631,7 +631,8 @@ impl<'a> Links<'a> {
             return Err(outside_boundary(&candidate));
         }
 
-        if !candidate.is_dir() {
+        let existed = candidate.is_dir();
+        if !existed {
             if !create {
                 return Err(VaultError::new(
                     ErrorCode::NotFound,
@@ -648,8 +649,16 @@ impl<'a> Links<'a> {
         // fails, whatever was just created is removed again.
         let resolved = crate::paths::canonicalize_clean(&candidate)
             .map_err(|e| VaultError::from_io(&e, &candidate, "opening the folder"))?;
-        if !boundaries.iter().any(|b| crate::paths::is_within(b, &resolved)) {
-            let _ = crate::apply::fsops::remove_dir_if_empty(&candidate);
+        // Never inside the vault, whatever an install's YAML file names: its
+        // folders hold the models the links point at.
+        let in_vault = crate::paths::canonicalize_clean(self.store.vault_root())
+            .map(|v| crate::download::folders::is_under(&v, &resolved))
+            .unwrap_or(false);
+        if in_vault || !boundaries.iter().any(|b| crate::paths::is_within(b, &resolved)) {
+            // Only a folder this call made. One that was there is somebody's.
+            if !existed {
+                let _ = crate::apply::fsops::remove_dir_if_empty(&candidate);
+            }
             return Err(outside_boundary(&resolved));
         }
         Ok(resolved)
@@ -1490,6 +1499,52 @@ mod tests {
         let err = links(&w).create(&by_dir(&i, &sha, planted.join("..").join("a").join("b"), true)).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidArgument, "{err:?}");
         assert!(!w.path().join("outside/deep/a").exists(), "a folder was made outside");
+    }
+
+    // --- a YAML folder where no link belongs ------------------------------------
+
+    #[test]
+    fn a_yaml_folder_inside_custom_nodes_takes_no_link_and_no_folder() {
+        // ComfyUI imports code from custom_nodes. Some node packs do keep
+        // models there, but no link from this engine goes there.
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let inside = i.root.join("custom_nodes/EvilPack/models");
+        let i = w.add_extra_model_path(&i, "loras", &inside);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+
+        let roots = links(&w).link_folders(&i.id, "loras", None).unwrap().folders;
+        assert!(roots.iter().all(|r| !r.path.starts_with(i.root.join("custom_nodes"))), "{roots:?}");
+        assert!(links(&w).make_link_folder(&i.id, "loras", &inside.join("new")).is_err());
+        assert!(links(&w).create(&by_dir(&i, &sha, inside.clone(), true)).is_err());
+        let rel = CreateLinkRequest {
+            install_id: i.id.clone(),
+            sha256: sha.clone(),
+            relative_dir: "custom_nodes/EvilPack/models".into(),
+            dir: None,
+            link_name: None,
+            create_dir: true,
+        };
+        assert_eq!(links(&w).create(&rel).unwrap_err().code, ErrorCode::PathOutsideBoundary);
+        assert!(!inside.join("new").exists());
+        assert!(std::fs::symlink_metadata(inside.join("lora1.safetensors")).is_err());
+    }
+
+    #[test]
+    fn a_yaml_folder_inside_the_vault_takes_no_link_and_no_folder() {
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let vault_loras = w.vault_root.join("loras");
+        let i = w.add_extra_model_path(&i, "loras", &vault_loras);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+
+        let roots = links(&w).link_folders(&i.id, "loras", None).unwrap().folders;
+        assert!(roots.iter().all(|r| !r.path.starts_with(&w.vault_root)), "{roots:?}");
+        assert!(links(&w).make_link_folder(&i.id, "loras", &vault_loras.join("new")).is_err());
+        let named = CreateLinkRequest { link_name: Some("other.safetensors".into()), ..by_dir(&i, &sha, vault_loras.clone(), true) };
+        assert!(links(&w).create(&named).is_err());
+        assert!(!vault_loras.join("new").exists());
+        assert!(std::fs::symlink_metadata(vault_loras.join("other.safetensors")).is_err(), "a link was made in the vault");
     }
 }
 

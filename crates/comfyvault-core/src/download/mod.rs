@@ -441,7 +441,7 @@ impl Downloader {
             };
             let dir = default_dir(store, &install, cat)?;
             let link = dir.join(&file.file_name);
-            let state = target_state_in(&install, cat, &dir, &file.file_name, target.as_deref());
+            let state = target_state_in(&install, cat, &dir, &file.file_name, target.as_deref(), store.vault_root());
             installs.push(InstallTarget {
                 install_id: i.id.clone(),
                 link_path: Some(crate::paths::display_path(&link)),
@@ -451,7 +451,7 @@ impl Downloader {
                     _ => false,
                 },
                 state,
-                roots: folders::roots(&install, cat),
+                roots: folders::roots(&install, cat, store.vault_root()),
                 default_dir: Some(crate::paths::display_path(&dir)),
             });
         }
@@ -524,7 +524,7 @@ impl Downloader {
                 .install(&choice.install_id)?
                 .ok_or_else(|| VaultError::not_found("One of the chosen installs is not registered any more."))?
                 .proved()?;
-            folders::inside_roots(&install, &req.category, &choice.dir)?;
+            folders::inside_roots(&install, &req.category, &choice.dir, ctx.store.vault_root())?;
             link_dirs.push(choice.clone());
         }
         let addr = address::parse(&req.address)
@@ -1113,7 +1113,7 @@ impl Downloader {
             let folder = match chosen {
                 // Proved again: the disk may have changed since it was chosen.
                 // Made and linked where it really is, the place just proved.
-                Some(dir) => match folders::inside_roots(&install, &d.category, &dir) {
+                Some(dir) => match folders::inside_roots(&install, &d.category, &dir, ctx.store.vault_root()) {
                     Ok(real) => real,
                     Err(e) => {
                         d.not_linked.push(NotLinked { install_id: id, reason: e.message });
@@ -1128,7 +1128,7 @@ impl Downloader {
                 d.linked_install_ids.push(id);
                 continue;
             }
-            match target_state_in(&install, &d.category, &folder, &d.file_name, Some(&target)) {
+            match target_state_in(&install, &d.category, &folder, &d.file_name, Some(&target), ctx.store.vault_root()) {
                 InstallTargetState::HasLink => {
                     if ctx.store.link_at_path(&path)?.is_none() && leads_to(&path, &target) {
                         links_record(ctx, &install, &path, record, &journal.id)?;
@@ -1251,8 +1251,8 @@ fn links_record(ctx: &Context, install: &Install, path: &Path, record: &VaultFil
 /// root. ComfyUI names a model by its path under the root, for example
 /// `portraits\x.safetensors`, so that path is what is looked for in every
 /// folder it searches.
-fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, vault_file: Option<&Path>) -> InstallTargetState {
-    let under = folders::roots(install, category)
+fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, vault_file: Option<&Path>, vault: &Path) -> InstallTargetState {
+    let under = folders::roots(install, category, vault)
         .into_iter()
         .find_map(|r| dir.strip_prefix(&r.path).ok().map(Path::to_path_buf))
         .unwrap_or_default();
@@ -1280,7 +1280,7 @@ fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, va
 /// kind.
 pub(crate) fn default_dir(store: &Store, install: &Install, category: &str) -> Result<PathBuf> {
     if let Some(dir) = store.link_dir(&install.id, category)? {
-        if folders::inside_roots(install, category, &dir).is_ok() {
+        if folders::inside_roots(install, category, &dir, store.vault_root()).is_ok() {
             return Ok(dir);
         }
     }

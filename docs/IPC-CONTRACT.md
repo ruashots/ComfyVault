@@ -2681,7 +2681,10 @@ So:
   that ComfyUI does not know itself, and that only the YAML file names, goes
   into the first folder the YAML file gives it. A YAML folder that contains
   the whole install is never used; the link then goes into
-  `models\{category}`.
+  `models\{category}`. Neither is a YAML folder inside the install's
+  `custom_nodes`, where ComfyUI imports code from, or inside the vault, whose
+  folders hold the models the links point at. None of these is offered in
+  `roots`, and no link or folder is made in one.
 - **A name is taken when any folder ComfyUI searches for that category, in
   that install, already holds it.** One of the two files would never load,
   wherever the link went. That install's `state` is `nameTaken`, and nothing

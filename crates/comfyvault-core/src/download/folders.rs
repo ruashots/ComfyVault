@@ -130,12 +130,20 @@ pub struct Root {
 /// for example `models\loras\portraits`, and ComfyUI finds those.
 ///
 /// A folder the YAML file names that contains the whole install is left out:
-/// it is not a model folder, and `custom_nodes` is inside it.
-pub fn roots(install: &Install, category: &str) -> Vec<Root> {
+/// it is not a model folder, and `custom_nodes` is inside it. So is one
+/// inside `custom_nodes`, where ComfyUI imports code from, and one inside the
+/// vault, `vault`, whose folders hold the models the links point at.
+pub fn roots(install: &Install, category: &str, vault: &Path) -> Vec<Root> {
     let boundaries = install.link_boundaries();
+    let real = |p: &Path| crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(p)).ok();
+    let fenced: Vec<PathBuf> = [install.custom_nodes_dir(), vault.to_path_buf()].iter().filter_map(|p| real(p)).collect();
     searched(install, category)
         .into_iter()
         .filter(|p| boundaries.iter().any(|b| p.starts_with(b)))
+        .filter(|p| match real(p) {
+            Some(r) => !fenced.iter().any(|f| is_under(f, &r)),
+            None => false,
+        })
         .map(|path| {
             let origin = if install.extra_paths.iter().any(|e| crate::paths::same_path_lexically(&e.path, &path)) {
                 crate::install::RootOrigin::ExtraPath
@@ -155,7 +163,7 @@ pub fn roots(install: &Install, category: &str) -> Vec<Root> {
 /// Both sides are resolved through every link that exists, so neither a `..`
 /// nor a linked folder planted in the chain can lead out. A folder that does
 /// not exist yet is judged by the part that does.
-pub fn inside_roots(install: &Install, category: &str, dir: &Path) -> crate::Result<PathBuf> {
+pub fn inside_roots(install: &Install, category: &str, dir: &Path, vault: &Path) -> crate::Result<PathBuf> {
     if !dir.is_absolute() {
         return Err(crate::VaultError::invalid("Choose a folder by its full path."));
     }
@@ -166,7 +174,7 @@ pub fn inside_roots(install: &Install, category: &str, dir: &Path) -> crate::Res
         return Err(crate::VaultError::invalid("Choose a folder in the list. A path with `..` in it is not used."));
     }
     let real = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(dir))?;
-    for root in roots(install, category) {
+    for root in roots(install, category, vault) {
         let Ok(real_root) = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(&root.path)) else {
             continue;
         };
@@ -183,7 +191,7 @@ pub fn inside_roots(install: &Install, category: &str, dir: &Path) -> crate::Res
 
 /// `path` is `root` or inside it, component by component, ignoring case
 /// where the system does.
-fn is_under(root: &Path, path: &Path) -> bool {
+pub(crate) fn is_under(root: &Path, path: &Path) -> bool {
     let key = |p: &Path| -> Vec<String> {
         p.components()
             .map(|c| {

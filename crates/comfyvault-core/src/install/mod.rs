@@ -161,7 +161,7 @@ impl Install {
             self.extra_paths
                 .iter()
                 .map(|e| e.path.clone())
-                .filter(|p| !custom_nodes.starts_with(p) && !self.root.starts_with(p)),
+                .filter(|p| !custom_nodes.starts_with(p) && !p.starts_with(&custom_nodes) && !self.root.starts_with(p)),
         );
         out.extend(self.output_model_dirs.iter().map(|o| o.path.clone()));
         out

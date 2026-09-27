@@ -1143,6 +1143,30 @@ fn a_chosen_folder_through_a_planted_link_and_dot_dot_makes_nothing_outside() {
 }
 
 #[test]
+fn a_yaml_default_folder_inside_the_vault_never_gets_a_link() {
+    // The folder ComfyUI saves into, by the YAML file, is inside the vault.
+    let w = world(content("vaulted", 1_000), true);
+    let a = w.install("A");
+    // Another folder of the vault, so the model itself is not already there.
+    let vault_te = w.ctx.store.vault_root().join("other");
+    std::fs::create_dir_all(&vault_te).unwrap();
+    std::fs::write(
+        a.root.join("extra_model_paths.yaml"),
+        format!("v:\n    base_path: {}\n    is_default: true\n    text_encoders: other\n", w.ctx.store.vault_root().display()),
+    )
+    .unwrap();
+    let c = detect::inspect(&a.root).unwrap();
+    let a = Install::from_candidate(a.id.clone(), "A".into(), a.root.clone(), &c).unwrap();
+    w.ctx.store.put_install(&a).unwrap();
+
+    let d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    let in_vault: Vec<_> = std::fs::read_dir(&vault_te).unwrap().flatten().filter(|e| e.file_type().map(|t| t.is_symlink()).unwrap_or(false)).collect();
+    assert!(in_vault.is_empty(), "a link was made inside the vault");
+    assert_eq!(d.not_linked.len(), 1, "{:?}", d.not_linked);
+}
+
+#[test]
 fn a_name_taken_in_the_same_subfolder_of_another_root_is_not_linked_over() {
     // ComfyUI names the model `portraits\t5.safetensors` in every root it
     // reads, so the same subfolder path in another root is the same name.
