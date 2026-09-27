@@ -732,12 +732,13 @@ fn a_finished_download_is_gone_from_the_list_after_a_restart_and_an_unfinished_o
     let a = w.install("A");
     let done = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
     let mut stopped = done.clone();
-    stopped.download_id = "kept".into();
+    let kept = uuid::Uuid::new_v4().to_string();
+    stopped.download_id = kept.clone();
     stopped.state = DownloadState::Stopped;
     w.ctx.store.put_download(&stopped).unwrap();
     w.dl.on_open(&w.ctx).unwrap();
     let ids: Vec<String> = w.ctx.store.downloads().unwrap().into_iter().map(|d| d.download_id.clone()).collect();
-    assert_eq!(ids, vec!["kept".to_string()]);
+    assert_eq!(ids, vec![kept]);
 }
 
 #[test]
@@ -922,6 +923,37 @@ fn a_key_an_earlier_build_kept_is_gone_from_the_database_file() {
     for key in [kept, forgotten] {
         assert!(files_containing(&vault, key.as_bytes()).is_empty(), "{key} is still in the database file");
     }
+}
+
+#[test]
+fn a_download_id_that_names_a_path_never_reaches_a_file() {
+    // The vault's database is a file anyone could have prepared.
+    let w = world(content("x", 10), true);
+    let id = "../../../outside/victim";
+    let mut rec = DownloadRecord {
+        download: plain_download(),
+        address: CIVITAI.into(),
+        version_id: None,
+        file_id: None,
+        expected_sha256: None,
+        part_version: None,
+        seq: 0,
+    };
+    rec.download.download_id = id.into();
+    w.ctx.store.put_download(&rec).unwrap();
+    std::fs::create_dir_all(w.ctx.store.downloads_dir()).unwrap();
+    let victim = w.root.join("outside/victim.part");
+    std::fs::create_dir_all(victim.parent().unwrap()).unwrap();
+    std::fs::write(&victim, b"the person's own file").unwrap();
+
+    for e in [w.dl.discard(&w.ctx, id).unwrap_err(), w.dl.resume(&w.ctx, id).unwrap_err().clone()] {
+        assert_eq!(e.code, ErrorCode::InvalidArgument, "{e:?}");
+    }
+    assert_eq!(std::fs::read(&victim).unwrap(), b"the person's own file");
+    // And the row is gone the next time the vault opens.
+    w.dl.on_open(&w.ctx).unwrap();
+    assert!(w.ctx.store.download(id).unwrap().is_none());
+    assert!(victim.exists());
 }
 
 /// Against the real sites. They run only when asked (`--ignored`), and each

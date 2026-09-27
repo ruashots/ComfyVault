@@ -2751,7 +2751,10 @@ All take `{ downloadId: string }`.
 | `discard_download` | `{ removed: true }` | not `waiting`, `running` or `checking` | Deletes the part, and removes the download from the list. |
 | `remove_download` | `{ removed: true }` | `done`, `linkedOnly`, `mismatch`, or `waiting` with no part | Removes it from the list. |
 
-A command used in another state rejects with `conflict`. `list_downloads`
+A command used in another state rejects with `conflict`. A `downloadId` that
+is not a UUID in its plain form rejects with `invalidArgument`, and a row the
+database holds under such an id is removed when the vault opens, since the id
+names the download's part file. `list_downloads`
 takes no argument and returns `Download[]`, in the order they were started.
 
 A download that was stopped a moment ago can still be letting go of its

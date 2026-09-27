@@ -631,6 +631,11 @@ impl Downloader {
     /// cut off, and a finished one is gone from the list.
     pub fn on_open(&self, ctx: &Context) -> Result<()> {
         for mut d in ctx.store.downloads()? {
+            // Not one the engine made. It never reaches a path.
+            if !is_download_id(&d.download_id) {
+                ctx.store.delete_download(&d.download_id)?;
+                continue;
+            }
             match d.state {
                 DownloadState::Done | DownloadState::LinkedOnly | DownloadState::Mismatch => {
                     ctx.store.delete_download(&d.download_id)?;
@@ -777,6 +782,9 @@ impl Downloader {
     }
 
     fn run_one(&self, ctx: &Context, mut d: DownloadRecord, cancel: &CancelToken) -> Result<()> {
+        if !is_download_id(&d.download_id) {
+            return Err(VaultError::invalid("That is not a download of this list."));
+        }
         let part = part_path(ctx, &d.download_id);
         crate::apply::fsops::ensure_dir(&ctx.store.downloads_dir())?;
 
@@ -1238,7 +1246,18 @@ fn part_len(ctx: &Context, id: &str) -> u64 {
 }
 
 fn find(ctx: &Context, id: &str) -> Result<DownloadRecord> {
+    if !is_download_id(id) {
+        return Err(VaultError::invalid("That is not a download of this list."));
+    }
     ctx.store.download(id)?.ok_or_else(|| VaultError::not_found("That download is not in the list any more."))
+}
+
+/// A download's id is the name of its part file, so it must be exactly the
+/// kind of id the engine makes: a UUID in its plain form. The vault's
+/// database is a file anyone could have prepared, and `../` in an id would
+/// name a file outside the vault.
+fn is_download_id(id: &str) -> bool {
+    uuid::Uuid::parse_str(id).map(|u| u.hyphenated().to_string() == id).unwrap_or(false)
 }
 
 fn poisoned() -> VaultError {
