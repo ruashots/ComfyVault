@@ -134,6 +134,14 @@ is reported with the path it actually lives at. A junction pointing at another
 drive is a normal thing to find on a Windows machine, and a plan must never move
 a file out of a folder it never named.
 
+A category folder is different. `models\loras` is the folder ComfyUI reads for
+loras wherever it leads, so when it is a junction to another drive, the files
+there are the install's own and are consolidated like any other. Only the
+category folders count, the ones directly inside `models`. A link further down
+leads somewhere you never named, and its files stay where they are. A category
+folder that leads to the install itself, its `custom_nodes` or the vault does
+not count either.
+
 ---
 
 ## 4. The plan

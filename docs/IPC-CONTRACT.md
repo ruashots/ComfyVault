@@ -802,6 +802,13 @@ type Classification =
   | 'unreadable'
 ```
 
+`'externalLink'` is a file that is a link somebody else made, or a file reached
+through a linked folder that really lives outside every folder the install
+declares. A category folder directly inside `models`, such as `models\loras`,
+counts as declared wherever it really is, so a category folder that is a
+junction to another drive holds `'movable'` files. One that leads to the
+install itself, its `custom_nodes` or the vault does not count.
+
 `mtimeNanos` is text, not a number. It is the file's modification time in
 nanoseconds. A number that large loses its last digits when JavaScript reads
 it: the engine sends 1758240123456789012 and `JSON.parse` returns

@@ -502,10 +502,23 @@ impl<'a> Scanner<'a> {
         // linked to another drive is a normal, supported setup, so the rule
         // cannot be "the file must sit under the literal path": it has to be
         // "the file must sit under where that folder really is".
-        let allowed: Vec<PathBuf> = roots
+        let mut allowed: Vec<PathBuf> = roots
             .iter()
             .filter_map(|r| crate::paths::canonicalize_clean(&r.path).ok())
             .collect();
+        // And each category folder, such as `models\loras`, where it really
+        // is. One that is a junction to another drive is still the folder
+        // ComfyUI reads for that category.
+        allowed.extend(
+            install
+                .category_folders(
+                    self.settings.follow_extra_model_paths,
+                    self.settings.scan_output_model_dirs,
+                    self.store.vault_root(),
+                )
+                .into_iter()
+                .map(|(_, real)| real),
+        );
 
         // Anything under custom_nodes is counted, never moved, even when an
         // extra model path points straight into it.

@@ -5,7 +5,7 @@ pub mod detect;
 pub mod extra_paths;
 pub mod pypath;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +134,46 @@ impl Install {
             follow_extra,
             include_output,
         )
+    }
+
+    /// The category folders directly inside the scanned `models` folders,
+    /// such as `models\loras`, with where each really is.
+    ///
+    /// ComfyUI reads each of them for its category wherever it leads, so a
+    /// category folder that is a junction to another drive holds the
+    /// install's own models. Only these folders count. A link further down
+    /// leads somewhere the person never declared.
+    ///
+    /// A folder whose real place is, or contains, the install, its
+    /// `custom_nodes` or the vault is left out: the whole of such a place is
+    /// not a model folder. So is one whose real place is inside
+    /// `custom_nodes` or the vault.
+    pub fn category_folders(&self, follow_extra: bool, include_output: bool, vault: &Path) -> Vec<(PathBuf, PathBuf)> {
+        let real = |p: &Path| crate::paths::canonicalize_clean(p).ok();
+        // Never one of these, and never a folder that holds one.
+        let whole: Vec<PathBuf> = [self.root.clone(), self.custom_nodes_dir(), vault.to_path_buf()]
+            .iter()
+            .filter_map(|p| real(p))
+            .collect();
+        // Never inside one of these either.
+        let inside: Vec<PathBuf> =
+            [self.custom_nodes_dir(), vault.to_path_buf()].iter().filter_map(|p| real(p)).collect();
+        let mut out = Vec::new();
+        for root in self.scan_roots(follow_extra, include_output) {
+            if root.origin != RootOrigin::ModelsDir {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(&root.path) else { continue };
+            for e in entries.flatten() {
+                let path = e.path();
+                let Some(place) = real(&path).filter(|p| p.is_dir()) else { continue };
+                if whole.iter().any(|f| f.starts_with(&place)) || inside.iter().any(|f| place.starts_with(f)) {
+                    continue;
+                }
+                out.push((path, place));
+            }
+        }
+        out
     }
 
     /// The folder that holds bundled weights, which the scan counts and never

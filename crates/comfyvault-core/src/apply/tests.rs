@@ -3324,3 +3324,76 @@ fn a_crafted_vault_cannot_widen_what_counts_as_a_model_through_its_settings() {
     assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
     assert!(!target.exists());
 }
+
+// --- a category folder that is a junction to another folder ----------------
+
+#[test]
+fn a_category_folder_that_is_a_junction_consolidates_where_it_really_lives() {
+    // A common setup: models\loras is a junction to a bigger drive. ComfyUI
+    // reads it as its lora folder, so its files are the install's own.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let other_drive = w.path().join("D-drive").join("loras");
+    std::fs::create_dir_all(&other_drive).unwrap();
+    std::fs::create_dir_all(b.root.join("models")).unwrap();
+    crate::links::tests::junction(&b.root.join("models").join("loras"), &other_drive);
+    let b = w.refresh(&b);
+    w.write_model(&a, "models/loras/x.safetensors", &weights("same"));
+    std::fs::write(other_drive.join("y.safetensors"), weights("same")).unwrap();
+
+    let plan = w.plan(&[a.clone(), b.clone()]);
+    assert!(plan.blocked.is_empty(), "nothing is set aside: {:?}", plan.blocked);
+    assert_eq!(plan.groups.len(), 1);
+    let rec = run_apply(&w, &plan);
+    assert_eq!(rec.groups_failed, 0, "{:?}", rec.failures);
+
+    let y = b.root.join("models").join("loras").join("y.safetensors");
+    assert!(w.is_link(&other_drive.join("y.safetensors")), "B's copy is a link now");
+    assert_eq!(w.read(&y), weights("same"), "and B still loads the model");
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    assert!(!w.is_link(&other_drive.join("y.safetensors")));
+    assert_eq!(std::fs::read(other_drive.join("y.safetensors")).unwrap(), weights("same"));
+}
+
+#[test]
+fn a_folder_linked_deeper_inside_a_category_folder_is_still_not_moved() {
+    // The control: only the folders ComfyUI reads for a category count. A
+    // link to somewhere else further down stays where it is.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let elsewhere = w.path().join("Documents");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::create_dir_all(a.root.join("models").join("loras")).unwrap();
+    crate::links::tests::junction(&a.root.join("models").join("loras").join("docs"), &elsewhere);
+    let a = w.refresh(&a);
+    w.write_model(&a, "models/loras/x.safetensors", &weights("same"));
+    std::fs::write(elsewhere.join("y.safetensors"), weights("same")).unwrap();
+
+    let plan = w.plan(&[a.clone()]);
+    assert_eq!(plan.blocked.len(), 1, "{:?}", plan.blocked);
+    assert_eq!(plan.blocked[0].reason, crate::plan::BlockReason::ExternalLink);
+}
+
+#[test]
+fn a_category_folder_that_leads_to_the_whole_install_does_not_make_its_files_movable() {
+    // A junction from models\loras to the install folder itself would make
+    // every model file anywhere in the install look like a lora.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    std::fs::create_dir_all(a.root.join("models")).unwrap();
+    crate::links::tests::junction(&a.root.join("models").join("loras"), &a.root);
+    let a = w.refresh(&a);
+    w.write_model(&a, "input/z.safetensors", &weights("z"));
+    w.write_model(&a, "models/checkpoints/z.safetensors", &weights("z"));
+
+    let plan = w.plan(&[a.clone()]);
+    let stray = a.root.join("models").join("loras").join("input").join("z.safetensors");
+    let group_paths: Vec<PathBuf> = plan.groups.iter().flat_map(|g| g.links.iter().map(|l| l.abs_path.clone())).collect();
+    assert!(!group_paths.iter().any(|p| crate::paths::same_path_lexically(p, &stray)), "{group_paths:?}");
+    assert!(
+        !plan.groups.iter().any(|g| crate::paths::same_path_lexically(&g.source.abs_path, &stray)),
+        "the file under input is not offered as a lora"
+    );
+}

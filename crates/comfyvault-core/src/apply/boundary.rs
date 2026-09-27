@@ -12,7 +12,8 @@
 //!
 //! * inside the vault, and never inside its own database folder;
 //! * inside a folder the scan walks for an install that is registered in this
-//!   vault and is a ComfyUI install on this disk now, and never inside that
+//!   vault and is a ComfyUI install on this disk now, or inside one of its
+//!   category folders where that folder really is, and never inside that
 //!   install's `custom_nodes`.
 //!
 //! A file a run moves, links, or puts back must also be a model file by its
@@ -50,6 +51,15 @@ impl Places {
         for stored in store.installs()? {
             let Ok(install) = stored.proved() else { continue };
             install_roots.extend(roots_of(&install));
+            // A category folder that is a junction elsewhere is still where
+            // the install keeps that category, and a scan offers its files.
+            let custom_nodes = install.custom_nodes_dir();
+            install_roots.extend(
+                install
+                    .category_folders(true, true, store.vault_root())
+                    .into_iter()
+                    .map(|(path, _)| (path, custom_nodes.clone())),
+            );
         }
         Ok(Self {
             vault_root: store.vault_root().to_path_buf(),
