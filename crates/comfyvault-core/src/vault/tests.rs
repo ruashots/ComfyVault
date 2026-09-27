@@ -116,7 +116,7 @@ fn a_listing_never_returns_more_than_the_page_limit() {
 #[test]
 fn a_content_with_two_names_appears_in_the_name_groups() {
     let w = TestWorld::new();
-    two_names(&w);
+    let (a, b) = two_names(&w);
 
     let groups = vault(&w).name_groups().unwrap();
     assert_eq!(groups.len(), 1);
@@ -124,13 +124,119 @@ fn a_content_with_two_names_appears_in_the_name_groups() {
     assert_eq!(g.canonical_name, "lora1.safetensors");
     assert_eq!(g.names.len(), 2);
 
+    // The names are the ones the installs' links carry.
     let canonical = g.names.iter().find(|n| n.is_canonical).unwrap();
     assert_eq!(canonical.name, "lora1.safetensors");
-    assert_eq!(canonical.used_by_links, 2, "both installs resolve through the real file");
+    assert_eq!(canonical.used_by_links, 1);
+    assert_eq!(canonical.seen_in_installs, vec![a.id.clone()]);
 
-    let alias = g.names.iter().find(|n| !n.is_canonical).unwrap();
-    assert_eq!(alias.name, "my-favourite.safetensors");
-    assert_eq!(alias.used_by_links, 0, "install links point at the real file, not at the name");
+    let other = g.names.iter().find(|n| !n.is_canonical).unwrap();
+    assert_eq!(other.name, "my-favourite.safetensors");
+    assert_eq!(other.used_by_links, 1, "install B's link carries this name");
+    assert_eq!(other.seen_in_installs, vec![b.id.clone()]);
+    assert_eq!(other.vault_rel_path, PathBuf::from("loras").join("my-favourite.safetensors"));
+}
+
+/// Links a vault file into `install` by hand, under `name`.
+fn link_by_hand(w: &TestWorld, install: &crate::install::Install, sha: &str, dir: &str, name: &str) -> LinkRecord {
+    Links::new(&w.store, &w.platform)
+        .create(&CreateLinkRequest {
+            install_id: install.id.clone(),
+            sha256: sha.to_string(),
+            relative_dir: dir.into(),
+            dir: None,
+            link_name: Some(name.into()),
+            create_dir: true,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_second_name_only_the_vault_keeps_is_not_a_name_group() {
+    // Both installs call the model by one name. The vault still keeps the
+    // other name beside the file, but no install asks for it, so to the
+    // person the model has one name.
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    let sha = weights_hash("same");
+    let b_link = w.store.links_for_hash(&sha).unwrap().into_iter().find(|l| l.install_id == b.id).unwrap();
+    Links::new(&w.store, &w.platform).remove(&b_link.id).unwrap();
+    link_by_hand(&w, &b, &sha, "models/loras", "lora1.safetensors");
+
+    assert_eq!(vault(&w).file(&sha).unwrap().unwrap().aliases, vec!["my-favourite.safetensors"]);
+    assert!(vault(&w).name_groups().unwrap().is_empty());
+}
+
+#[test]
+fn a_link_named_by_hand_makes_a_name_group_the_vault_never_heard_of() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    w.write_model(&a, "models/loras/only.safetensors", &weights("only"));
+    let plan = w.plan(&[a.clone()]);
+    Applier::new(&w.store, &w.platform)
+        .apply("ap-1", &plan, &ApplyRequest {
+            plan_id: plan.plan_id.clone(),
+            group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+            verify: VerifyModeArg::SizeAndMtime,
+            stop_on_error: false,
+        }, &CancelToken::new(), &NullSink)
+        .unwrap();
+    let b = w.add_install("B");
+    let sha = weights_hash("only");
+    link_by_hand(&w, &b, &sha, "models/loras", "renamed.safetensors");
+    assert!(vault(&w).file(&sha).unwrap().unwrap().aliases.is_empty());
+
+    let groups = vault(&w).name_groups().unwrap();
+    assert_eq!(groups.len(), 1);
+    let names: Vec<&str> = groups[0].names.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"only.safetensors") && names.contains(&"renamed.safetensors"), "{names:?}");
+    let renamed = groups[0].names.iter().find(|n| n.name == "renamed.safetensors").unwrap();
+    assert!(!renamed.is_canonical);
+    assert_eq!(renamed.seen_in_installs, vec![b.id.clone()]);
+}
+
+#[test]
+fn a_link_removed_by_hand_no_longer_counts_as_a_name() {
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    let sha = weights_hash("same");
+    let b_link = w.store.links_for_hash(&sha).unwrap().into_iter().find(|l| l.install_id == b.id).unwrap();
+    w.platform.remove_symlink(&b_link.abs_path).unwrap();
+    assert!(vault(&w).name_groups().unwrap().is_empty());
+}
+
+#[test]
+fn one_name_in_two_folders_of_one_install_is_counted_once_with_both_links() {
+    let w = TestWorld::new();
+    let (a, _b) = two_names(&w);
+    let sha = weights_hash("same");
+    link_by_hand(&w, &a, &sha, "models/loras/sub", "lora1.safetensors");
+
+    let g = &vault(&w).name_groups().unwrap()[0];
+    assert_eq!(g.names.len(), 2);
+    let lora1 = g.names.iter().find(|n| n.name == "lora1.safetensors").unwrap();
+    assert_eq!(lora1.used_by_links, 2);
+    assert_eq!(lora1.seen_in_installs, vec![a.id.clone()], "one install, listed once");
+}
+
+#[test]
+fn names_that_differ_only_in_case_are_one_name_on_windows() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    let sha = weights_hash("same");
+    let b_link = w.store.links_for_hash(&sha).unwrap().into_iter().find(|l| l.install_id == b.id).unwrap();
+    Links::new(&w.store, &w.platform).remove(&b_link.id).unwrap();
+    link_by_hand(&w, &b, &sha, "models/loras", "LORA1.safetensors");
+
+    let groups = vault(&w).name_groups().unwrap();
+    if cfg!(windows) {
+        assert!(groups.is_empty(), "Windows reads the two as one name: {groups:?}");
+    } else {
+        assert_eq!(groups.len(), 1);
+        let seen: Vec<Vec<String>> = groups[0].names.iter().map(|n| n.seen_in_installs.clone()).collect();
+        assert!(seen.contains(&vec![a.id.clone()]) && seen.contains(&vec![b.id.clone()]));
+    }
 }
 
 #[test]

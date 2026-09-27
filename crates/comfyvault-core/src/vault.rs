@@ -550,39 +550,56 @@ impl<'a> Vault<'a> {
         })
     }
 
-    /// Contents that carry more than one name.
+    /// Contents whose links in the installs carry more than one name.
+    ///
+    /// Built from the names the installs use, which are the names a saved
+    /// workflow asks for, and not from the names kept in the vault. A second
+    /// name nothing in the installs uses any more is not a second name to the
+    /// person, and a link given its own name by hand is one even though the
+    /// vault never heard it.
+    ///
+    /// Only links that are on the disk and resolve count. On Windows two names
+    /// that differ only in case are one name, as they are to the file system.
     pub fn name_groups(&self) -> Result<Vec<NameGroup>> {
+        let links = self.links();
         let mut out = Vec::new();
         for record in self.store.vault_files()? {
-            if record.aliases.is_empty() {
+            let mut live: Vec<LinkRecord> = self
+                .store
+                .links_for_hash(&record.sha256)?
+                .into_iter()
+                .filter(|l| links.state_of(l) == LinkState::Ok)
+                .collect();
+            live.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
+
+            // One entry per name, in the order the names are first met.
+            let mut names: Vec<VaultName> = Vec::new();
+            for l in &live {
+                let key = name_key(&l.link_name);
+                let entry = match names.iter_mut().find(|n| name_key(&n.name) == key) {
+                    Some(n) => n,
+                    None => {
+                        names.push(VaultName {
+                            is_canonical: key == name_key(&record.canonical_name),
+                            vault_rel_path: PathBuf::from(&record.category).join(&l.link_name),
+                            name: l.link_name.clone(),
+                            used_by_links: 0,
+                            seen_in_installs: Vec::new(),
+                        });
+                        names.last_mut().expect("just pushed")
+                    }
+                };
+                entry.used_by_links += 1;
+                if !entry.seen_in_installs.contains(&l.install_id) {
+                    entry.seen_in_installs.push(l.install_id.clone());
+                }
+            }
+            if names.len() < 2 {
                 continue;
             }
-            let links = self.live_links(&record.sha256)?;
-            let names = record
-                .all_names()
-                .into_iter()
-                .map(|name| {
-                    let rel = PathBuf::from(&record.category).join(&name);
-                    let through: Vec<&LinkRecord> = links
-                        .iter()
-                        .filter(|l| l.vault_rel_path == rel)
-                        .collect();
-                    VaultName {
-                        is_canonical: name == record.canonical_name,
-                        used_by_links: through.len() as u64,
-                        seen_in_installs: {
-                            let mut v: Vec<String> =
-                                through.iter().map(|l| l.install_id.clone()).collect();
-                            v.sort();
-                            v.dedup();
-                            v
-                        },
-                        vault_rel_path: rel,
-                        name,
-                    }
-                })
-                .collect();
-
+            for n in &mut names {
+                n.seen_in_installs.sort();
+            }
             out.push(NameGroup {
                 sha256: record.sha256.clone(),
                 size_bytes: record.size_bytes,
@@ -1251,6 +1268,17 @@ impl<'a> Vault<'a> {
     /// Where a content's real file sits on the disk.
     pub fn path_of(&self, record: &VaultFileRecord) -> PathBuf {
         self.store.vault_root().join(record.vault_rel_path())
+    }
+}
+
+/// How two file names are compared: as the file system on this computer
+/// compares them. Windows ignores case, so there `Model.safetensors` and
+/// `model.safetensors` name one file.
+pub fn name_key(name: &str) -> String {
+    if cfg!(windows) {
+        name.to_lowercase()
+    } else {
+        name.to_string()
     }
 }
 

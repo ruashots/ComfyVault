@@ -678,7 +678,16 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 size_bytes: 151_119_872,
                 category: "loras".into(),
                 canonical_name: "detail-tweaker.safetensors".into(),
-                names: vec![vault_name()],
+                names: vec![
+                    vault_name(),
+                    VaultName {
+                        name: "detail_tweaker_xl.safetensors".into(),
+                        is_canonical: false,
+                        vault_rel_path: PathBuf::from(r"loras\detail_tweaker_xl.safetensors"),
+                        used_by_links: 1,
+                        seen_in_installs: vec!["inst-2".into()],
+                    },
+                ],
             },
         ),
         s("VaultFile", vault_file()),

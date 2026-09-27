@@ -1771,7 +1771,8 @@ any more. A model still sitting in an install is not an orphan: it is there.
 
 ### 8.4 `list_name_groups`
 
-Lists contents that carry more than one name.
+Lists the models that the installs call by more than one name. Cleanup shows
+one "one model, two names" card for each.
 
 Arguments: none.
 
@@ -1782,18 +1783,36 @@ type NameGroup = {
   sha256: string
   sizeBytes: number
   category: string
-  canonicalName: string
-  names: Array<{
-    name: string
-    isCanonical: boolean
-    vaultRelPath: string
-    usedByLinks: number        // install links that resolve through this name
-    seenInInstalls: string[]
-  }>
+  canonicalName: string        // the name the vault keeps as the real file
+  names: VaultName[]           // two or more
+}
+
+type VaultName = {
+  name: string                 // a name the installs' links carry
+  isCanonical: boolean         // the vault keeps the real file under this name
+  vaultRelPath: string         // where the vault keeps, or would keep, this name
+  usedByLinks: number          // links that carry this name
+  seenInInstalls: string[]     // install ids of those links, sorted, each once
 }
 ```
 
-Returns `NameGroup[]`.
+Returns `NameGroup[]`, largest model first.
+
+**The names are the names the installs use.** They come from the links in the
+installs, which is what a saved workflow asks for. They do not come from the
+names the vault keeps (`aliases`):
+
+- A model is in the list when its links carry two or more different names.
+- A name the vault keeps that no link carries is not listed. A model whose
+  links all carry one name is not in the list, even with `aliases`.
+- A link given its own name, for example with `create_link` and `linkName`,
+  adds its name, even though the vault never kept it.
+- Only links that are on the disk and lead somewhere count. A link removed by
+  hand drops out on the next call.
+- On Windows, two names that differ only in case are one name. `name` is the
+  spelling of the first link, in path order.
+
+After `unify_name` gives every link one name, the model leaves the list.
 
 ### 8.5 `set_canonical_name`
 
