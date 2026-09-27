@@ -185,7 +185,7 @@ pub fn check_access(web: &dyn Web, file: &RemoteFile, token: Option<&str>) -> Re
 pub fn refusal_from(host: Host, reply: Reply, had_token: bool, page: Option<HfPage>) -> Result<Refusal> {
     let status = reply.status;
     let code = reply.header("x-error-code").map(str::to_string);
-    let header_message = reply.header("x-error-message").map(str::to_string);
+    let header_message = reply.header("x-error-message").map(short);
     let body = reply.text().unwrap_or_default();
     let service_message = header_message.or_else(|| message_in(&body));
 
@@ -221,12 +221,20 @@ fn message_in(body: &str) -> Option<String> {
     if let Ok(v) = serde_json::from_str::<Value>(text) {
         for key in ["message", "error"] {
             if let Some(s) = v.get(key).and_then(Value::as_str) {
-                return Some(s.to_string());
+                return Some(short(s));
             }
         }
     }
     // Not JSON: the text itself, kept short, and only if it is not a page.
-    (!text.starts_with('<')).then(|| text.chars().take(500).collect())
+    (!text.starts_with('<')).then(|| short(text))
+}
+
+/// The most of a site's message that is kept. A real one is a sentence or
+/// two; this one is saved with a download and sent with each of its updates.
+const MESSAGE_LIMIT: usize = 500;
+
+fn short(text: &str) -> String {
+    text.chars().take(MESSAGE_LIMIT).collect()
 }
 
 #[allow(clippy::too_many_arguments)]

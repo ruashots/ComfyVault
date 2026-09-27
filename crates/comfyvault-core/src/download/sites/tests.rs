@@ -270,3 +270,12 @@ fn a_civitai_file_with_no_size_or_a_size_below_nothing_is_not_offered() {
     assert!(err.message.contains("no model file"), "{}", err.message);
 }
 
+#[test]
+fn a_sites_message_is_kept_short_whatever_form_it_comes_in() {
+    let long = "A".repeat(4_000_000);
+    let body = format!(r#"{{"message":"{long}"}}"#);
+    let s = Server::start(move |_| Canned::json(401, &body).with_header("x-error-code", "GatedRepo"));
+    let Reading::Refused(r) = read_at(&s, "https://civitai.com/models/4384", None) else { panic!() };
+    assert_eq!(r.service_message.map(|m| m.chars().count()), Some(500));
+}
+
