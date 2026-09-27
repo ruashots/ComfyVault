@@ -362,6 +362,11 @@ fn a_redirect_goes_only_to_the_sites_own_storage_over_https() {
         "https://evilhf.co/x",
         "https://huggingface.co@evil.example/x",
         "https://someone-else.r2.cloudflarestorage.com/x",
+        // A bucket named like Civitai's, in somebody else's account.
+        "https://civitai-delivery-worker-prod.0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/x",
+        "https://civitai-x.r2.cloudflarestorage.com/x",
+        "https://evil.civitai-x.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/x",
+        "https://other-bucket.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/x",
         "file:///C:/x",
     ] {
         assert!(!may_follow(Host::HuggingFace, hf, bad, false), "{bad}");

@@ -2694,8 +2694,10 @@ What happens, in order:
    The engine follows a site's redirect only over `https`, only to a named
    host, never to this computer or an address on the network, and only to
    the site's own hosts or its known storage: `*.huggingface.co` and
-   `*.hf.co` for Hugging Face, `*.civitai.com` and Civitai's own buckets on
-   `*.r2.cloudflarestorage.com` for Civitai. Any other redirect ends the
+   `*.hf.co` for Hugging Face, `*.civitai.com` and the `civitai-*` buckets
+   in Civitai's own Cloudflare R2 account
+   (`5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com`, checked
+   live on 2026-09-27) for Civitai. Any other redirect ends the
    download as `failed`, kind `connection`, with the host in `detail`.
    The transfer is held to the size the site gave: exactly, for Hugging Face,
    and to one kilobyte more for Civitai, which states whole kilobytes. An

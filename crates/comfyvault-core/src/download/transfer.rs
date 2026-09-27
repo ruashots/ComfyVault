@@ -357,8 +357,8 @@ pub(crate) fn origin(url: &str) -> Option<Origin> {
 /// Only over `https`, only to a named host, never to this computer or an
 /// address on the network, and only to the site's own hosts or the storage
 /// each site is known to use (checked on 2026-09-26: Hugging Face sends to
-/// `*.hf.co`, Civitai to `b2.civitai.com` and to its own buckets on
-/// `*.r2.cloudflarestorage.com`). Anything else is refused rather than asked.
+/// `*.hf.co`, Civitai to `b2.civitai.com` and to buckets in its own
+/// account on `r2.cloudflarestorage.com`). Anything else is refused rather than asked.
 ///
 /// `trust_local` lets a site on this computer send to this computer. Only a
 /// test sets it; the real sites never get it.
@@ -383,9 +383,24 @@ pub(crate) fn may_follow(host: Host, site: &str, to: &str, trust_local: bool) ->
     match host {
         Host::HuggingFace => under("huggingface.co") || under("hf.co"),
         Host::Civitai => {
-            under("civitai.com") || (h.starts_with("civitai-") && h.ends_with(".r2.cloudflarestorage.com"))
+            under("civitai.com") || civitai_r2_bucket(h)
         }
     }
+}
+
+/// Civitai's Cloudflare R2 account, as its download redirects name it.
+/// Checked live on 2026-09-27: every redirect to R2 went to
+/// `civitai-delivery-worker-prod.<this>.r2.cloudflarestorage.com`.
+const CIVITAI_R2_ACCOUNT: &str = "5ac0637cfd0766c97916cefa3764fbdf";
+
+/// A bucket in Civitai's own R2 account. Anyone can make a bucket called
+/// `civitai-something` in an account of their own, so the name alone proves
+/// nothing; the account does.
+fn civitai_r2_bucket(host: &str) -> bool {
+    let Some(bucket) = host.strip_suffix(&format!(".{CIVITAI_R2_ACCOUNT}.r2.cloudflarestorage.com")) else {
+        return false;
+    };
+    bucket.starts_with("civitai-") && !bucket.contains('.')
 }
 
 /// `bytes 100-199/1000` as (100, 1000).
