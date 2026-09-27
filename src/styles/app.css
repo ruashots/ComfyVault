@@ -437,6 +437,8 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
   color:var(--t-faint);
 }
 .field:focus-within{border-color:rgba(245,144,30,.45)}
+/* The field's own border already shows focus, so the text inside draws no second box. */
+.field input:focus-visible,.tnew input:focus-visible{outline:none}
 .field input{width:128px;font-size:10.5px;color:var(--t-body)}
 .field input::placeholder{color:var(--t-off)}
 .sel{
