@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createMemo } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
 import { driveKindShort, isReadable } from "~/domain/drives";
-import { dayMonth, driveOf, fmt } from "~/domain/format";
+import { countOf, dayMonth, driveOf, fmt } from "~/domain/format";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
@@ -76,7 +76,7 @@ export function SettingsScreen() {
       action: async () => {
         const result = await app.engine.unregisterInstall(install.id);
         app.actions.showToast(
-          `Removed ${installName(install, app.installs())} · ${result.linksLeftInPlace} links left exactly where they are`,
+          `Removed ${installName(install, app.installs())} · ${countOf(result.linksLeftInPlace, "link", "links")} left exactly where ${result.linksLeftInPlace === 1 ? "it is" : "they are"}`,
         );
       },
     });
@@ -143,7 +143,7 @@ export function SettingsScreen() {
                   >
                     <div class="st">
                       <div class="a">{fmt(view.bytes)}</div>
-                      <div class="b">{view.files} files</div>
+                      <div class="b">{countOf(view.files, "file", "files")}</div>
                     </div>
                   </Show>
                   <button
@@ -227,7 +227,7 @@ export function SettingsScreen() {
                       }}
                     >
                       drive {app.vaultVolume()} &middot; {fmt(info().totalStoredBytes)}{" "}
-                      held &middot; {info().fileCount} files
+                      held &middot; {countOf(info().fileCount, "file", "files")}
                     </div>
                   </div>
                   <button class="btn sm" onClick={() => void openVaultPicker(app)}>
@@ -488,7 +488,7 @@ export function SettingsScreen() {
                     <Match when={lookupRunning()}>
                       {(r) => (
                         <div class="note up">
-                          Asking now: {r().asked} of {r().total} files so far.
+                          Asking now: {r().asked} of {countOf(r().total, "file", "files")} so far.
                         </div>
                       )}
                     </Match>
@@ -576,7 +576,9 @@ export function SettingsScreen() {
                       </Show>
                       <Show when={scan().errors.length > 0}>
                         {" "}
-                        {scan().errors.length} files could not be read.
+                        {scan().errors.length === 1
+                          ? "1 file could not be read."
+                          : `${scan().errors.length} files could not be read.`}
                       </Show>
                     </div>
                   )}
@@ -668,7 +670,7 @@ export function SettingsScreen() {
                         ? `${broken} ${broken === 1 ? "link points" : "links point"} at a file that is not there · see Cleanup`
                         : stopped > 0
                           ? `${stopped === 1 ? "A delete stopped part way. Finish it" : `${stopped} deletes stopped part way. Finish them`} in Cleanup.`
-                          : `Checked ${health?.checkedLinks ?? 0} links and ${health?.checkedFiles ?? 0} files · all well`,
+                          : `Checked ${countOf(health?.checkedLinks ?? 0, "link", "links")} and ${countOf(health?.checkedFiles ?? 0, "file", "files")} · all well`,
                       broken > 0 || stopped > 0 ? "bad" : "ok",
                     );
                     if (broken > 0 || stopped > 0) app.actions.go("cleanup");

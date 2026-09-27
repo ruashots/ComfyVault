@@ -8,7 +8,7 @@ import {
   blockedWhy,
   isFixable,
 } from "~/domain/blocked";
-import { fmt, joinPath, relativeTime, shortHash } from "~/domain/format";
+import { countOf, fmt, joinPath, relativeTime, shortHash } from "~/domain/format";
 import { installName, installNameOf } from "~/domain/installname";
 import {
   addedCode,
@@ -250,7 +250,8 @@ function DryRun() {
                       }
                     >
                       {" "}
-                      of {install.files} copies will be replaced by links
+                      of {countOf(install.files, "copy", "copies")}{" "}
+                      {install.moving === 1 ? "will be replaced by a link" : "will be replaced by links"}
                     </Show>
                     ,{" "}
                     <span class="dim">

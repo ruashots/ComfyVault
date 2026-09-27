@@ -15,7 +15,7 @@ import { Icon } from "~/components/Icon";
 import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
 import { blockedShort, blockedWhy } from "~/domain/blocked";
-import { dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
+import { countOf, dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
 import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
@@ -817,7 +817,8 @@ function CivitaiNothing(props: { answered: boolean }) {
       <Match when={running()}>
         {(r) => (
           <div class="note">
-            Asking Civitai in the background, {r().asked} of {r().total} files so
+            Asking Civitai in the background, {r().asked} of{" "}
+            {countOf(r().total, "file", "files")} so
             far. This one has not come back yet.
           </div>
         )}

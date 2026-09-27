@@ -6,6 +6,7 @@ import { DanglingLinks } from "~/components/DanglingLinks";
 import { ThumbnailNote } from "~/components/ThumbnailNote";
 import { Header, Warnbar } from "~/components/Shell";
 import {
+  countOf,
   driveOf,
   fmt,
   fmtN,
@@ -519,7 +520,10 @@ function HomeReport() {
                       </div>
                       <div class="txt">
                         <div class="l1">
-                          Freed. {finished().linksCreated} copies are now links.
+                          Freed.{" "}
+                          {finished().linksCreated === 1
+                            ? "1 copy is now a link."
+                            : `${finished().linksCreated} copies are now links.`}
                         </div>
                         <div class="l2">
                           <Show
@@ -621,7 +625,7 @@ function HomeReport() {
                   </span>
                   <span class="v">
                     <b>{fmt(entry.bytes)}</b>{" "}
-                    <span class="dim">&middot; {entry.files} files</span>
+                    <span class="dim">&middot; {countOf(entry.files, "file", "files")}</span>
                   </span>
                 </div>
               )}
@@ -792,11 +796,6 @@ const RUN_EVENT: Record<ApplyState, string> = {
   reverted: "Consolidation undone",
   setAside: "Run set aside",
 };
-
-/** "1 model", "3 models". */
-function countOf(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 function Tile(props: {
   value: string;

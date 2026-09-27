@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
+import { countOf } from "~/domain/format";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
 import type { LinkRecord } from "~/ipc/contract";
@@ -29,12 +30,12 @@ export function DanglingLinks() {
     const all = [...links()];
     openConfirm(app, {
       title: "Remove every broken link",
-      cta: `Remove ${all.length} links`,
+      cta: `Remove ${countOf(all.length, "link", "links")}`,
       body: [
         [
-          { text: `${all.length} links` , emph: true },
+          { text: countOf(all.length, "link", "links"), emph: true },
           {
-            text: " are removed from the installs they sit in. Nothing in the vault is touched, and no model file is deleted: a broken link points at nothing, so there is nothing to lose.",
+            text: `${all.length === 1 ? " is removed from the install it sits in" : " are removed from the installs they sit in"}. Nothing in the vault is touched, and no model file is deleted: a broken link points at nothing, so there is nothing to lose.`,
           },
         ],
         [

@@ -2,7 +2,7 @@ import { Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
-import { fmt, secondsLeft } from "~/domain/format";
+import { countOf, fmt, secondsLeft } from "~/domain/format";
 import { fileNameOf } from "~/domain/view";
 import type { RevertProgress } from "~/ipc/contract";
 import { useApp } from "~/state/store";
@@ -62,7 +62,7 @@ function Applying() {
               {fmt(progress().bytesMoved)} of {fmt(progress().bytesToMove)} copied
               across &middot;{" "}
             </Show>
-            {progress().groupIndex} of {progress().groupTotal} files &middot;{" "}
+            {progress().groupIndex} of {countOf(progress().groupTotal, "file", "files")} &middot;{" "}
             {secondsLeft(
               Number.isFinite(progress().etaMs as number)
             ? Math.round(progress().etaMs! / 1000)
@@ -98,7 +98,7 @@ function Applying() {
               <Icon name="check" size={12} />
             </span>
             <span class="s">Moved into the vault</span>
-            <span class="r">{progress().filesMoved} files</span>
+            <span class="r">{countOf(progress().filesMoved, "file", "files")}</span>
           </div>
           <div class="step done">
             <span class="ic">
@@ -221,7 +221,7 @@ function Undoing(props: { progress: RevertProgress }) {
               <Icon name="check" size={12} />
             </span>
             <span class="s">Files back where they were</span>
-            <span class="r">{p().filesPutBack} files</span>
+            <span class="r">{countOf(p().filesPutBack, "file", "files")}</span>
           </div>
           <div class="step done">
             <span class="ic">

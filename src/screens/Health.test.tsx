@@ -93,9 +93,28 @@ describe("a link that points at a file that is not there", () => {
       const modal = document.querySelector(".modal")!;
       expect(modal.textContent).toContain("no model file is deleted");
       expect(modal.textContent).toContain("points at nothing");
-      await userEvent.click(screen.getByRole("button", { name: /^Remove \d+ links$/ }));
+      await userEvent.click(screen.getByRole("button", { name: /^Remove \d+ links?$/ }));
       await waitFor(() => app.danglingLinks().length === 0);
       expect(document.querySelector(".blk")).toBeNull();
+    },
+    15_000,
+  );
+
+  it(
+    "says one link, not one links, when only one is broken",
+    async () => {
+      const { app } = await withBrokenLinks(() => <CleanupScreen />);
+      while (app.danglingLinks().length > 1) {
+        const before = app.danglingLinks().length;
+        await userEvent.click(screen.getAllByRole("button", { name: "Remove this one" })[0]!);
+        await waitFor(() => app.danglingLinks().length === before - 1);
+      }
+      await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
+      await waitFor(() => document.querySelector(".modal") !== null);
+      const modal = document.querySelector(".modal")!.textContent!;
+      expect(modal).toContain("1 link is removed from the install it sits in.");
+      expect(screen.getByRole("button", { name: "Remove 1 link" })).toBeTruthy();
+      expect(modal).not.toContain("1 links");
     },
     15_000,
   );

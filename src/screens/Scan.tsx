@@ -2,7 +2,7 @@ import { For, Show, createMemo } from "solid-js";
 
 import { Icon } from "~/components/Icon";
 import { Header } from "~/components/Shell";
-import { fmt, minutesLeft } from "~/domain/format";
+import { countOf, fmt, minutesLeft } from "~/domain/format";
 import { installNameOf } from "~/domain/installname";
 import { useApp } from "~/state/store";
 import type { ScanProgress } from "~/ipc/contract";
@@ -16,7 +16,7 @@ const PHASES: ReadonlyArray<{
   {
     id: "enumerating",
     title: "List every model file",
-    result: (p) => `${p.filesSeen} files found`,
+    result: (p) => `${countOf(p.filesSeen, "file", "files")} found`,
   },
   {
     id: "hashing",
@@ -81,7 +81,7 @@ export function ScanScreen() {
           </div>
           <div class="note up">
             {fmt(progress().bytesHashed)} of {fmt(progress().bytesToHash)} &middot;{" "}
-            {progress().filesHashed} of {progress().filesToHash} files
+            {progress().filesHashed} of {countOf(progress().filesToHash, "file", "files")}
             <Show when={progress().bytesFromCache > 0}>
               {" "}
               &middot; {fmt(progress().bytesFromCache)} already known, not read

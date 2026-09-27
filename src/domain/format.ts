@@ -202,3 +202,8 @@ export function agoLong(iso: string, now: number = Date.now()): string {
   if (hours < 48) return say(hours, "hour");
   return say(Math.floor(hours / 24), "day");
 }
+
+/** A count with its word in the right form: "1 model", "3 models". */
+export function countOf(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
