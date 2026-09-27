@@ -1244,6 +1244,29 @@ impl<'a> Applier<'a> {
         // them anyway reported success while leaving the tree consolidated,
         // and left a live link the database knew nothing about.
         self.check_nothing_later_depends_on(apply_id, &to_undo)?;
+
+        // Every model this run put in the vault must still be there, or the
+        // undo would stop part way on the first one that is not. The check
+        // above reads the time of each later change, and a clock that was
+        // behind can hide a delete from it. This reads the disk.
+        for e in &to_undo {
+            let JournalStep::MoveToVault { to, .. } = &e.step else { continue };
+            if e.state != JournalState::Done || std::fs::symlink_metadata(to).is_ok() {
+                continue;
+            }
+            let deleted_in_cleanup = self.store.journal_ids()?.into_iter().filter(|id| id.starts_with(crate::vault::DELETE_JOURNAL_PREFIX)).any(|id| {
+                self.store.journal(&id).unwrap_or_default().iter().any(|d| {
+                    d.state == JournalState::Done
+                        && matches!(&d.step, JournalStep::DeleteVaultFile { path, .. } if crate::paths::same_path_lexically(path, to))
+                })
+            });
+            let message = if deleted_in_cleanup {
+                "One of this run's models was deleted in Cleanup, so this run can no longer be undone. Nothing was changed."
+            } else {
+                "A model this run put in the vault is no longer there, so this run can no longer be undone. Nothing was changed."
+            };
+            return Err(VaultError::conflict(message).with_detail(crate::paths::display_path(to)).with_path(to));
+        }
         Ok((record, to_undo))
     }
 
@@ -1367,6 +1390,11 @@ impl<'a> Applier<'a> {
             let delete_finished = entries.iter().any(|e| {
                 e.state == JournalState::Done && matches!(e.step, JournalStep::DeleteVaultFile { .. })
             });
+            // A stopped delete whose links are all back changed nothing that
+            // lasts: the person kept the model.
+            if is_delete && !delete_finished && !crate::vault::delete_left_a_gap(&entries) {
+                continue;
+            }
             for e in entries {
                 if matches!(e.state, JournalState::Reverted | JournalState::Undone | JournalState::Failed) {
                     continue;

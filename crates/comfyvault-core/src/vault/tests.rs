@@ -1081,6 +1081,95 @@ fn a_delete_that_put_its_links_back_is_not_a_stopped_delete() {
     assert!(health.ok);
 }
 
+fn two_models(w: &TestWorld) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let ma = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+    let mb = w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+    let ka = w.write_model(&a, "models/loras/keep.safetensors", &weights("keep"));
+    let kb = w.write_model(&b, "models/loras/keep.safetensors", &weights("keep"));
+    consolidate_as(w, "ap-1", &[a, b]);
+    (ma, mb, ka, kb)
+}
+
+#[test]
+fn a_delete_stamped_before_the_run_still_refuses_the_undo_before_any_step() {
+    // A vault used on a second computer whose clock is behind: the delete's
+    // steps carry times before the run. The undo cannot go by the clock
+    // alone, or it stops half way on the file that is gone.
+    let w = TestWorld::new();
+    let (ma, mb, ka, kb) = two_models(&w);
+    let sha = weights_hash("m");
+    vault(&w).delete_file_and_links(&sha, &sha).unwrap();
+
+    let run_start = w.store.apply("ap-1").unwrap().unwrap().started_at.as_millis();
+    let id = w.store.journal_ids().unwrap().into_iter().find(|i| i.starts_with("delete-")).unwrap();
+    for mut e in w.store.journal(&id).unwrap() {
+        e.started_at = crate::time_util::Timestamp::from_millis(run_start - 600_000);
+        w.store.update_journal(&e).unwrap();
+    }
+
+    let err = Applier::new(&w.store, &w.platform)
+        .revert("ap-1", &CancelToken::new(), &NullSink)
+        .unwrap_err();
+    assert!(err.message.contains("deleted in Cleanup"), "{}", err.message);
+    for p in [&ka, &kb] {
+        assert!(w.is_link(p), "{p:?} was undone by an undo that should have refused");
+        assert_eq!(w.read(p), weights("keep"));
+    }
+    for p in [&ma, &mb] {
+        assert!(std::fs::symlink_metadata(p).is_err());
+    }
+    assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, crate::store::ApplyState::Completed);
+}
+
+#[test]
+fn a_stopped_delete_whose_links_are_put_back_is_no_longer_reported() {
+    // The person decides to keep the model and puts the lost link back from
+    // the Library. Nothing may then keep asking them to finish the delete.
+    let w = TestWorld::new();
+    let (ma, mb, _, _) = two_models(&w);
+    let sha = weights_hash("m");
+    let hooked = Hooked::new(&w.platform);
+    for (now, other) in [(ma.clone(), mb.clone()), (mb.clone(), ma.clone())] {
+        hooked.before_removing(&now, move || {
+            if std::fs::symlink_metadata(&other).is_err() {
+                panic!("the computer stopped");
+            }
+        });
+    }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Vault::new(&w.store, &hooked).delete_file_and_links(&sha, &sha)
+    }));
+    let gone = if w.is_link(&ma) { mb.clone() } else { ma.clone() };
+    assert_eq!(vault(&w).health().unwrap().stopped_deletes.len(), 1);
+
+    let install = w.store.installs().unwrap().into_iter().find(|i| gone.starts_with(&i.root)).unwrap();
+    for l in w.store.links_for_hash(&sha).unwrap() {
+        if l.abs_path == gone {
+            w.store.delete_link(&l.id).unwrap();
+        }
+    }
+    crate::links::Links::new(&w.store, &w.platform)
+        .create(&CreateLinkRequest {
+            install_id: install.id,
+            sha256: sha.clone(),
+            relative_dir: "models/loras".into(),
+            link_name: None,
+            create_dir: false,
+        })
+        .unwrap();
+
+    let h = vault(&w).health().unwrap();
+    assert!(h.stopped_deletes.is_empty(), "every link is back, and a stopped delete is still reported");
+    assert!(h.ok);
+    // And the undo no longer sends the person to finish that delete.
+    let err = Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink);
+    if let Err(e) = &err {
+        assert!(!e.message.contains("stopped part way"), "{}", e.message);
+    }
+}
+
 #[test]
 fn a_record_that_points_outside_the_vault_deletes_nothing_there() {
     // A record written by an older build, or by hand, can name a folder

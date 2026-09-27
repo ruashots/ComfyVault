@@ -1827,6 +1827,14 @@ run's models was deleted in Cleanup, so this run can no longer be undone.
 Nothing was changed.", and `detail` lists the deleted model's paths, separated
 by commas. `revert_apply` and `preview_revert` both answer it.
 
+The undo also reads the disk before any step: if a model this run put in
+the vault is no longer there, it refuses with `conflict` and the same
+"deleted in Cleanup" message when a delete in Cleanup removed it, or "A model
+this run put in the vault is no longer there, so this run can no longer be
+undone. Nothing was changed." otherwise. `path` names the missing file. A
+clock that was behind on another computer therefore never turns this into an
+undo that stops half way.
+
 Only a delete that happened after the run started counts. The undo of a run
 made after the delete, for example after the same model came back and was
 consolidated again, is not refused because of it.
@@ -1893,7 +1901,9 @@ type VaultHealth = {
 ```
 
 A model in `stoppedDeletes` is still in the vault, and some installs lost
-their link to it. The user interface must offer to delete it again with
+their link to it. It is listed only while at least one of the links that
+delete removed is still missing. A person who keeps the model and puts those
+links back, from the Library, sees it leave the list. The user interface must offer to delete it again with
 `delete_vault_file` and `removeLinks: true`, which finishes the delete. It
 leaves the list once the delete finishes. A delete that failed and put its
 links back is never listed.

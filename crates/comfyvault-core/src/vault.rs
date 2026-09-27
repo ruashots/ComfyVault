@@ -1218,6 +1218,9 @@ impl<'a> Vault<'a> {
             let (Some(first), false, true) = (entries.first(), finished, removed_some) else {
                 continue;
             };
+            if !delete_left_a_gap(&entries) {
+                continue;
+            }
             let Some(record) = self.store.vault_file(&first.group_id)? else {
                 continue;
             };
@@ -1249,6 +1252,23 @@ impl<'a> Vault<'a> {
     pub fn path_of(&self, record: &VaultFileRecord) -> PathBuf {
         self.store.vault_root().join(record.vault_rel_path())
     }
+}
+
+/// Whether a delete that stopped part way still leaves a place without its
+/// link to the model.
+///
+/// Once every link it removed is back, pointing at the model again, the
+/// person has kept the model, and the stopped delete no longer stands for
+/// anything. Nothing then asks them to finish a delete they chose not to.
+pub fn delete_left_a_gap(entries: &[crate::store::JournalEntry]) -> bool {
+    entries.iter().any(|e| {
+        let JournalStep::RemoveLink { link, target } = &e.step else { return false };
+        matches!(e.state, crate::store::JournalState::Done | crate::store::JournalState::Pending)
+            && !matches!(
+                (std::fs::canonicalize(link), std::fs::canonicalize(target)),
+                (Ok(a), Ok(b)) if a == b
+            )
+    })
 }
 
 /// Puts a content into the vault outside an apply run.
