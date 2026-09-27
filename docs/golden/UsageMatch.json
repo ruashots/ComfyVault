@@ -1,6 +1,6 @@
 {
   "installId": "inst-1",
   "installLabel": "ComfyUI Main",
-  "workflowName": "portrait.json",
+  "workflowName": "portrait",
   "workflowPath": "C:\\ComfyUI-Main\\user\\default\\workflows\\portrait.json"
 }

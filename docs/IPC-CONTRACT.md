@@ -2232,7 +2232,7 @@ type UsageMatch = {
   installId: string
   installLabel: string
   workflowPath: string
-  workflowName: string
+  workflowName: string  // the file name without `.json`, for example 'portrait'
 }
 ```
 

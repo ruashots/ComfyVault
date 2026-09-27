@@ -388,7 +388,7 @@ fn usage_match() -> UsageMatch {
         install_id: "inst-1".into(),
         install_label: "ComfyUI Main".into(),
         workflow_path: r"C:\ComfyUI-Main\user\default\workflows\portrait.json".into(),
-        workflow_name: "portrait.json".into(),
+        workflow_name: "portrait".into(),
     }
 }
 
