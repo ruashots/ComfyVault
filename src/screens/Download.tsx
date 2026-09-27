@@ -802,10 +802,14 @@ function DownloadRow(props: { record: Download }) {
   const r = () => props.record;
   const view = createMemo(() => rowView(r(), app.installs(), app.vaultVolume()));
 
-  /** The model is found in the vault by where it went. */
+  /** The model is found in the vault by its SHA-256, or else by where it went. */
   const showInLibrary = async () => {
+    const sha = r().sha256;
     const where = r().vaultRelPath.toLowerCase();
-    const find = () => app.vaultFiles().find((f) => f.vaultRelPath.toLowerCase() === where);
+    const find = () =>
+      app
+        .vaultFiles()
+        .find((f) => (sha ? f.sha256 === sha : f.vaultRelPath.toLowerCase() === where));
     // The list of vault files may not have caught up with a download that just ended.
     if (!find()) await app.actions.refresh();
     const file = find();

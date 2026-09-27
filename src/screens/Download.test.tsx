@@ -346,6 +346,8 @@ describe("a refusal found while reading", () => {
   it("says Civitai needs a token, in Civitai's words", async () => {
     await mount();
     await read("https://civitai.com/models/123456");
+    expect(card()!.querySelector(".card-h .nm")!.textContent).toBe("Studio Portrait XL");
+    expect(card()!.querySelector(".card-sub")!.textContent).toBe("https://civitai.com/models/123456");
     expect(card()!.querySelector("h4")!.textContent).toBe("Civitai needs your token for this model");
     expect(card()!.querySelector("q")!.textContent).toBe(
       "The creator of this asset requires you to be logged in to download it",

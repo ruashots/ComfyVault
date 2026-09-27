@@ -303,8 +303,10 @@ function refuse(
   host: DownloadHost | null,
   serviceMessage: string | null,
   page: HfPage | null = null,
+  title: string | null = null,
+  subtitle: string | null = null,
 ): AddressRefusal {
-  return { kind, host, serviceMessage, page };
+  return { kind, host, title, subtitle, serviceMessage, page };
 }
 
 function error(code: VaultError["code"], message: string, detail?: string): VaultError {
@@ -321,8 +323,6 @@ interface Token {
 }
 
 interface Job extends Download {
-  /** The file's SHA-256 once known. The record does not carry it. */
-  hash: string | null;
   /** What the transfer reads again on a continue. Not part of the record. */
   address: string;
   versionId: number | null;
@@ -429,7 +429,7 @@ export class DownloadDesk {
           f.path === parsed.path,
       );
       const hf = (kind: AddressRefusal["kind"], words: string) =>
-        refused(refuse(kind, "huggingface", words, page));
+        refused(refuse(kind, "huggingface", words, page, name, subtitle));
       if (!found) return hf("notFound", "Entry not found");
       const token = this.tokens.huggingface;
       if (found.gated) {
@@ -478,11 +478,18 @@ export class DownloadDesk {
     if (model.needsLogin) {
       const token = this.tokens.civitai;
       if (!token) {
-        return refused(refuse("tokenMissing", "civitai", CIVITAI_LOGIN));
+        return refused(refuse("tokenMissing", "civitai", CIVITAI_LOGIN, null, model.name, args.address.trim()));
       }
       if (!token.ok) {
         return refused(
-          refuse("tokenRejected", "civitai", token.message ?? CIVITAI_BAD_TOKEN),
+          refuse(
+            "tokenRejected",
+            "civitai",
+            token.message ?? CIVITAI_BAD_TOKEN,
+            null,
+            model.name,
+            args.address.trim(),
+          ),
         );
       }
     }
@@ -702,7 +709,7 @@ export class DownloadDesk {
       state: "waiting",
       category: plan.category ?? args.category,
       vaultRelPath: plan.vaultRelPath ?? `${args.category}\\${plan.fileName}`,
-      hash: plan.alreadyInVault ? plan.sha256 : null,
+      sha256: plan.alreadyInVault ? plan.sha256 : null,
       installIds,
       linkedInstallIds: [],
       notLinked: [],
@@ -871,7 +878,7 @@ export class DownloadDesk {
       return;
     }
     const hash = job.expected ?? sha(`computed|${job.address}|${job.fileName}`);
-    job.hash = hash;
+    job.sha256 = hash;
     job.finishedAt = new Date().toISOString();
     if (world.vault.has(hash)) {
       // Found after the transfer: the new file goes, the links are made.
@@ -1036,7 +1043,7 @@ function tagged(name: string, hash: string): string {
 }
 
 function publicOf(job: Job): Download {
-  const { expected: _e, hash: _h, address: _a, versionId: _v, fileId: _f, ...record } = job;
+  const { expected: _e, address: _a, versionId: _v, fileId: _f, ...record } = job;
   return { ...record, installIds: [...record.installIds], linkedInstallIds: [...record.linkedInstallIds] };
 }
 

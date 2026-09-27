@@ -33,14 +33,15 @@ export function hostOf(address: string): Host | null {
 }
 
 /**
- * The head of a refused card. A refusal names no model, so a Hugging Face one
- * is named by the file in its address and its repository, and a Civitai one
- * by its address.
+ * The head of a refused card: what the site called the model. When it said
+ * nothing, a Hugging Face refusal is named by the file in its address and its
+ * repository, and a Civitai one by its address.
  */
 export function refusedHead(
   refusal: AddressRefusal,
   address: string,
 ): { title: string; subtitle: string | null } {
+  if (refusal.title) return { title: refusal.title, subtitle: refusal.subtitle };
   if (refusal.page) {
     const path = address.trim().split(/[?#]/)[0]!;
     const last = path.split("/").filter(Boolean).pop() ?? path;

@@ -905,6 +905,9 @@ export interface AddressRefusal {
   kind: AddressRefusalKind;
   /** Null for badAddress. */
   host: DownloadHost | null;
+  /** What the site calls the model, when it said before refusing. */
+  title: string | null;
+  subtitle: string | null;
   /** The site's own words, verbatim. Text from the network: never markup. */
   serviceMessage: string | null;
   /** Hugging Face only. */
@@ -1019,6 +1022,8 @@ export interface Download {
   notLinked: NotLinked[];
   /** Nothing new went into the vault: it held the file already. */
   alreadyInVault: boolean;
+  /** The file's proven SHA-256: at done, and at once for linkedOnly. */
+  sha256: string | null;
   state: DownloadState;
   bytesDone: number;
   bytesTotal: number;

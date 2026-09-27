@@ -9,6 +9,7 @@ import {
   linkHint,
   listCount,
   listOrder,
+  refusedHead,
   rowView,
   speedOf,
 } from "~/domain/download";
@@ -53,6 +54,7 @@ const record = (over: Partial<Download> = {}): Download => ({
   linkedInstallIds: [],
   notLinked: [],
   alreadyInVault: false,
+  sha256: null,
   error: null,
   startedAt: "2026-09-26T10:00:00Z",
   finishedAt: null,
@@ -213,6 +215,35 @@ describe("what a row of the Downloads list says", () => {
       "Downloaded into the vault as loras\\x.safetensors, and linked in ComfyUI-Easy-Install. It was not linked in ComfyUI-Flux: A file with that name appeared there in the meantime.",
     );
     expect(view.parts.at(-1)!.tone).toBe("bad");
+  });
+});
+
+describe("the head of a refused card", () => {
+  const refusal = {
+    kind: "tokenMissing" as const,
+    host: "huggingface" as const,
+    title: null,
+    subtitle: null,
+    serviceMessage: null,
+    page: { owner: "black-forest-labs", repo: "FLUX.1-dev" },
+  };
+
+  it("uses what the site called the model", () => {
+    expect(
+      refusedHead({ ...refusal, title: "Studio Portrait XL", subtitle: "https://civitai.com/models/123456" }, "x"),
+    ).toEqual({ title: "Studio Portrait XL", subtitle: "https://civitai.com/models/123456" });
+  });
+
+  it("falls back to the address when the site said nothing", () => {
+    const address = "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/flux1-dev.safetensors?download=true";
+    expect(refusedHead(refusal, address)).toEqual({
+      title: "flux1-dev.safetensors",
+      subtitle: "black-forest-labs/FLUX.1-dev",
+    });
+    expect(refusedHead({ ...refusal, host: "civitai", page: null }, " https://civitai.com/models/9 ")).toEqual({
+      title: "https://civitai.com/models/9",
+      subtitle: null,
+    });
   });
 });
 
