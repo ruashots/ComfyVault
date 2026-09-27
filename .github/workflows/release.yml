@@ -56,7 +56,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       # No build cache: a release is built from nothing but the tagged source.
+      # The runner's TEMP is an 8.3 short name; see ci.yml.
       - name: Rust tests
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: cargo test --workspace --locked
 
       - name: Release build

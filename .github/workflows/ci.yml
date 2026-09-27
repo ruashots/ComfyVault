@@ -66,5 +66,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The hosted runner's TEMP is an 8.3 short name, C:\Users\RUNNER~1.
+      # The engine reads real paths in their long form, and many tests build
+      # the path they expect from the temporary folder's name as given, so
+      # they would compare two spellings of one place. A long-named
+      # temporary folder keeps the two the same.
       - name: Rust tests
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: cargo test --workspace --locked
