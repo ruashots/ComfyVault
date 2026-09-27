@@ -92,7 +92,8 @@ const usage = (name: string, matches: [string, string][], searched = true): Usag
     installId,
     installLabel: installId,
     workflowPath: `C:\\${installId}\\user\\${workflowName}`,
-    workflowName,
+    // As the engine sends it: the file name without .json.
+    workflowName: workflowName.replace(/\.json$/, ""),
   })),
   method: searched ? "Searched the saved workflows." : "There were no saved workflow files to search.",
 });
@@ -176,6 +177,8 @@ describe("Cleanup's line once the name changed", () => {
       unifyResultLine(
         {
           unifyId: "u1",
+          name: CONV,
+          vaultName: CONV,
           renamed: [renamed],
           removed: [{ installId: "prod", path: `C:\\prod\\${FP16}` }],
           skipped: [],
@@ -191,6 +194,8 @@ describe("Cleanup's line once the name changed", () => {
       unifyResultLine(
         {
           unifyId: "u1",
+          name: CONV,
+          vaultName: CONV,
           renamed: [renamed],
           removed: [],
           skipped: [{ installId: "prod", path: `C:\\prod\\${FP16}`, reason: "taken" }],

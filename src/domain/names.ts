@@ -6,6 +6,7 @@
  * decides what happens to each link; this file only says it.
  */
 
+import { leafOf } from "~/domain/format";
 import { installNameOf } from "~/domain/installname";
 import { numberWord } from "~/domain/view";
 import type {
@@ -156,7 +157,8 @@ export function unifyViewOf(plan: UnifyPlan, installs: readonly Nameable[]): Uni
         results
           .flatMap((w) => w.matches)
           .filter((m) => changingIds.includes(m.installId))
-          .map((m) => m.workflowName),
+          // The engine sends the name without .json. The file is what the person opens.
+          .map((m) => leafOf(m.workflowPath)),
       )
     : null;
   const method = searched ? null : (results[0]?.method ?? null);

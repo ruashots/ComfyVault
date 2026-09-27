@@ -1592,6 +1592,8 @@ export class FixtureEngine implements Engine {
     }
     const result: UnifyResult = {
       unifyId: `unify-${++this.unifyCount}`,
+      name,
+      vaultName: name,
       renamed: [],
       removed: [],
       skipped: [],
@@ -1840,7 +1842,7 @@ export class FixtureEngine implements Engine {
           installId: "studio",
           installLabel: "ComfyUI-Studio",
           workflowPath: `C:\\ComfyUI-Studio\\user\\default\\workflows\\flow-${i + 1}.json`,
-          workflowName: `flow-${i + 1}.json`,
+          workflowName: `flow-${i + 1}`,
         })),
         method: USAGE_METHOD,
       };

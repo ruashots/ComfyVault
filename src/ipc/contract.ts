@@ -792,14 +792,34 @@ export interface UnifyPlan {
   workflows: UsageResult[];
 }
 
+/** Where a job giving a model one name stopped, and why. */
+export interface UnifyStop {
+  /** Null when every link was done and only renaming the vault file failed. */
+  installId: string | null;
+  path: string;
+  message: string;
+}
+
 export interface UnifyResult {
   /** The journal entry, for an undo. */
   unifyId: string;
+  /** The name asked for. */
+  name: string;
+  /**
+   * The name the vault keeps the file under now. When another model already
+   * has the chosen name in the vault, the vault keeps its old one, and the
+   * installs still change.
+   */
+  vaultName: string;
   renamed: { installId: string; from: string; to: string }[];
   removed: { installId: string; path: string }[];
   skipped: { installId: string; path: string; reason: string }[];
   /** Windows would not let a link go, so the job stopped there. */
-  stopped: { installId: string; path: string; message: string } | null;
+  stopped: UnifyStop | null;
+}
+
+export interface UnifyUndone {
+  undone: boolean;
 }
 
 /** A card the person chose to keep as it is, with the names it had then. */
