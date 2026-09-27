@@ -1307,3 +1307,48 @@ fn opening_another_vault_stops_a_download_and_keeps_its_part() {
     assert_eq!(back[0].bytes_done, 100_000);
 }
 
+#[test]
+fn opening_a_vault_finishes_a_link_a_crash_cut_off() {
+    // What a crash between a link and its record leaves: the link on the
+    // disk, a pending journal step, and no record.
+    let f = Fixture::new();
+    f.open_vault();
+    let i = f.add_install("A");
+    let store = f.engine.store().unwrap();
+    let vault_file = store.vault_root().join("loras/m.safetensors");
+    std::fs::create_dir_all(vault_file.parent().unwrap()).unwrap();
+    std::fs::write(&vault_file, weights("m")).unwrap();
+    store
+        .put_vault_file(&crate::store::VaultFileRecord {
+            sha256: weights_hash("m"),
+            canonical_name: "m.safetensors".into(),
+            category: "loras".into(),
+            size_bytes: weights("m").len() as u64,
+            added_at: crate::time_util::Timestamp::now(),
+            aliases: vec![],
+        })
+        .unwrap();
+    let link = i.root.join("models/loras/m.safetensors");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    f.platform.create_file_symlink(&link, &vault_file).unwrap();
+    store
+        .append_journal(&crate::store::JournalEntry {
+            apply_id: format!("{}{}", crate::links::LINK_JOURNAL_PREFIX, "abc"),
+            seq: 0,
+            group_id: i.id.clone(),
+            step: crate::store::JournalStep::CreateLink { link: link.clone(), target: vault_file.clone() },
+            state: crate::store::JournalState::Pending,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            error: None,
+        })
+        .unwrap();
+    drop(store);
+
+    let first = f.dir.path().join("ComfyVault");
+    f.engine.select_vault(&f.dir.path().join("Other"), true).unwrap();
+    f.engine.select_vault(&first, false).unwrap();
+    let rec = f.engine.store().unwrap().link_at_path(&link).unwrap();
+    assert!(rec.is_some(), "the cut-off link has its record again");
+}
+

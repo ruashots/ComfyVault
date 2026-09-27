@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, Result, VaultError};
 use crate::install::Install;
 use crate::platform::Platform;
-use crate::store::{LinkOrigin, LinkRecord, LinkState, Store};
+use crate::store::{JournalEntry, JournalState, JournalStep, LinkOrigin, LinkRecord, LinkState, Store};
 use crate::time_util::Timestamp;
 
 /// A folder in an install that can receive a link.
@@ -64,6 +64,67 @@ pub struct CreateLinkRequest {
     pub link_name: Option<String>,
     #[serde(default)]
     pub create_dir: bool,
+}
+
+/// How the journal of a link made by hand is named.
+pub const LINK_JOURNAL_PREFIX: &str = "link-";
+
+/// The journal of one link made by hand: its folder, if one is made, and the
+/// link. The group is the install, so a cut-off step can be finished.
+pub struct LinkJournal<'a> {
+    store: &'a Store,
+    id: String,
+    install_id: String,
+    entries: Vec<JournalEntry>,
+}
+
+impl<'a> LinkJournal<'a> {
+    fn new(store: &'a Store, install_id: &str) -> Self {
+        Self {
+            store,
+            id: format!("{LINK_JOURNAL_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            install_id: install_id.to_string(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn pending(&mut self, step: JournalStep) -> Result<usize> {
+        let e = JournalEntry {
+            apply_id: self.id.clone(),
+            seq: self.entries.len() as u64,
+            group_id: self.install_id.clone(),
+            step,
+            state: JournalState::Pending,
+            started_at: Timestamp::now(),
+            finished_at: None,
+            error: None,
+        };
+        self.store.append_journal(&e)?;
+        self.entries.push(e);
+        Ok(self.entries.len() - 1)
+    }
+
+    fn mark(&mut self, i: usize, state: JournalState) -> Result<()> {
+        let e = &mut self.entries[i];
+        e.state = state;
+        e.finished_at = Some(Timestamp::now());
+        self.store.update_journal(e)
+    }
+
+    /// Journals the making of `folder`, when it is missing and may be made.
+    fn folder(&mut self, folder: &Path, create: bool) -> Result<Option<usize>> {
+        if !create || folder.is_dir() {
+            return Ok(None);
+        }
+        Ok(Some(self.pending(JournalStep::CreateDir { path: folder.to_path_buf() })?))
+    }
+
+    fn folder_done(&mut self, step: Option<usize>, made: bool) -> Result<()> {
+        match step {
+            Some(i) => self.mark(i, if made { JournalState::Done } else { JournalState::Failed }),
+            None => Ok(()),
+        }
+    }
 }
 
 /// One folder in the chooser for a new link.
@@ -122,9 +183,13 @@ impl<'a> Links<'a> {
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
             // Its folders come from the disk, not from the database row.
             .proved()?;
+        let mut journal = LinkJournal::new(self.store, &install.id);
         let Some(dir) = &req.dir else {
-            let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
-            return self.make(&install, &req.sha256, target_dir, req.link_name.clone(), LinkOrigin::Manual, None);
+            let folder = self.resolve_dir_path(&install, &req.relative_dir)?;
+            let made = journal.folder(&folder, req.create_dir)?;
+            let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir);
+            journal.folder_done(made, target_dir.is_ok())?;
+            return self.make(&install, &req.sha256, target_dir?, req.link_name.clone(), LinkOrigin::Manual, None, Some(&mut journal));
         };
         if !req.relative_dir.is_empty() {
             return Err(VaultError::invalid("Give the folder one way, not both. Nothing was created."));
@@ -144,8 +209,10 @@ impl<'a> Links<'a> {
             )
             .with_path(dir));
         }
-        let target_dir = self.prove_dir(&install, dir.clone(), req.create_dir)?;
-        let record = self.make(&install, &sha, target_dir, req.link_name.clone(), LinkOrigin::Manual, None)?;
+        let made = journal.folder(dir, req.create_dir)?;
+        let target_dir = self.prove_dir(&install, dir.clone(), req.create_dir);
+        journal.folder_done(made, target_dir.is_ok())?;
+        let record = self.make(&install, &sha, target_dir?, req.link_name.clone(), LinkOrigin::Manual, None, Some(&mut journal))?;
         self.store.put_link_dir(&install.id, &category, dir)?;
         Ok(record)
     }
@@ -251,7 +318,8 @@ impl<'a> Links<'a> {
         apply_id: Option<String>,
     ) -> Result<LinkRecord> {
         let target_dir = self.prove_dir(install, folder.to_path_buf(), true)?;
-        self.make(install, sha256, target_dir, Some(name.to_string()), origin, apply_id)
+        // A download journals its own steps.
+        self.make(install, sha256, target_dir, Some(name.to_string()), origin, apply_id, None)
     }
 
     fn make(
@@ -262,6 +330,7 @@ impl<'a> Links<'a> {
         link_name: Option<String>,
         origin: LinkOrigin,
         apply_id: Option<String>,
+        mut journal: Option<&mut LinkJournal<'_>>,
     ) -> Result<LinkRecord> {
         let sha = crate::scan::hash::normalize_sha256(sha256)
             .ok_or_else(|| VaultError::invalid("That is not a file hash."))?;
@@ -314,7 +383,19 @@ impl<'a> Links<'a> {
             .with_path(&link_path));
         }
 
-        self.platform.create_file_symlink(&link_path, &vault_path)?;
+        // Written before the link, and marked done only once its record is
+        // saved. A crash in between leaves the step pending, and the next
+        // time the vault opens, the record is written for the link it made.
+        let step = match journal.as_deref_mut() {
+            Some(j) => Some(j.pending(JournalStep::CreateLink { link: link_path.clone(), target: vault_path.clone() })?),
+            None => None,
+        };
+        if let Err(e) = self.platform.create_file_symlink(&link_path, &vault_path) {
+            if let (Some(j), Some(i)) = (journal.as_deref_mut(), step) {
+                let _ = j.mark(i, JournalState::Failed);
+            }
+            return Err(e);
+        }
 
         let record = LinkRecord {
             id: uuid::Uuid::new_v4().to_string(),
@@ -331,8 +412,90 @@ impl<'a> Links<'a> {
             created_by: origin,
             apply_id,
         };
-        self.store.put_link(&record)?;
+        if let Err(e) = self.store.put_link(&record) {
+            // No record, no link: a link the vault does not know about is
+            // one nothing would ever tidy.
+            let _ = self.platform.remove_symlink(&record.abs_path);
+            if let (Some(j), Some(i)) = (journal.as_deref_mut(), step) {
+                let _ = j.mark(i, JournalState::Reverted);
+            }
+            return Err(e);
+        }
+        if let (Some(j), Some(i)) = (journal, step) {
+            j.mark(i, JournalState::Done)?;
+        }
         Ok(record)
+    }
+
+    /// Finishes the links a crash cut off between the link and its record.
+    ///
+    /// Run when a vault opens. A pending step whose link is on the disk,
+    /// leading to the vault file it names, gets its record. One whose link
+    /// never appeared is marked failed. Anything else at that path is not
+    /// this engine's, and is left alone.
+    pub fn finish_interrupted(&self) -> Result<u64> {
+        let mut finished = 0;
+        for id in self.store.journal_ids()? {
+            if !id.starts_with(LINK_JOURNAL_PREFIX) {
+                continue;
+            }
+            for mut e in self.store.journal(&id)? {
+                if e.state != JournalState::Pending {
+                    continue;
+                }
+                let state = match &e.step {
+                    JournalStep::CreateLink { link, target } => self.finish_one(&e.group_id, &id, link, target)?,
+                    // A folder is a folder whether or not the link followed.
+                    JournalStep::CreateDir { path } if path.is_dir() => JournalState::Done,
+                    _ => JournalState::Failed,
+                };
+                if state == JournalState::Done {
+                    finished += 1;
+                }
+                e.state = state;
+                e.finished_at = Some(Timestamp::now());
+                self.store.update_journal(&e)?;
+            }
+        }
+        Ok(finished)
+    }
+
+    fn finish_one(&self, install_id: &str, journal: &str, link: &Path, target: &Path) -> Result<JournalState> {
+        let ours = self.platform.is_symlink(link)
+            && matches!((std::fs::canonicalize(link), std::fs::canonicalize(target)), (Ok(a), Ok(b)) if a == b);
+        if !ours {
+            return Ok(JournalState::Failed);
+        }
+        if self.store.link_at_path(link)?.is_some() {
+            return Ok(JournalState::Done);
+        }
+        let root = self.store.vault_root();
+        let Some(file) = self
+            .store
+            .vault_files()?
+            .into_iter()
+            .find(|f| crate::paths::same_path_lexically(&root.join(f.vault_rel_path()), target))
+        else {
+            return Ok(JournalState::Failed);
+        };
+        let rel = self
+            .store
+            .install(install_id)?
+            .and_then(|i| link.strip_prefix(&i.root).ok().map(Path::to_path_buf))
+            .unwrap_or_else(|| link.to_path_buf());
+        self.store.put_link(&LinkRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            install_id: install_id.to_string(),
+            rel_path: rel,
+            abs_path: link.to_path_buf(),
+            link_name: link.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            sha256: file.sha256.clone(),
+            vault_rel_path: file.vault_rel_path(),
+            created_at: Timestamp::now(),
+            created_by: LinkOrigin::Manual,
+            apply_id: Some(journal.to_string()),
+        })?;
+        Ok(JournalState::Done)
     }
 
     /// Removes one link. Never touches the vault file it points at.
@@ -1212,6 +1375,81 @@ mod tests {
             assert!(links(&w).make_link_folder(&i.id, "loras", &bad).is_err(), "{bad:?}");
             assert!(!bad.exists(), "{bad:?} was made");
         }
+    }
+
+    // --- a link made by hand is journaled -------------------------------------
+
+    fn journal_of(w: &TestWorld) -> Vec<crate::store::JournalEntry> {
+        let id = w.store.journal_ids().unwrap().into_iter().find(|i| i.starts_with(LINK_JOURNAL_PREFIX)).expect("a journal");
+        w.store.journal(&id).unwrap()
+    }
+
+    #[test]
+    fn a_link_made_by_hand_journals_its_folder_and_itself() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        links(&w).create(&by_dir(&i, &sha, shared.join("portraits"), true)).unwrap();
+        let steps: Vec<(&str, JournalState)> = journal_of(&w)
+            .iter()
+            .map(|e| match e.step {
+                JournalStep::CreateDir { .. } => ("folder", e.state),
+                JournalStep::CreateLink { .. } => ("link", e.state),
+                _ => ("other", e.state),
+            })
+            .collect();
+        assert_eq!(steps, vec![("folder", JournalState::Done), ("link", JournalState::Done)]);
+    }
+
+    #[test]
+    fn a_crash_between_the_link_and_its_record_is_finished_when_the_vault_opens() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let dir = shared.join("portraits");
+        w.store.fault_next_link_write(crate::store::LinkWriteFault::Crash);
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            links(&w).create(&by_dir(&i, &sha, dir.clone(), true))
+        }));
+        assert!(crashed.is_err(), "the crash did not happen");
+        let link = dir.join("lora1.safetensors");
+        assert!(w.is_link(&link), "the link was made");
+        assert!(w.store.link_at_path(&link).unwrap().is_none(), "and its record was not");
+
+        assert_eq!(links(&w).finish_interrupted().unwrap(), 1);
+        let rec = w.store.link_at_path(&link).unwrap().expect("the record is written for the link");
+        assert_eq!(rec.sha256, sha);
+        assert_eq!(rec.install_id, i.id);
+        assert!(journal_of(&w).iter().all(|e| e.state == JournalState::Done));
+        assert_eq!(links(&w).finish_interrupted().unwrap(), 0, "a second pass finds nothing to do");
+    }
+
+    #[test]
+    fn a_record_the_database_refuses_takes_its_link_away_too() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let dir = shared.join("portraits");
+        w.store.fault_next_link_write(crate::store::LinkWriteFault::Refuse);
+        assert_eq!(links(&w).create(&by_dir(&i, &sha, dir.clone(), true)).unwrap_err().code, ErrorCode::StoreError);
+        assert!(std::fs::symlink_metadata(dir.join("lora1.safetensors")).is_err(), "a link with no record was left");
+    }
+
+    #[test]
+    fn a_pending_step_whose_path_holds_something_else_is_left_alone() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let dir = shared.join("portraits");
+        w.store.fault_next_link_write(crate::store::LinkWriteFault::Crash);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| links(&w).create(&by_dir(&i, &sha, dir.clone(), true))));
+        // The person replaced the half-made link with a file of their own.
+        let link = dir.join("lora1.safetensors");
+        std::fs::remove_file(&link).unwrap();
+        std::fs::write(&link, b"theirs").unwrap();
+        assert_eq!(links(&w).finish_interrupted().unwrap(), 0);
+        assert!(w.store.link_at_path(&link).unwrap().is_none());
+        assert_eq!(std::fs::read(&link).unwrap(), b"theirs");
     }
 }
 

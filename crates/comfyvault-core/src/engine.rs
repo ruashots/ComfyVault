@@ -408,6 +408,7 @@ impl Engine {
             self.downloads.close(Some(&self.context(&current)));
         }
         self.downloads.on_open(&self.context(&store))?;
+        Links::new(&store, self.platform.as_ref()).finish_interrupted()?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
         AppConfig { vault_root: Some(PathBuf::from(&info.root)) }.save(&self.config_path)?;

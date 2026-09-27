@@ -1519,6 +1519,14 @@ ComfyUI's checkpoint list. The folder is remembered for this install and
 kind, and a later download plan offers it first (section 16.2). Giving both
 `relativeDir` and `dir` is `invalidArgument`.
 
+Each step is written to the journal first, under the run name
+`link-{id}`, which is never a run to finish or undo: the folder, when one is
+made, then the link. The link step is marked done only once its record is
+saved. If the record cannot be saved, the link is removed again and the call
+fails. A crash between the link and its record leaves the step pending, and
+the next time the vault opens, the engine writes the record for that link,
+if the path still holds a link to the same vault file.
+
 Returns a `LinkRecord`.
 
 ```ts

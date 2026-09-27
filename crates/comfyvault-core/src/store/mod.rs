@@ -71,6 +71,17 @@ pub struct Store {
     /// A test's way to make download writes fail, as a full drive would.
     #[cfg(test)]
     download_writes_left: std::sync::Mutex<Option<u32>>,
+    /// A test's way to make the next link record write fail, or stop the
+    /// process there as a crash would.
+    #[cfg(test)]
+    link_write_fault: std::sync::Mutex<Option<LinkWriteFault>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+pub enum LinkWriteFault {
+    Refuse,
+    Crash,
 }
 
 impl std::fmt::Debug for Store {
@@ -129,6 +140,8 @@ impl Store {
             vault_root,
             #[cfg(test)]
             download_writes_left: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            link_write_fault: std::sync::Mutex::new(None),
         };
         store.initialize()?;
         store.scrub_download_addresses()?;
@@ -402,7 +415,23 @@ impl Store {
 
     // -- links ------------------------------------------------------------
 
+    #[cfg(test)]
+    pub fn fault_next_link_write(&self, fault: LinkWriteFault) {
+        *self.link_write_fault.lock().unwrap() = Some(fault);
+    }
+
     pub fn put_link(&self, l: &LinkRecord) -> Result<()> {
+        #[cfg(test)]
+        {
+            let fault = self.link_write_fault.lock().unwrap().take();
+            match fault {
+                Some(LinkWriteFault::Refuse) => {
+                    return Err(VaultError::new(ErrorCode::StoreError, "The vault database refused the write."))
+                }
+                Some(LinkWriteFault::Crash) => panic!("the computer stopped"),
+                None => {}
+            }
+        }
         let bytes = serde_json::to_vec(l)?;
         let key = path_key(&l.abs_path);
         let tx = self.db.begin_write()?;
