@@ -565,14 +565,29 @@ The file goes into the vault, in the folder you choose. ComfyVault suggests
 one: from Civitai's kind of model, or from a folder name in the Hugging Face
 path.
 
-Each install you tick gets a link, in the folder where that install's ComfyUI
-saves new files of that kind. That is `models\{folder}`, unless the install's
-`extra_model_paths.yaml` marks another folder `is_default` for that kind.
-This follows ComfyUI's own code.
+Each install you tick gets a link, in the folder you pick for it. Click the
+path to pick another. The choice offers every folder ComfyUI reads for that
+kind of model in that install, and every folder inside them: `models\{folder}`,
+the older names ComfyUI still reads, such as `models\unet`, and the folders the
+install's `extra_model_paths.yaml` adds, on any drive. Nothing outside them is
+offered or accepted, because a link there would not show in ComfyUI. This
+follows ComfyUI's own code.
 
-An install where a different file already has that name, in any folder
-ComfyUI searches for that kind, cannot be ticked. Only one of the two files
-would load, so ComfyVault leaves that install alone.
+The folder offered first is the one you picked last time for that kind in
+that install. The first time, it is the folder where ComfyUI saves new files
+of that kind: `models\{folder}`, unless `extra_model_paths.yaml` marks
+another folder `is_default` for it. A folder you make in the choice is made
+only when the link is.
+
+ComfyUI names a model in a folder inside, for example
+`loras\portraits\x.safetensors`, as `portraits\x.safetensors`. An install where a
+different file already has that name, in any folder ComfyUI reads for that
+kind, gets no link. Only one of the two files would load, so ComfyVault
+leaves that install alone.
+
+The Library's **Link into an install** offers the same choice of folders.
+There too, each step is written to the journal first, so a link cut off by a
+crash before its record was saved gets its record when the vault next opens.
 
 If the vault already holds the same file, nothing is downloaded. The installs
 you tick get links to the file that is there.

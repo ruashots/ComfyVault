@@ -246,7 +246,8 @@ models, how much is on disk, and how much can come back.
 **Library** lists the models in the vault, one row each. Before the first run
 it is empty. Search it, sort it by how many installs link to a model, and see
 every name a model has. Open a model to see what Civitai knows about it: its
-name, base model, trigger words, and a link to its Civitai page.
+name, base model, trigger words, and a link to its Civitai page. From there you
+can also link the model into an install, in the folder you pick.
 
 **Consolidate** shows the dry run and the Apply button, then the finished run
 with its undo.
@@ -254,11 +255,14 @@ with its undo.
 **Cleanup** handles what goes wrong later. Links that point at a missing file
 come first, and you can remove them. A file that arrived under two names can
 keep the name you pick, and the other name stays as a link so saved workflows
-still open. Vault files that nothing points at come last.
+still open. Vault files that nothing points at come next. Last, you can
+delete a model the installs still use: the same delete removes every link to
+it, in every install, and it cannot be undone.
 
 **Download** takes the address of a model on Hugging Face or Civitai. It shows
 the file, its size and its folder before anything is downloaded, then puts the
-file in the vault and links it in the installs you tick. The file is checked
+file in the vault and links it in the installs you tick, each in the folder you
+pick, for example `loras\portraits`. The file is checked
 against its SHA-256 before it goes into the vault. A download can be stopped
 and continued, and one cut off by a closed app continues from where it
 stopped.
