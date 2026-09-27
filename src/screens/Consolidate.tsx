@@ -580,7 +580,9 @@ function DuplicateGroup(props: { group: PlanGroup }) {
         <Icon name="link" size={11} />
         <span class="vp" title={joinPath(app.plan()?.vaultRoot ?? "", props.group.vaultRelPath)}>
           {duplicateAfter(props.group)}{" "}
-          <span class="faint">{"vault\\"}{folderOf(props.group.vaultRelPath)}</span>
+          <span class="faint">
+            {joinPath(app.plan()?.vaultRoot ?? "", folderOf(props.group.vaultRelPath))}
+          </span>
           {vaultName()}
         </span>
       </div>

@@ -63,11 +63,11 @@ const record = (over: Partial<Download> = {}): Download => ({
 });
 
 const say = (r: Download) =>
-  rowView(r, installs).parts.map((p) => p.text).join("");
+  rowView(r, installs, "C:\\ComfyVault").parts.map((p) => p.text).join("");
 
 describe("what a row of the Downloads list says", () => {
   it("says what is happening while it runs, with speed and time left", () => {
-    const view = rowView(record(), installs);
+    const view = rowView(record(), installs, "C:\\ComfyVault");
     expect(say(record())).toBe(
       "Downloading: 6.2 GB of 16 GB, 38 MB/s, about 4 minutes left.",
     );
@@ -87,12 +87,12 @@ describe("what a row of the Downloads list says", () => {
     expect(say(r)).toBe(
       "Will start when the download above is done. Then it will be linked in ComfyUI-Easy-Install and ComfyUI_windows_portable.",
     );
-    expect(rowView(r, installs).actions).toEqual(["remove"]);
-    expect(rowView(r, installs).bar).toBeNull();
+    expect(rowView(r, installs, "C:\\ComfyVault").actions).toEqual(["remove"]);
+    expect(rowView(r, installs, "C:\\ComfyVault").bar).toBeNull();
   });
 
   it("says a check comes before the vault and the links", () => {
-    const view = rowView(record({ state: "checking" }), installs);
+    const view = rowView(record({ state: "checking" }), installs, "C:\\ComfyVault");
     expect(say(record({ state: "checking" }))).toBe(
       "Checking the SHA-256 of the downloaded file. Then it goes into the vault and gets its links.",
     );
@@ -113,12 +113,12 @@ describe("what a row of the Downloads list says", () => {
     expect(say(dropped)).toBe(
       "The connection to Hugging Face dropped at 6.2 GB of 16 GB. The part already downloaded is kept.",
     );
-    expect(rowView(dropped, installs).parts[0]!.tone).toBe("bad");
+    expect(rowView(dropped, installs, "C:\\ComfyVault").parts[0]!.tone).toBe("bad");
     expect(say(record({ state: "cutOff" }))).toBe(
       "Cut off at 6.2 GB of 16 GB when ComfyVault closed. The part already downloaded is kept.",
     );
     for (const state of ["stopped", "failed", "cutOff"] as const) {
-      const view = rowView(record({ state }), installs);
+      const view = rowView(record({ state }), installs, "C:\\ComfyVault");
       expect(view.actions).toEqual(["continue", "discard"]);
       expect(view.bar!.stopped).toBe(true);
     }
@@ -218,7 +218,7 @@ describe("what a row of the Downloads list says", () => {
     expect(say(r)).toBe(
       "The downloaded file did not match the SHA-256 Civitai gave, so it was deleted. Nothing went into the vault and nothing was linked. This happens when the file changed on Civitai or the transfer was damaged.",
     );
-    expect(rowView(r, installs).actions).toEqual(["again", "remove"]);
+    expect(rowView(r, installs, "C:\\ComfyVault").actions).toEqual(["again", "remove"]);
   });
 
   it("says what happened when it is done", () => {
@@ -228,12 +228,12 @@ describe("what a row of the Downloads list says", () => {
       linkedInstallIds: ["a", "b"],
     });
     expect(say(r)).toBe(
-      "Downloaded into the vault as checkpoints\\dreamshaper_8.safetensors, and linked in ComfyUI-Easy-Install and ComfyUI_windows_portable.",
+      "Downloaded into the vault as C:\\ComfyVault\\checkpoints\\dreamshaper_8.safetensors, and linked in ComfyUI-Easy-Install and ComfyUI_windows_portable.",
     );
-    expect(rowView(r, installs).parts[0]).toEqual({ text: "Downloaded", tone: "ok" });
-    expect(rowView(r, installs).actions).toEqual(["library"]);
+    expect(rowView(r, installs, "C:\\ComfyVault").parts[0]).toEqual({ text: "Downloaded", tone: "ok" });
+    expect(rowView(r, installs, "C:\\ComfyVault").actions).toEqual(["library"]);
     expect(say(record({ state: "done", linkedInstallIds: [] }))).toBe(
-      "Downloaded into the vault as diffusion_models\\flux1-dev-fp8.safetensors.",
+      "Downloaded into the vault as C:\\ComfyVault\\diffusion_models\\flux1-dev-fp8.safetensors.",
     );
   });
 
@@ -254,9 +254,9 @@ describe("what a row of the Downloads list says", () => {
       linkedInstallIds: ["a"],
       notLinked: [{ installId: "c", reason: "A file with that name appeared there in the meantime." }],
     });
-    const view = rowView(r, installs);
+    const view = rowView(r, installs, "C:\\ComfyVault");
     expect(say(r)).toBe(
-      "Downloaded into the vault as loras\\x.safetensors, and linked in ComfyUI-Easy-Install. It was not linked in ComfyUI-Flux: A file with that name appeared there in the meantime.",
+      "Downloaded into the vault as C:\\ComfyVault\\loras\\x.safetensors, and linked in ComfyUI-Easy-Install. It was not linked in ComfyUI-Flux: A file with that name appeared there in the meantime.",
     );
     expect(view.parts.at(-1)!.tone).toBe("bad");
   });

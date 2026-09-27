@@ -350,7 +350,8 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 /* what every copy of one model will become, said once */
 .grp-after{margin:6px 0 0 21px;display:flex;align-items:baseline;gap:7px;font-size:10px;color:var(--t-body);min-width:0}
 .grp-after svg{color:var(--t-muted);align-self:center;flex:none}
-.grp-after .vp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t-cream)}
+/* the real vault path wraps rather than lose its end */
+.grp-after .vp{min-width:0;overflow-wrap:anywhere;color:var(--t-cream)}
 .grp-after .vp .faint{color:var(--t-faint)}
 .grp-after ~ .grp-why{line-height:1.5;max-width:720px}
 .grp-why .alt{color:var(--amber-text)}

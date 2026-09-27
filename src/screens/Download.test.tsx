@@ -168,7 +168,7 @@ describe("the plan for a Civitai model", () => {
       `${kv.querySelector(".k")!.textContent} ${kv.querySelector(".v")!.textContent}`.replace(/\s+/g, " "),
     );
     expect(rows[0]).toBe("Will download dreamshaper_8.safetensors, 2.0 GB");
-    expect(rows[1]).toContain("Will go into the vault as checkpoints\\dreamshaper_8.safetensors (Civitai calls it a Checkpoint)");
+    expect(rows[1]).toContain("Will go into the vault as C:\\ComfyVault\\checkpoints\\dreamshaper_8.safetensors (Civitai calls it a Checkpoint)");
     expect(rows[2]).toContain("Will be linked in");
     expect(rows[3]).toMatch(/^Will leave free on drive C: \S+ GB of the \S+ GB free now$/);
     expect(rows[4]).toBe(
@@ -282,7 +282,7 @@ describe("a file the vault already holds", () => {
     const ok = card()!.querySelector(".verdict.ok")!;
     expect(ok.querySelector("h4")!.textContent).toBe("Already in the vault");
     expect(ok.querySelector("p")!.textContent!.replace(/\s+/g, " ")).toBe(
-      "The vault already has this file as text_encoders\\t5xxl_fp16.safetensors, with the same SHA-256. Nothing will be downloaded.",
+      "The vault already has this file as C:\\ComfyVault\\text_encoders\\t5xxl_fp16.safetensors, with the same SHA-256. Nothing will be downloaded.",
     );
     expect(text()).toContain("already has this link");
     expect(button("Every install already has this link")).toBeDisabled();
@@ -456,7 +456,7 @@ describe("the list of downloads", () => {
     engine.downloads.devFinishDownloads();
     await waitFor(() => app.dl.downloads()[0]!.state === "done");
     expect(row().querySelector(".dlrow-s")!.textContent).toBe(
-      "Downloaded into the vault as checkpoints\\dreamshaper_8.safetensors, and linked in ComfyUI-Studio and ComfyUI-Sandbox.",
+      "Downloaded into the vault as C:\\ComfyVault\\checkpoints\\dreamshaper_8.safetensors, and linked in ComfyUI-Studio and ComfyUI-Sandbox.",
     );
     expect(document.querySelector(".sec .n")!.textContent).toBe("all finished");
     await userEvent.click(button("Show it in Library"));

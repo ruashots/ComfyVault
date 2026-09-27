@@ -421,7 +421,7 @@ describe("the plan says what will happen, as a plan", () => {
     expect(paths.map((p) => p.textContent)).toEqual(group.links.map((l) => l.absPath));
     expect(row.querySelectorAll(".cp .to")).toHaveLength(0);
     expect(row.querySelector(".grp-after")!.textContent).toBe(
-      `Both copies will be replaced by links to one file in the vault: vault\\${group.vaultRelPath}`,
+      `Both copies will be replaced by links to one file in the vault: C:\\ComfyVault\\${group.vaultRelPath}`,
     );
     // A same-drive model with one name needs no explaining.
     expect(row.querySelector(".grp-why")).toBeNull();
@@ -523,7 +523,7 @@ describe("the plan says what will happen, as a plan", () => {
       "The installs keep model.safetensors. See Different files with the same name, below.",
     );
     expect(tagged.querySelector(".grp-after")!.textContent).toMatch(
-      /vault\\clip_vision\\model__[0-9A-F]{8}\.safetensors$/,
+      /in the vault: C:\\ComfyVault\\clip_vision\\model__[0-9A-F]{8}\.safetensors$/,
     );
   });
 

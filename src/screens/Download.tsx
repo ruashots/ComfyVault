@@ -16,7 +16,7 @@ import {
   rowView,
   type RowAction,
 } from "~/domain/download";
-import { fmt, shortHash } from "~/domain/format";
+import { fmt, joinPath, shortHash } from "~/domain/format";
 import { installName } from "~/domain/installname";
 import { fileNameOf, folderOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
@@ -429,7 +429,7 @@ function Ready(props: { plan: AddressPlan }) {
                 </>
               }
             >
-              <b>{p().vaultRelPath}</b>
+              <b>{joinPath(app.vault()?.root ?? "", p().vaultRelPath!)}</b>
               <Show when={p().vaultNameTaken}>
                 <span class="faint"> (another model already has this name in the vault)</span>
               </Show>
@@ -599,7 +599,8 @@ function Already(props: { plan: AddressPlan; vaultRelPath: string }) {
           Already in the vault
         </h4>
         <p>
-          The vault already has this file as <span class="emph">{props.vaultRelPath}</span>,
+          The vault already has this file as{" "}
+          <span class="emph">{joinPath(app.vault()?.root ?? "", props.vaultRelPath)}</span>,
           with the same SHA-256. <span class="emph">Nothing will be downloaded.</span>
         </p>
       </div>
@@ -813,7 +814,7 @@ const ACTION_WORDS: Record<RowAction, string> = {
 function DownloadRow(props: { record: Download }) {
   const app = useApp();
   const r = () => props.record;
-  const view = createMemo(() => rowView(r(), app.installs()));
+  const view = createMemo(() => rowView(r(), app.installs(), app.vault()?.root ?? ""));
 
   /** The model is found in the vault by its SHA-256, or else by where it went. */
   const showInLibrary = async () => {

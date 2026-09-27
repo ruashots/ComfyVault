@@ -11,7 +11,7 @@
  * says what happened.
  */
 
-import { fmt, timeLeft } from "~/domain/format";
+import { fmt, joinPath, timeLeft } from "~/domain/format";
 import { installNameOf } from "~/domain/installname";
 import type { AddressPlan, AddressRefusal, Download, Install } from "~/ipc/contract";
 
@@ -100,6 +100,7 @@ const fraction = (r: Download) =>
 export function rowView(
   r: Download,
   installs: readonly Install[],
+  vaultRoot: string,
 ): RowView {
   const host = hostName(r.host);
   const at = `${fmt(r.bytesDone)} of ${fmt(r.bytesTotal)}`;
@@ -223,7 +224,7 @@ export function rowView(
         parts: [
           { text: "Downloaded", tone: "ok" },
           {
-            text: ` into the vault as ${r.vaultRelPath}${linked ? `, and linked in ${linked}` : ""}.`,
+            text: ` into the vault as ${joinPath(vaultRoot, r.vaultRelPath)}${linked ? `, and linked in ${linked}` : ""}.`,
           },
           ...notLinkedParts(r, installs),
         ],
