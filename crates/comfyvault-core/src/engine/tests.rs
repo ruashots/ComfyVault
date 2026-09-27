@@ -1013,6 +1013,14 @@ fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
         .output()
         .unwrap();
     assert!(deny.status.success(), "icacls could not deny: {deny:?}");
+    // On GitHub's Windows runner the denial once took a moment to hold: the
+    // folder listed as empty right after icacls returned. Waited for, never
+    // skipped: if Windows never enforces it, the test fails and says so.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::fs::read_dir(&locked).is_ok() {
+        assert!(std::time::Instant::now() < until, "Windows never enforced the denial on {locked:?}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
     let result = f.engine.list_directory(&locked.to_string_lossy());
     let _ = std::process::Command::new("icacls").arg(&locked).args(["/remove:d", &who]).output();
     let err = result.unwrap_err();
