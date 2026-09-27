@@ -145,7 +145,7 @@ describe("when there was no saved workflow file to search", () => {
     expect(text).toContain("not known");
     expect(text).toContain("no saved workflow files to search");
     expect(text).not.toMatch(/\b0\b/);
-    expect(text).not.toContain("name not found in any workflow");
+    expect(text).not.toContain("no saved workflow names them, so they can probably be deleted");
   });
 
   it("counts unused models on Home once workflows were searched", async () => {
@@ -157,7 +157,7 @@ describe("when there was no saved workflow file to search", () => {
       (t.textContent ?? "").includes("Not used"),
     )!;
     expect(tile.textContent).toContain(String(harness.app.unusedCount()));
-    expect(tile.textContent).toContain("name not found in any workflow");
+    expect(tile.textContent).toContain("no saved workflow names them, so they can probably be deleted");
   });
 
   it("says so rather than calling every model unused", async () => {

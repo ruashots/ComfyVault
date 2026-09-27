@@ -423,19 +423,22 @@ function HomeReport() {
                     note={app.installs().map((i) => installName(i, app.installs())).join(" · ")}
                   />
                   <Tile
-                    value={String(held().models)}
-                    label="Unique models"
+                    value={String(held().stillOut.models)}
+                    label="Models still in installs"
                     note={
-                      held().links === 0
-                        ? `${held().files} files on disk`
-                        : `${held().files} files in the installs, ${held().links} of them links to the vault`
+                      held().stillOut.models === 0 && app.libraryTotal() > 0
+                        ? "every model is in the Library"
+                        : `${held().stillOut.files} files, ${fmt(held().stillOut.bytes)}, not in the vault yet`
                     }
                   />
                   <Tile
-                    value={fmtN(held().bytesOnDisk)}
-                    unit={fmtU(held().bytesOnDisk)}
-                    label="Models on disk"
-                    note={`${fmt(held().bytesOnce)} if kept once`}
+                    value={String(app.libraryTotal())}
+                    label="Models in the Library"
+                    note={
+                      app.libraryTotal() === 0
+                        ? "nothing in the vault yet"
+                        : `${fmt(app.library().reduce((sum, row) => sum + row.sizeBytes, 0))} in the vault`
+                    }
                   />
                   {/* Measured against the real engine: with no saved workflow
                       file there is nothing to search, and every model comes
@@ -456,7 +459,7 @@ function HomeReport() {
                         ? "no workflow files were read"
                         : app.nothingSearched()
                           ? "no saved workflow files to search"
-                          : "name not found in any workflow"
+                          : "no saved workflow names them, so they can probably be deleted"
                     }
                   />
                 </div>
@@ -679,13 +682,10 @@ function PlanHero(props: { afterFree: number | null }) {
   const app = useApp();
   const totals = () => app.plan()?.totals ?? null;
   const drive = () => app.vault();
-  /** Every place in the installs that holds a model is a link to the vault. */
-  const allInVault = createMemo(() => {
-    const held = installsTotalsOf(app.contents());
-    return held.files > 0 && held.links === held.files;
-  });
   return (
-    <Show when={totals()}>
+    // With nothing left to consolidate there is no plan to review, and the
+    // cards above already say where the models are.
+    <Show when={app.plan()?.groups.length ? totals() : null}>
       {(t) => (
         <div class="hero">
           <div class="big">
@@ -696,24 +696,13 @@ function PlanHero(props: { afterFree: number | null }) {
             <Show
               when={t().groupsFreeingSpace > 0}
               fallback={
-                <Show
-                  when={!allInVault()}
-                  fallback={
-                    <>
-                      <div class="l1">Every model in your installs is in the vault.</div>
-                      <div class="l2">
-                        Each install reaches it through a link. Nothing is left to
-                        move, so there is no space to free.
-                      </div>
-                    </>
-                  }
-                >
+                <>
                   <div class="l1">Every model is held once already.</div>
                   <div class="l2">
                     Consolidating moves them into the vault and leaves a link
                     behind, so nothing on drive {app.vaultVolume()} changes size.
                   </div>
-                </Show>
+                </>
               }
             >
               <div class="l1">

@@ -41,74 +41,78 @@ async function consolidateAndRescan(h: Harness): Promise<void> {
   await waitFor(tilesShown);
 }
 
-describe("Home's count of the models in the installs", () => {
-  it("counts every model found by the scan before any run", async () => {
+describe("Home's cards", () => {
+  it("before a run, count the models in the installs and nothing in the Library", async () => {
     const h = await home();
     const t = h.app.scan()!.totals;
     expect(value("Installs")).toBe(String(h.app.installs().length));
-    expect(value("Unique models")).toBe(String(t.uniqueContents));
-    expect(note("Unique models")).toBe(`${t.movableFiles} files on disk`);
-    expect(value("Models on disk")).toBe(fmt(t.movableBytes).replace(" ", ""));
-    expect(note("Models on disk")).toBe(`${fmt(t.uniqueBytes)} if kept once`);
+    expect(value("Models still in installs")).toBe(String(t.uniqueContents));
+    expect(note("Models still in installs")).toBe(
+      `${t.movableFiles} files, ${fmt(t.movableBytes)}, not in the vault yet`,
+    );
+    // The sample vault already holds a few downloaded models.
+    const vault = await h.engine.listVaultFiles({ offset: 0, limit: 1000 });
+    expect(value("Models in the Library")).toBe(String(vault.total));
+    expect(note("Models in the Library")).toBe(
+      `${fmt(vault.files.reduce((sum, f) => sum + f.sizeBytes, 0))} in the vault`,
+    );
+    expect(note("Not used")).toBe("no saved workflow names them, so they can probably be deleted");
+    expect(hero()).toContain("Review the plan");
   });
 
-  it("still counts every model once a run put them in the vault", async () => {
+  it("after a run, count what is left in the installs and what the vault holds", async () => {
     const h = await home();
     const before = h.app.scan()!.totals;
     await consolidateAndRescan(h);
     const after = h.app.scan()!.totals;
-    // The new scan counts only what is left to consolidate. The rest is
-    // still in the installs, reached through links.
-    expect(after.movableFiles).toBeLessThan(before.movableFiles / 10);
+    const vault = await h.engine.listVaultFiles({ offset: 0, limit: 1000 });
+    expect(vault.total).toBeGreaterThan(0);
 
-    expect(value("Unique models")).toBe(String(before.uniqueContents));
-    expect(note("Unique models")).toBe(
-      `${after.movableFiles + after.alreadyLinkedFiles} files in the installs, ${after.alreadyLinkedFiles} of them links to the vault`,
+    // What the new scan still found to consolidate.
+    expect(value("Models still in installs")).toBe(String(after.uniqueContents));
+    expect(note("Models still in installs")).toBe(
+      `${after.movableFiles} files, ${fmt(after.movableBytes)}, not in the vault yet`,
     );
-    // Each vault file takes its space once, plus what is still out.
-    const onDisk =
-      h.app
-        .vaultFiles()
-        .filter((f) => f.linkCount > 0)
-        .reduce((sum, f) => sum + f.sizeBytes, 0) + after.movableBytes;
-    expect(value("Models on disk")).toBe(fmt(onDisk).replace(" ", ""));
-    expect(document.body.textContent).toContain(
-      `${fmt(onDisk)} of models across ${h.app.installs().length} installs`,
-    );
-    expect(document.querySelector(".act .d")!.textContent).toMatch(
-      new RegExp(`^${before.uniqueContents} models · `),
+    // Everything the vault holds.
+    expect(value("Models in the Library")).toBe(String(vault.total));
+    expect(note("Models in the Library")).toBe(
+      `${fmt(vault.files.reduce((sum, f) => sum + f.sizeBytes, 0))} in the vault`,
     );
     for (const row of document.querySelectorAll(".inst")) {
       expect(Number(row.querySelector(".c1")!.textContent)).toBeGreaterThan(after.movableFiles);
     }
+    // The installs still have every model they had, as a file or a link.
+    expect(document.querySelector(".act .d")!.textContent).toMatch(
+      new RegExp(`^${before.uniqueContents} models · `),
+    );
   });
 
-  it("says every model is in the vault when nothing is left to move", async () => {
-    const engine = new FixtureEngine({ manual: true });
-    engine.devSetSymlinksSupported(true);
-    engine.devSetComfyRunning(false);
-    // The sample installs hold a few files no run can move, so this stands in
-    // for installs where every model went into the vault.
-    const contents = engine.listContents.bind(engine);
-    vi.spyOn(engine, "listContents").mockImplementation(async (req) => {
+  it("once every model is in the vault, say so and offer no plan to review", async () => {
+    const h = await home();
+    await consolidateAndRescan(h);
+    // The sample installs keep a few files no run can move. Leave them out,
+    // so the installs hold only links, as the person's do.
+    const contents = h.engine.listContents.bind(h.engine);
+    vi.spyOn(h.engine, "listContents").mockImplementation(async (req) => {
       const page = await contents(req);
-      return { ...page, rows: page.rows.map((r) => ({ ...r, linkCount: r.occurrenceCount })) };
+      const rows = page.rows
+        .filter((r) => r.inVault)
+        .map((r) => ({ ...r, occurrenceCount: r.linkCount }));
+      return { ...page, rows, total: rows.length };
     });
-    const build = engine.buildPlan.bind(engine);
-    vi.spyOn(engine, "buildPlan").mockImplementation(async (scanId) => {
+    const build = h.engine.buildPlan.bind(h.engine);
+    vi.spyOn(h.engine, "buildPlan").mockImplementation(async (scanId) => {
       const plan = await build(scanId);
-      return {
-        ...plan,
-        groups: [],
-        totals: { ...plan.totals, bytesFreed: 0, groupsFreeingSpace: 0 },
-      };
+      return { ...plan, groups: [], totals: { ...plan.totals, bytesFreed: 0, groupsFreeingSpace: 0 } };
     });
-    harness = await renderWithApp(() => <App />, { engine });
-    await waitFor(tilesShown);
+    await h.app.actions.refresh();
+    await waitFor(() => value("Models still in installs") === "0");
 
-    expect(hero()).toContain("Every model in your installs is in the vault.");
-    expect(hero()).toContain("Nothing is left to move, so there is no space to free.");
-    expect(hero()).not.toContain("Consolidating moves them into the vault");
+    const vault = await h.engine.listVaultFiles({ offset: 0, limit: 1000 });
+    expect(note("Models still in installs")).toBe("every model is in the Library");
+    expect(value("Models in the Library")).toBe(String(vault.total));
+    expect(document.querySelector(".hero")).toBeNull();
+    expect(document.body.textContent).not.toContain("Review the plan");
   });
 
   it("calls the installs installs, on Home and while a scan runs", async () => {

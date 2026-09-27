@@ -413,16 +413,12 @@ export function buildInstallViews(
 
 /** What the installs hold, whether a model is a file there or a link to the vault. */
 export interface InstallsTotals {
-  /** Models found in at least one install. */
+  /** Models found in at least one install, as a file or as a link. */
   models: number;
-  /** Places in the installs that hold a model: files and links. */
-  files: number;
-  /** How many of those places are links into the vault. */
-  links: number;
   /** Space the models take on disk: the files in the installs, and each vault file once. */
   bytesOnDisk: number;
-  /** Space they would take with every model held once. */
-  bytesOnce: number;
+  /** The models that still have a real file in an install, not yet in the vault. */
+  stillOut: { models: number; files: number; bytes: number };
 }
 
 /**
@@ -433,15 +429,17 @@ export interface InstallsTotals {
  * These rows count both.
  */
 export function installsTotalsOf(rows: readonly ContentRow[]): InstallsTotals {
-  const out: InstallsTotals = { models: 0, files: 0, links: 0, bytesOnDisk: 0, bytesOnce: 0 };
+  const out: InstallsTotals = { models: 0, bytesOnDisk: 0, stillOut: { models: 0, files: 0, bytes: 0 } };
   for (const row of rows) {
     if (row.occurrenceCount === 0) continue;
     const realFiles = row.occurrenceCount - row.linkCount;
     out.models += 1;
-    out.files += row.occurrenceCount;
-    out.links += row.linkCount;
     out.bytesOnDisk += row.sizeBytes * (realFiles + (row.inVault ? 1 : 0));
-    out.bytesOnce += row.sizeBytes;
+    if (realFiles > 0) {
+      out.stillOut.models += 1;
+      out.stillOut.files += realFiles;
+      out.stillOut.bytes += row.sizeBytes * realFiles;
+    }
   }
   return out;
 }
