@@ -11,6 +11,7 @@ import { blockedRank, isSkippedByDesign } from "~/domain/blocked";
 import type {
   BlockedRow,
   ConsolidationPlan,
+  ContentRow,
   Install,
   LinkRecord,
   NameGroup,
@@ -398,8 +399,9 @@ export function buildInstallViews(
     return {
       install,
       running: runningInstallIds.has(install.id),
-      files: totals?.movableFiles ?? m.files + s.files,
-      bytes: totals?.movableBytes ?? m.bytes + s.bytes,
+      // A model already in the vault is still this install's, as a link.
+      files: totals ? totals.movableFiles + totals.alreadyLinkedFiles : m.files + s.files,
+      bytes: totals ? totals.movableBytes + totals.alreadyLinkedBytes : m.bytes + s.bytes,
       moving: m.files,
       movingBytes: m.bytes,
       stuck: s.files,
@@ -407,6 +409,41 @@ export function buildInstallViews(
       thumbnails: thumbnailStateOf(install.version),
     };
   });
+}
+
+/** What the installs hold, whether a model is a file there or a link to the vault. */
+export interface InstallsTotals {
+  /** Models found in at least one install. */
+  models: number;
+  /** Places in the installs that hold a model: files and links. */
+  files: number;
+  /** How many of those places are links into the vault. */
+  links: number;
+  /** Space the models take on disk: the files in the installs, and each vault file once. */
+  bytesOnDisk: number;
+  /** Space they would take with every model held once. */
+  bytesOnce: number;
+}
+
+/**
+ * Adds up the models in the installs.
+ *
+ * The scan counts only files still to be consolidated, so after a run it finds
+ * next to nothing, while every model is still there, reached through a link.
+ * These rows count both.
+ */
+export function installsTotalsOf(rows: readonly ContentRow[]): InstallsTotals {
+  const out: InstallsTotals = { models: 0, files: 0, links: 0, bytesOnDisk: 0, bytesOnce: 0 };
+  for (const row of rows) {
+    if (row.occurrenceCount === 0) continue;
+    const realFiles = row.occurrenceCount - row.linkCount;
+    out.models += 1;
+    out.files += row.occurrenceCount;
+    out.links += row.linkCount;
+    out.bytesOnDisk += row.sizeBytes * (realFiles + (row.inVault ? 1 : 0));
+    out.bytesOnce += row.sizeBytes;
+  }
+  return out;
 }
 
 /** The first ComfyUI that will not serve a thumbnail through a link. */

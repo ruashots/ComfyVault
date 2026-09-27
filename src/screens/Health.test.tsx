@@ -8,7 +8,7 @@ import { HomeScreen } from "~/screens/Home";
 import { LibraryScreen } from "~/screens/Library";
 import { App } from "~/App";
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import { renderWithApp, waitFor, type Harness } from "~/test/render";
+import { homeShown, renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
 
@@ -136,7 +136,7 @@ describe("when there was no saved workflow file to search", () => {
     await waitFor(() => harness!.app.usage().size > 0);
     await waitFor(() => harness!.app.nothingSearched());
     harness.app.actions.go("home");
-    await waitFor(() => (document.body.textContent ?? "").includes("Instances"));
+    await waitFor(() => homeShown());
 
     const tile = [...document.querySelectorAll(".tile")].find((t) =>
       (t.textContent ?? "").includes("Not used"),
@@ -152,7 +152,7 @@ describe("when there was no saved workflow file to search", () => {
     harness = await renderWithApp(() => <App />, { engine: new FixtureEngine() });
     await waitFor(() => harness!.app.usage().size > 0);
     harness.app.actions.go("home");
-    await waitFor(() => (document.body.textContent ?? "").includes("Instances"));
+    await waitFor(() => homeShown());
     const tile = [...document.querySelectorAll(".tile")].find((t) =>
       (t.textContent ?? "").includes("Not used"),
     )!;

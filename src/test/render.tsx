@@ -51,3 +51,8 @@ export async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+/** Home is on screen: its tiles, not the sidebar's list of installs. */
+export function homeShown(): boolean {
+  return [...document.querySelectorAll(".tile .k")].some((k) => k.textContent === "Installs");
+}

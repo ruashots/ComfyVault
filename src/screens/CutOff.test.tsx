@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import { renderWithApp, waitFor, type Harness } from "~/test/render";
+import { homeShown, renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
 
@@ -88,7 +88,7 @@ describe("a run cut off part way", () => {
   it("tells Home and the rail, instead of what the run freed", async () => {
     const h = await cutOffAndReopen();
     h.app.actions.go("home");
-    await waitFor(() => text().includes("Instances"));
+    await waitFor(() => homeShown());
     expect(text()).toContain("A run stopped part way through.");
     expect(text()).toContain("a run stopped part way");
     expect(text()).not.toContain("freed just now");

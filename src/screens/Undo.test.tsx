@@ -6,7 +6,7 @@ import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { costLine } from "~/modals/undo";
-import { renderWithApp, waitFor, type Harness } from "~/test/render";
+import { homeShown, renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
 
@@ -136,7 +136,7 @@ describe("the plan after an undo, before anything has scanned again", () => {
     expect(text()).not.toContain("held once");
 
     h.app.actions.go("home");
-    await waitFor(() => text().includes("Instances"));
+    await waitFor(() => homeShown());
     expect(text()).not.toContain("held twice or more");
     expect(text()).not.toContain("held once");
     expect(text()).toContain("not scanned since the undo");
@@ -310,7 +310,7 @@ describe("an undo stopped part way", () => {
     await waitFor(() => h.app.lastApply()?.state === "partlyReverted");
 
     h.app.actions.go("home");
-    await waitFor(() => text().includes("Instances"));
+    await waitFor(() => homeShown());
     expect(text()).toContain("An undo stopped part way.");
     expect(text()).not.toContain("freed just now");
     expect(text()).not.toContain("copies are now links");
@@ -354,7 +354,7 @@ describe("the figures after an undo that stopped part way", () => {
     expect(h.app.lastApply()!.state).toBe("partlyReverted");
     await waitFor(() => h.app.scanPredatesUndo());
     h.app.actions.go("home");
-    await waitFor(() => text().includes("Instances"));
+    await waitFor(() => homeShown());
     expect(text()).toContain("not scanned since the undo");
 
     // A scan after the stop is current again.

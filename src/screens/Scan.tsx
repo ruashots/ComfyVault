@@ -55,7 +55,7 @@ export function ScanScreen() {
     <>
       <Header
         title="Scanning"
-        sub={`${app.installs().length} instances · ${minutesLeft(
+        sub={`${app.installs().length} ${app.installs().length === 1 ? "install" : "installs"} · ${minutesLeft(
           Number.isFinite(progress().etaMs as number)
             ? Math.round(progress().etaMs! / 1000)
             : null,

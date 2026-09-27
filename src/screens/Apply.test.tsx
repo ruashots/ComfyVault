@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { FixtureEngine } from "~/ipc/fixture/engine";
-import { renderWithApp, waitFor, type Harness } from "~/test/render";
+import { homeShown, renderWithApp, waitFor, type Harness } from "~/test/render";
 
 let harness: Harness | null = null;
 
@@ -266,7 +266,7 @@ describe("the world after a run, before anything has scanned again", () => {
     expect(h.app.scanPredatesRun()).toBe(true);
 
     h.app.actions.go("home");
-    await waitFor(() => document.body.textContent?.includes("Instances") === true);
+    await waitFor(() => homeShown());
     const text = document.body.textContent ?? "";
     expect(text).toContain("not scanned since the run");
     expect(text).toContain("come from the scan taken before the run");

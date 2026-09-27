@@ -18,6 +18,7 @@ import { driveFor, volumeLabel } from "~/domain/drives";
 import { openInstallPicker, openVaultPicker } from "~/modals/picker";
 import { processLine, processTooltip, processesFor } from "~/domain/running";
 import { installName } from "~/domain/installname";
+import { installsTotalsOf } from "~/domain/view";
 import { cutOffLine } from "~/domain/download";
 import { messageOf, useApp } from "~/state/store";
 import type { DriveInfo, Install } from "~/ipc/contract";
@@ -361,6 +362,7 @@ function HomeReport() {
   const drive = () => app.vault();
   const run = () => app.runOnScreen();
   const counted = () => app.planView()?.countedNeverMoved ?? [];
+  const held = createMemo(() => installsTotalsOf(app.contents()));
 
   /**
    * What the drive would have free once the plan runs. Null when the drive did
@@ -399,7 +401,6 @@ function HomeReport() {
         <div class="scroll">
           <DanglingLinks />
           <Show when={!app.nothingRead() && totals()} fallback={<NotScannedYet />}>
-            {(t) => (
               <>
                 <Show when={app.scanPredatesRun()}>
             <div class="note" style={{ "margin-bottom": "9px" }}>
@@ -418,19 +419,23 @@ function HomeReport() {
           <div class="tiles">
                   <Tile
                     value={String(app.installs().length)}
-                    label="Instances"
+                    label="Installs"
                     note={app.installs().map((i) => installName(i, app.installs())).join(" · ")}
                   />
                   <Tile
-                    value={String(t().uniqueContents)}
+                    value={String(held().models)}
                     label="Unique models"
-                    note={`${t().movableFiles} files on disk`}
+                    note={
+                      held().links === 0
+                        ? `${held().files} files on disk`
+                        : `${held().files} files in the installs, ${held().links} of them links to the vault`
+                    }
                   />
                   <Tile
-                    value={fmtN(t().movableBytes)}
-                    unit={fmtU(t().movableBytes)}
+                    value={fmtN(held().bytesOnDisk)}
+                    unit={fmtU(held().bytesOnDisk)}
                     label="Models on disk"
-                    note={`${fmt(t().uniqueBytes)} if kept once`}
+                    note={`${fmt(held().bytesOnce)} if kept once`}
                   />
                   {/* Measured against the real engine: with no saved workflow
                       file there is nothing to search, and every model comes
@@ -535,21 +540,18 @@ function HomeReport() {
                   )}
                 </Show>
               </>
-            )}
           </Show>
 
           <div class="sec secgap">
-            <span class="t">Instances</span>
+            <span class="t">Installs</span>
             <Show
               when={!app.nothingRead() && totals()}
               fallback={<span class="n">{app.installs().length} registered</span>}
             >
-              {(t) => (
-                <span class="n">
-                  {fmt(t().movableBytes)} of models across {app.installs().length}{" "}
-                  installs
-                </span>
-              )}
+              <span class="n">
+                {fmt(held().bytesOnDisk)} of models across {app.installs().length}{" "}
+                installs
+              </span>
             </Show>
           </div>
           <For each={app.installViews()}>
@@ -677,6 +679,11 @@ function PlanHero(props: { afterFree: number | null }) {
   const app = useApp();
   const totals = () => app.plan()?.totals ?? null;
   const drive = () => app.vault();
+  /** Every place in the installs that holds a model is a link to the vault. */
+  const allInVault = createMemo(() => {
+    const held = installsTotalsOf(app.contents());
+    return held.files > 0 && held.links === held.files;
+  });
   return (
     <Show when={totals()}>
       {(t) => (
@@ -689,13 +696,24 @@ function PlanHero(props: { afterFree: number | null }) {
             <Show
               when={t().groupsFreeingSpace > 0}
               fallback={
-                <>
+                <Show
+                  when={!allInVault()}
+                  fallback={
+                    <>
+                      <div class="l1">Every model in your installs is in the vault.</div>
+                      <div class="l2">
+                        Each install reaches it through a link. Nothing is left to
+                        move, so there is no space to free.
+                      </div>
+                    </>
+                  }
+                >
                   <div class="l1">Every model is held once already.</div>
                   <div class="l2">
                     Consolidating moves them into the vault and leaves a link
                     behind, so nothing on drive {app.vaultVolume()} changes size.
                   </div>
-                </>
+                </Show>
               }
             >
               <div class="l1">
@@ -740,7 +758,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   if (scan) {
     lines.push({
       event: scan.cancelled ? "vault.scan.cancelled" : "vault.scan.complete",
-      detail: `${scan.totals.uniqueContents} models · ${scan.totals.duplicateFiles} duplicate copies · ${fmt(scan.totals.reclaimableBytes)} reclaimable`,
+      detail: `${installsTotalsOf(app.contents()).models} models · ${scan.totals.duplicateFiles} duplicate copies · ${fmt(scan.totals.reclaimableBytes)} reclaimable`,
       when: scan.finishedAt,
     });
   }
@@ -754,7 +772,7 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   }
   for (const install of app.installs()) {
     lines.push({
-      event: "instance.add",
+      event: "install.add",
       detail: `${installName(install, app.installs())} · ${install.root}`,
       when: install.addedAt,
     });

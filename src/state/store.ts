@@ -274,6 +274,8 @@ export interface AppStore {
   readonly planView: Accessor<PlanView | null>;
   /** The models in the vault. The Library manages the vault, not the installs. */
   readonly library: Accessor<readonly ContentRow[]>;
+  /** Every model the engine knows, in the vault or still out in the installs. */
+  readonly contents: Accessor<readonly ContentRow[]>;
   /** How many models the vault holds in total, beyond the page loaded. */
   readonly libraryTotal: Accessor<number>;
   /** True when there was no saved workflow file to search at all. */
@@ -997,6 +999,7 @@ export function createAppStore(engine: Engine): AppStore {
     failure,
     planView,
     library,
+    contents,
     libraryTotal,
     nothingSearched,
     installViews,
