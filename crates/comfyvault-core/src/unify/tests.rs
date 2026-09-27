@@ -669,7 +669,10 @@ fn a_link_in_a_models_folder_that_is_a_junction_is_renamed_in_place() {
 
     // The link is recorded where it really is, on the other drive.
     let recorded = w.store.links_for_install(&b.id).unwrap().remove(0).abs_path;
-    assert!(crate::paths::same_path_lexically(recorded.parent().unwrap(), &std::fs::canonicalize(&other_drive).unwrap()));
+    assert_eq!(
+        crate::paths::compare_key(recorded.parent().unwrap()),
+        crate::paths::compare_key(&crate::paths::canonicalize_clean(&other_drive).unwrap())
+    );
 
     let plan = unify(&w).plan(&sha(), KEPT).unwrap();
     assert_eq!(action_at(&plan, &recorded), UnifyAction::Rename);
@@ -681,4 +684,34 @@ fn a_link_in_a_models_folder_that_is_a_junction_is_renamed_in_place() {
     unify(&w).undo(&done.unify_id).unwrap();
     assert_eq!(w.read(&other_drive.join(OLD)), weights("same"));
     assert!(std::fs::symlink_metadata(other_drive.join(KEPT)).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_link_windows_really_holds_open_stops_the_job_and_undo_brings_everything_back() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    let old = loras(&b).join(OLD);
+    // A handle on the link itself that shares nothing, so Windows refuses to
+    // delete it: a real sharing violation, not one a test double makes up.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(&old)
+        .unwrap();
+
+    let done = unify(&w).unify(&sha(), KEPT).unwrap();
+    let stop = done.stopped.clone().expect("Windows refused, so the job stopped");
+    assert_eq!(stop.path, old);
+    assert!(stop.message.contains("open"), "{}", stop.message);
+    assert_eq!(w.read(&loras(&b).join(KEPT)), weights("same"), "the new name loads the model");
+    drop(held);
+    assert_eq!(w.read(&old), weights("same"), "and so does the old one");
+
+    unify(&w).undo(&done.unify_id).unwrap();
+    assert!(std::fs::symlink_metadata(loras(&b).join(KEPT)).is_err());
+    assert_eq!(w.read(&old), weights("same"));
 }
