@@ -325,6 +325,15 @@ impl<'a> Unify<'a> {
                 journal.finish(step, JournalState::Done)?;
             }
 
+            // Looked at again right before it goes: something may have taken
+            // its place while the new link was made, and removing a link is
+            // deleting whatever is at that path. The new link stays, so the
+            // model then loads under both names.
+            if !self.still_ours(record, &t.vault_path)? {
+                skip(&mut out, "This link changed while its name was changing, so it was left as it is.".into());
+                continue;
+            }
+
             // Written before the link goes, so the undo can put the record
             // back exactly as it was, whatever happens next.
             job.replaced.push(record.clone());

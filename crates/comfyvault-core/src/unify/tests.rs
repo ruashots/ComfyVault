@@ -1238,4 +1238,123 @@ mod review {
             .any(|p| std::fs::read(p).map(|x| x == b"the person's own file").unwrap_or(false));
         assert!(survived, "the real file that replaced a link during the job was deleted");
     }
+
+    // -----------------------------------------------------------------------
+    // Tests for the checks the review's mutants showed had none.
+    // -----------------------------------------------------------------------
+
+    /// Two installs using OLD, one using KEPT, consolidated.
+    fn three(w: &TestWorld) -> (Install, Install, Install) {
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        w.write_model(&c, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(w, "ap-1", &[a.clone(), b.clone(), c.clone()]);
+        (a, b, c)
+    }
+
+    #[test]
+    fn c2_a_link_replaced_by_a_real_file_while_its_new_link_is_made_is_never_removed() {
+        let w = TestWorld::new();
+        let (_a, b, _c) = three(&w);
+        let old = loras(&b).join(OLD);
+        let hooked = Hooked::new(&w.platform);
+        let replace = old.clone();
+        hooked.before_creating(&loras(&b).join(KEPT), move || {
+            std::fs::remove_file(&replace).unwrap();
+            std::fs::write(&replace, b"the person's own file").unwrap();
+        });
+        let done = Unify::new(&w.store, &hooked).unify(&sha(), KEPT).unwrap();
+        assert_eq!(std::fs::read(&old).unwrap(), b"the person's own file", "never deleted");
+        assert!(done.skipped.iter().any(|s| s.path == old), "{:?}", done.skipped);
+        assert_eq!(std::fs::read(loras(&b).join(KEPT)).unwrap(), weights("same"), "B still loads the model");
+    }
+
+    #[test]
+    fn c1b_an_install_whose_link_became_a_real_file_gets_no_new_link() {
+        // The first look happens before the new link is made. Without it the
+        // job makes a link in an install whose model is now the person's own
+        // file, and then leaves it there.
+        let w = TestWorld::new();
+        let (_a, b, c) = three(&w);
+        let pc = loras(&c).join(OLD);
+        let hooked = Hooked::new(&w.platform);
+        let replace = pc.clone();
+        hooked.before_removing(&loras(&b).join(OLD), move || {
+            std::fs::remove_file(&replace).unwrap();
+            std::fs::write(&replace, b"the person's own file").unwrap();
+        });
+        let done = Unify::new(&w.store, &hooked).unify(&sha(), KEPT).unwrap();
+        assert_eq!(std::fs::read(&pc).unwrap(), b"the person's own file");
+        assert!(std::fs::symlink_metadata(loras(&c).join(KEPT)).is_err(), "no link was made in C");
+        assert!(done.skipped.iter().any(|s| s.path == pc), "{:?}", done.skipped);
+    }
+
+    #[test]
+    fn m2_an_undo_whose_journal_names_a_place_outside_the_installs_is_refused() {
+        let w = TestWorld::new();
+        let (_a, b, _c) = three(&w);
+        let done = Unify::new(&w.store, &w.platform).unify(&sha(), KEPT).unwrap();
+        // A vault database from somewhere else names a folder outside every
+        // install as a link the job removed.
+        let outside = w.path().join("Documents").join(OLD);
+        std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+        let mut entries = w.store.journal(&done.unify_id).unwrap();
+        let mut planted = entries.pop().unwrap();
+        planted.seq = 999;
+        planted.group_id = b.id.clone();
+        planted.step = JournalStep::RemoveLink { link: outside.clone(), target: PathBuf::new() };
+        planted.state = JournalState::Done;
+        w.store.append_journal(&planted).unwrap();
+
+        let err = Unify::new(&w.store, &w.platform).undo(&done.unify_id).unwrap_err();
+        assert_eq!(err.code, ErrorCode::PathOutsideBoundary);
+        assert!(std::fs::symlink_metadata(&outside).is_err(), "nothing was made outside the installs");
+        assert!(std::fs::symlink_metadata(loras(&b).join(OLD)).is_err(), "and nothing else changed");
+    }
+
+    #[test]
+    fn m7_an_undo_leaves_a_new_link_someone_else_recorded_since() {
+        let w = TestWorld::new();
+        let (_a, b, _c) = three(&w);
+        let done = Unify::new(&w.store, &w.platform).unify(&sha(), KEPT).unwrap();
+        // The person removes the job's link and makes their own by hand at
+        // the same place.
+        let new = loras(&b).join(KEPT);
+        let job_link = w.store.link_at_path(&new).unwrap().unwrap();
+        Links::new(&w.store, &w.platform).remove(&job_link.id).unwrap();
+        let theirs = link_by_hand(&w, &b, KEPT);
+
+        Unify::new(&w.store, &w.platform).undo(&done.unify_id).unwrap();
+        assert_eq!(w.store.link_at_path(&new).unwrap().map(|r| r.id), Some(theirs.id), "their record stays");
+        assert_eq!(std::fs::read(&new).unwrap(), weights("same"), "and so does their link");
+        assert_eq!(std::fs::read(loras(&b).join(OLD)).unwrap(), weights("same"), "the old name is back beside it");
+    }
+
+    #[test]
+    fn m10_the_vault_keeps_its_name_when_another_models_record_claims_the_chosen_one() {
+        const THIRD: &str = "third.safetensors";
+        let w = TestWorld::new();
+        let (_a, b, _c) = three(&w);
+        let old = w.store.links_for_hash(&sha()).unwrap().into_iter().find(|l| l.install_id == b.id).unwrap();
+        Links::new(&w.store, &w.platform).remove(&old.id).unwrap();
+        link_by_hand(&w, &b, THIRD);
+        // Another model's record lists the name, with nothing on the disk.
+        w.store
+            .put_vault_file(&crate::store::VaultFileRecord {
+                sha256: weights_hash("other"),
+                canonical_name: "other.safetensors".into(),
+                category: "loras".into(),
+                size_bytes: 5,
+                added_at: Timestamp::now(),
+                aliases: vec![THIRD.into()],
+            })
+            .unwrap();
+
+        let done = Unify::new(&w.store, &w.platform).unify(&sha(), THIRD).unwrap();
+        assert_ne!(done.vault_name, THIRD, "two models never share a name in the vault");
+        assert_eq!(w.store.vault_name_taken("loras", THIRD).unwrap(), Some(weights_hash("other")));
+    }
 }

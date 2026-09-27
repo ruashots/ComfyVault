@@ -1823,3 +1823,24 @@ fn an_undo_of_a_rename_cut_off_by_a_crash_is_finished_when_the_vault_opens() {
     }
     assert!(!w.store.meta_flag(&format!("renameUndo:{id}")).unwrap(), "the mark is cleared");
 }
+
+#[test]
+fn a_rename_is_not_put_back_while_a_later_rename_of_the_file_stands() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let sha = weights_hash("same");
+    // A third name beside the file.
+    let mut f = w.store.vault_file(&sha).unwrap().unwrap();
+    f.aliases.push("third.safetensors".into());
+    w.store.put_vault_file(&f).unwrap();
+    w.platform
+        .create_file_symlink(&w.vault_root.join("loras/third.safetensors"), &w.vault_root.join("loras/lora1.safetensors"))
+        .unwrap();
+    let first = Vault::new_rename_id();
+    vault(&w).rename_file(&sha, "my-favourite.safetensors", &first).unwrap();
+    vault(&w).rename_file(&sha, "third.safetensors", &Vault::new_rename_id()).unwrap();
+
+    let err = vault(&w).undo_rename(&first).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(vault(&w).file(&sha).unwrap().unwrap().canonical_name, "third.safetensors", "nothing changed");
+}
