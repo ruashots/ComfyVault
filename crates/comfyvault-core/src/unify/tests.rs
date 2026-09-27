@@ -1027,7 +1027,7 @@ mod review {
         assert_eq!(rec.canonical_name, KEPT, "setup: the vault keeps A's name");
 
         // Choosing B's name makes the job rename the vault file KEPT -> OLD.
-        let vault_kept = std::fs::canonicalize(&w.vault_root).unwrap().join(&rec.category).join(KEPT);
+        let vault_kept = crate::paths::canonicalize_clean(&w.vault_root).unwrap().join(&rec.category).join(KEPT);
         let hooked = Hooked::new(&w.platform);
         hooked.before_creating(&vault_kept, || panic!("simulated crash: power lost"));
         let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
