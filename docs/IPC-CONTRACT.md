@@ -1824,8 +1824,9 @@ Returns the updated `VaultFile`.
 
 The engine makes the chosen name the real file and turns the previous real name
 into an in-vault link. It then repoints every install link to the new real
-path, so no link resolves through a second link. Every step is journaled and
-revertible.
+path, so no link resolves through a second link. Every step is journaled, but
+no command undoes it. The consolidation that brought the file into the vault
+can no longer be undone afterwards: `revert_apply` refuses with `conflict`.
 
 ### 8.6 `remove_alias`
 
@@ -2202,8 +2203,13 @@ type UnifyUndone = {
 - It rejects with `notFound` for an id the vault has no record of, and with
   `vaultBusy` while a long operation runs.
 
-Undoing the consolidation that made the links waits for the name change: undo
-the name change first. `revert_apply` refuses with `conflict` until then.
+Undoing the consolidation that made the links waits for the name change:
+`revert_apply` refuses with `conflict` until the name change is undone.
+
+**Known gap.** When the job gave the vault file a new name (`vaultName` differs
+from the `canonicalName` before the job), that rename cannot be undone. The
+consolidation that brought the file into the vault then stays refused, also
+after `undo_unify_name`. `set_canonical_name` (8.5) has the same effect.
 
 ## 9. Is a model used
 

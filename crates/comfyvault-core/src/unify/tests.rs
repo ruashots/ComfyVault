@@ -576,6 +576,20 @@ fn undoing_the_consolidation_waits_for_the_name_change_to_be_undone_first() {
     Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
 }
 
+#[test]
+#[ignore = "known gap: renaming the vault file cannot be undone, so the consolidation that brought it in stays refused"]
+fn undoing_the_consolidation_works_after_undoing_a_name_change_that_renamed_the_vault_file() {
+    // Choosing the name the vault does not keep renames the vault file, which
+    // writes a journal no undo reaches. The undo of the name change puts the
+    // links back but leaves the vault's name, so the consolidation's undo
+    // still finds a later change to the file it moved in and refuses.
+    let w = TestWorld::new();
+    two_names(&w);
+    let done = unify(&w).unify(&sha(), OLD).unwrap();
+    unify(&w).undo(&done.unify_id).unwrap();
+    Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+}
+
 // --- a crash in the middle -------------------------------------------------
 
 #[test]

@@ -126,6 +126,8 @@ fn the_calls_a_first_run_can_make_all_answer_before_a_vault_is_chosen() {
     assert!(e.locked_files(&[]).is_empty(), "check_locked_files must answer");
     let drives = e.drives();
     assert!(!drives.is_empty(), "list_drives must answer before a vault exists");
+    assert!(e.hidden_name_cards().is_empty(), "get_hidden_name_cards must answer");
+    e.set_hidden_name_cards(&[]).expect("set_hidden_name_cards must answer");
     assert!(e.busy().is_none(), "get_app_state reports nothing running");
 }
 
