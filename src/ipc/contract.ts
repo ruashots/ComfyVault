@@ -769,7 +769,9 @@ export type UnifyAction =
   /** The same folder already has a link to this model under the name. */
   | "remove"
   /** Something else already has the name at that place, so the link stays. */
-  | "blockedTaken";
+  | "blockedTaken"
+  /** Not on the disk now, for example on an unplugged drive. It keeps its name. */
+  | "unreachable";
 
 export interface UnifyLink {
   installId: string;

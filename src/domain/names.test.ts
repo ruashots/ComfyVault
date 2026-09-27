@@ -170,6 +170,31 @@ describe("what the dialog says", () => {
   });
 });
 
+describe("a link not on the disk now", () => {
+  it("keeps its name and does not count its install as one the name is used in", () => {
+    const view = unifyViewOf(
+      plan([step("normal", FP16, "rename"), step("prod", FP16, "unreachable")], [usage(FP16, [])]),
+      installs,
+    );
+    expect(view.kind === "confirm" && view.heading).toEqual([
+      { text: "Use this name in ComfyUI-Beta?" },
+    ]);
+    expect(view.kind === "confirm" && view.goingAway).toEqual([FP16]);
+  });
+
+  it("is not a name going away when only it has that name", () => {
+    const view = unifyViewOf(
+      plan(
+        [step("normal", CONV, "keep"), step("prod", CONV, "keep"), step("prod", FP16, "unreachable")],
+        [],
+      ),
+      installs,
+    );
+    expect(view.kind === "confirm" && view.heading).toEqual([{ text: "Use this name in both installs?" }]);
+    expect(view.kind === "confirm" && view.goingAway).toEqual([]);
+  });
+});
+
 describe("Cleanup's line once the name changed", () => {
   const renamed = { installId: "normal", from: `C:\\normal\\${FP16}`, to: `C:\\normal\\${CONV}` };
   it("says both installs when both changed", () => {

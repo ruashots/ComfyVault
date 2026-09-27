@@ -139,16 +139,15 @@ export function unifyViewOf(plan: UnifyPlan, installs: readonly Nameable[]): Uni
     };
   }
 
-  const all = distinct(plan.links.map((s) => s.installId));
-  const changingIds = distinct(
-    plan.links.filter((s) => s.action === "rename" || s.action === "remove").map((s) => s.installId),
-  );
+  // A link not on the disk now keeps its name and changes nothing, so its
+  // install is not one the name is used in.
+  const all = distinct(plan.links.filter((s) => s.action !== "unreachable").map((s) => s.installId));
+  const changing = plan.links.filter((s) => s.action === "rename" || s.action === "remove");
+  const changingIds = distinct(changing.map((s) => s.installId));
   const takenIds = distinct(
     plan.links.filter((s) => s.action === "blockedTaken").map((s) => s.installId),
   );
-  const goingAway = distinct(
-    plan.links.filter((s) => s.linkName !== plan.name).map((s) => s.linkName),
-  );
+  const goingAway = distinct(changing.map((s) => s.linkName));
 
   const results = plan.workflows.filter((w) => goingAway.includes(w.name));
   const searched = results.length === 0 || results.some((w) => w.searched);
@@ -164,20 +163,20 @@ export function unifyViewOf(plan: UnifyPlan, installs: readonly Nameable[]): Uni
   const method = searched ? null : (results[0]?.method ?? null);
 
   if (takenIds.length > 0) {
-    const changing = joinAnd(changingIds.map(nameOf));
+    const who = joinAnd(changingIds.map(nameOf));
     return {
       kind: "confirm",
       heading:
         changingIds.length > 0
-          ? [{ text: "Use this name in " }, { text: changing, strong: true }, { text: "?" }]
+          ? [{ text: "Use this name in " }, { text: who, strong: true }, { text: "?" }]
           : [{ text: "Use this name?" }],
       name: plan.name,
       taken: takenIds.map(nameOf),
       goingAway,
-      inInstalls: changingIds.length > 0 ? changing : null,
+      inInstalls: changingIds.length > 0 ? who : null,
       workflows,
       method,
-      cta: changingIds.length > 0 ? `Change name in ${changing}` : null,
+      cta: changingIds.length > 0 ? `Change name in ${who}` : null,
     };
   }
 

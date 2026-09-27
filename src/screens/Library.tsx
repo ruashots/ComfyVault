@@ -20,7 +20,7 @@ import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openLibraryLinkChooser } from "~/modals/linkfolder";
-import { UndoWait } from "~/components/UndoWait";
+import { BusyWait } from "~/components/BusyWait";
 import { messageOf, useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
 import type { ContentRow, UsageResult } from "~/ipc/contract";
@@ -495,7 +495,7 @@ function DrawerBody(props: { row: ContentRow }) {
         <Show when={row().inVault}>
           <button
             class="btn sm"
-            disabled={app.undoRunning()}
+            disabled={app.linkBusy() !== null}
             onClick={() =>
               openLibraryLinkChooser(app, {
                 sha256: row().sha256,
@@ -509,12 +509,12 @@ function DrawerBody(props: { row: ContentRow }) {
           </button>
         </Show>
         <Show when={row().inVault && row().occurrenceCount === 0}>
-          <button class="btn sm dng" disabled={app.undoRunning()} onClick={deleteFromVault}>
+          <button class="btn sm dng" disabled={app.linkBusy() !== null} onClick={deleteFromVault}>
             <Icon name="trash" size={11} />
             Delete
           </button>
         </Show>
-        <UndoWait />
+        <BusyWait reason={app.linkBusy()} />
       </div>
 
       <div class="sec" style={{ "margin-top": "14px" }}>

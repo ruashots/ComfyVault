@@ -291,10 +291,16 @@ export interface AppStore {
   /** An undo while it runs, which reports in its own shape. */
   readonly revertProgress: Accessor<RevertProgress | null>;
   /**
-   * A consolidation is being undone. Link and name changes wait for it in the
-   * engine, which can take minutes, so their buttons wait here instead.
+   * Why a link can be neither made nor removed now: a consolidation or an
+   * undo runs, and the engine refuses link changes until it ends. Null when
+   * nothing stops them.
    */
-  readonly undoRunning: Accessor<boolean>;
+  readonly linkBusy: Accessor<string | null>;
+  /**
+   * Why a model can be neither given one name nor deleted with its links now:
+   * any long job runs, a scan too. Null when nothing stops it.
+   */
+  readonly anyBusy: Accessor<string | null>;
   readonly ready: Accessor<boolean>;
   readonly failure: Accessor<string | null>;
 
@@ -527,9 +533,19 @@ export function createAppStore(engine: Engine): AppStore {
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
   const [revertProgress, setRevertProgress] = createSignal<RevertProgress | null>(null);
-  const undoRunning = createMemo(
-    () => revertProgress() !== null || appState()?.busy?.kind === "revert",
-  );
+  const linkBusy = createMemo(() => {
+    const kind = appState()?.busy?.kind;
+    if (revertProgress() !== null || kind === "revert") return "Wait for the undo to finish";
+    if (applyProgress() !== null || kind === "apply") return "Wait for the consolidation to finish";
+    return null;
+  });
+  const anyBusy = createMemo(() => {
+    if (linkBusy()) return linkBusy();
+    if (scanProgress() !== null || appState()?.busy?.kind === "scan") {
+      return "Wait for the scan to finish";
+    }
+    return null;
+  });
   const [ready, setReady] = createSignal(false);
   const [failure, setFailure] = createSignal<string | null>(null);
 
@@ -1036,7 +1052,8 @@ export function createAppStore(engine: Engine): AppStore {
     scanProgress,
     applyProgress,
     revertProgress,
-    undoRunning,
+    linkBusy,
+    anyBusy,
     ready,
     failure,
     planView,

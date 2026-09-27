@@ -1,7 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 
 import { Icon } from "~/components/Icon";
-import { UNDO_WAIT } from "~/components/UndoWait";
 import { folderNameError } from "~/domain/foldername";
 import { joinPath } from "~/domain/format";
 import { installName } from "~/domain/installname";
@@ -164,7 +163,7 @@ export function LinkFolderView() {
   const install = () => app.installs().find((i) => i.id === m()?.installId);
   // Making the link waits for an undo in the engine. Only picking a folder,
   // for Download, does not.
-  const waits = () => app.undoRunning() && m()?.onUse === null;
+  const waits = () => (m()?.onUse === null ? app.linkBusy() : null);
 
   const rows = createMemo<Row[]>(() => {
     const x = m();
@@ -450,10 +449,10 @@ export function LinkFolderView() {
               </button>
               <button
                 class="btn pri"
-                disabled={!x().installId || !x().selected || x().working || waits()}
+                disabled={!x().installId || !x().selected || x().working || waits() !== null}
                 onClick={() => void use()}
               >
-                {x().working ? "Working…" : waits() ? UNDO_WAIT : "Use this folder"}
+                {x().working ? "Working…" : (waits() ?? "Use this folder")}
               </button>
             </div>
           </div>

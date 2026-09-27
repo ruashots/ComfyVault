@@ -1421,6 +1421,7 @@ export class FixtureEngine implements Engine {
     dir?: string;
     linkName?: string;
   }): Promise<LinkRecord> {
+    this.refuseLinksWhileRunning();
     const install = this.world.installs.find((i) => i.id === args.installId);
     if (!install) throw error("notFound", "That install is not registered.");
     const entry = this.world.vault.get(args.sha256);
@@ -1460,6 +1461,7 @@ export class FixtureEngine implements Engine {
   }
 
   async removeLink(linkId: string): Promise<{ removed: true }> {
+    this.refuseLinksWhileRunning();
     this.world.links = this.world.links.filter((l) => l.id !== linkId);
     return { removed: true };
   }
@@ -1677,6 +1679,7 @@ export class FixtureEngine implements Engine {
     removeLinks = false,
   ): Promise<Deleted> {
     if (removeLinks) return this.deleteModelAndLinks(sha256, confirm);
+    this.refuseLinksWhileRunning();
     if (confirm !== sha256) {
       throw error("invalidArgument", "This delete was not confirmed, so nothing was removed.");
     }
@@ -2146,6 +2149,16 @@ export class FixtureEngine implements Engine {
    * Take a file out of the vault from underneath its links, the way something
    * outside ComfyVault would. Every link to it then points at nothing.
    */
+  /**
+   * As in the engine: a consolidation or an undo moves files and makes and
+   * removes links, so link changes are refused until it ends.
+   */
+  private refuseLinksWhileRunning(): void {
+    if (this.busy?.kind === "apply" || this.busy?.kind === "revert") {
+      throw error("vaultBusy", "Something is already running.");
+    }
+  }
+
   /** Put some other file at a place in an install, so a name is taken there. */
   devTakePath(absPath: string): void {
     this.takenPaths.add(absPath.toLowerCase());
