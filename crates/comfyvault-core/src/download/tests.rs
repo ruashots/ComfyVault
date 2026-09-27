@@ -932,6 +932,36 @@ fn a_key_an_earlier_build_kept_is_gone_from_the_database_file() {
     }
 }
 
+#[test]
+fn a_database_that_refuses_writes_stops_the_worker_instead_of_spinning() {
+    let w = world(content("full", 2_000), true);
+    let a = w.install("A");
+    // The row is written once as waiting; every write after that fails, as
+    // on a full drive.
+    w.ctx.store.fail_download_writes_after(1);
+    let d = w.start(HF, "text_encoders", &[&a]);
+    let until = Instant::now() + Duration::from_secs(10);
+    while w.dl.worker.lock().unwrap().active {
+        assert!(Instant::now() < until, "the worker never stopped");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let asked = w.requests().len();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(w.requests().len(), asked, "the worker kept trying");
+    assert!(asked <= 3, "the download was tried {asked} times over the network");
+
+    // The window was told, with a sentence the person can act on.
+    let last = w.seen.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last.state, DownloadState::Failed);
+    assert!(last.error.unwrap().message.contains("free space"));
+
+    // Once the drive has room again, Continue finishes it.
+    *w.ctx.store.download_writes_left_for_tests() = None;
+    w.dl.resume(&w.ctx, &d.download_id).unwrap();
+    let d = w.settle(&d.download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+}
+
 /// Against the real sites. They run only when asked (`--ignored`), and each
 /// one reads the address first and stops if the file is bigger than a few
 /// megabytes, so a wrong address can never fill a disk.

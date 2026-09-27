@@ -68,6 +68,9 @@ const ALL_TABLES: [TableDefinition<&str, &[u8]>; 10] = [
 pub struct Store {
     db: Database,
     vault_root: PathBuf,
+    /// A test's way to make download writes fail, as a full drive would.
+    #[cfg(test)]
+    download_writes_left: std::sync::Mutex<Option<u32>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -121,7 +124,12 @@ impl Store {
             .with_path(&db_path)
         })?;
 
-        let store = Self { db, vault_root };
+        let store = Self {
+            db,
+            vault_root,
+            #[cfg(test)]
+            download_writes_left: std::sync::Mutex::new(None),
+        };
         store.initialize()?;
         store.scrub_download_addresses()?;
         Ok(store)
@@ -688,7 +696,26 @@ impl Store {
     // -- downloads --------------------------------------------------------
 
     pub fn put_download(&self, d: &crate::download::DownloadRecord) -> Result<()> {
+        #[cfg(test)]
+        if let Some(left) = self.download_writes_left.lock().unwrap().as_mut() {
+            if *left == 0 {
+                return Err(VaultError::new(ErrorCode::StoreError, "The vault database refused the write.")
+                    .with_detail("a test made download writes fail"));
+            }
+            *left -= 1;
+        }
         self.put(DOWNLOADS, &d.download.download_id, d)
+    }
+
+    #[cfg(test)]
+    pub fn download_writes_left_for_tests(&self) -> std::sync::MutexGuard<'_, Option<u32>> {
+        self.download_writes_left.lock().unwrap()
+    }
+
+    /// Lets this many more download writes through, then refuses every one.
+    #[cfg(test)]
+    pub fn fail_download_writes_after(&self, n: u32) {
+        *self.download_writes_left.lock().unwrap() = Some(n);
     }
 
     pub fn download(&self, id: &str) -> Result<Option<crate::download::DownloadRecord>> {

@@ -2751,6 +2751,12 @@ All take `{ downloadId: string }`.
 | `discard_download` | `{ removed: true }` | not `waiting`, `running` or `checking` | Deletes the part, and removes the download from the list. |
 | `remove_download` | `{ removed: true }` | `done`, `linkedOnly`, `mismatch`, or `waiting` with no part | Removes it from the list. |
 
+If the vault's database refuses to save a download, for example on a full
+drive, the engine stops working on downloads rather than try the same one
+again and again. The window gets that download as `failed`, kind `disk`,
+with a sentence to free space and continue. The saved row may still say
+`waiting`; `continue_download` accepts such a row while nothing runs.
+
 A command used in another state rejects with `conflict`. A `downloadId` that
 is not a UUID in its plain form rejects with `invalidArgument`, and a row the
 database holds under such an id is removed when the vault opens, since the id

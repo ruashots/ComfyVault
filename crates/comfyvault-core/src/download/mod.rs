@@ -571,10 +571,15 @@ impl Downloader {
     /// Puts a stopped, failed or cut-off download back in the queue.
     pub fn resume(self: &Arc<Self>, ctx: &Context, id: &str) -> Result<Download> {
         let mut d = find(ctx, id)?;
-        if !matches!(
-            d.state,
-            DownloadState::Stopped | DownloadState::Failed | DownloadState::CutOff | DownloadState::Mismatch
-        ) {
+        // A waiting row that nothing is working on is one the worker gave up
+        // on because the database refused to save it; continue tries again.
+        let stranded = d.state == DownloadState::Waiting && !self.worker.lock().unwrap().active;
+        if !stranded
+            && !matches!(
+                d.state,
+                DownloadState::Stopped | DownloadState::Failed | DownloadState::CutOff | DownloadState::Mismatch
+            )
+        {
             return Err(VaultError::conflict("Only a stopped, failed or cut-off download can continue."));
         }
         if self.is_running(id) {
@@ -734,11 +739,25 @@ impl Downloader {
                 // A failure the run could not turn into a state of its own,
                 // such as the database refusing a write. Shown on the row.
                 if let Ok(Some(mut d)) = ctx.store.download(&id) {
-                    if d.state.is_active() {
-                        d.state = DownloadState::Failed;
-                        d.error = Some(Failure::new(FailureKind::Disk, e.message));
-                        let _ = ctx.store.put_download(&d);
-                        self.emit(&d);
+                    d.state = DownloadState::Failed;
+                    d.bytes_per_second = None;
+                    d.error = Some(
+                        Failure::new(
+                            FailureKind::Disk,
+                            "The vault's database would not save this download, so it was stopped. Check that the vault's drive has free space, then continue it.",
+                        )
+                        .with_detail(e.detail.unwrap_or(e.message)),
+                    );
+                    let saved = ctx.store.put_download(&d).is_ok();
+                    self.emit(&d);
+                    if !saved {
+                        // The row still says it is waiting, and picking it
+                        // again would fail again, at once and for ever. The
+                        // worker stops until the person acts.
+                        let mut w = self.worker.lock().unwrap();
+                        w.running = None;
+                        w.active = false;
+                        return;
                     }
                 }
             }
