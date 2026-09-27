@@ -217,3 +217,25 @@ describe("changing a link while a model is being deleted", () => {
     expect(await engine.listLinks({ sha256: model.sha256 })).toEqual([]);
   });
 });
+
+describe("undoing a run whose model is missing from the vault", () => {
+  it("refuses before any step and names the missing file", async () => {
+    const { engine } = await afterARun();
+    engine.devBreakLinks(1);
+    const files = (await engine.listVaultFiles({ offset: 0, limit: 1000 })).files.map((f) => f.sha256);
+    const applyId = (await engine.listApplies())[0]!.applyId;
+    for (const e of [
+      await refusal(engine.previewRevert(applyId)),
+      await refusal(engine.revertApply(applyId)),
+    ]) {
+      expect(e.code).toBe("conflict");
+      expect(e.message).toBe(
+        "A model this run put in the vault is no longer there, so this run can no longer be undone. Nothing was changed.",
+      );
+      expect(e.path).toMatch(/^C:\\ComfyVault\\/);
+      expect(e.detail).toBe(e.path);
+    }
+    // Nothing moved.
+    expect((await engine.listVaultFiles({ offset: 0, limit: 1000 })).files.map((f) => f.sha256)).toEqual(files);
+  });
+});

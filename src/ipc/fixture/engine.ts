@@ -1156,7 +1156,7 @@ export class FixtureEngine implements Engine {
 
 
   /** Why an undo would refuse before it starts, or null when it would not. */
-  private revertRefusal(): VaultError | null {
+  private revertRefusal(applyId: string): VaultError | null {
     if (!this.worldBeforeApply) return error("conflict", "There is nothing to put back.");
     // A delete cannot be undone, so the person is told why, not sent to undo it.
     if (this.deletedSinceApply.length > 0) {
@@ -1176,6 +1176,21 @@ export class FixtureEngine implements Engine {
         "A delete of one of this run's models stopped part way, so this run was not undone. Nothing was changed. Finish the delete in Cleanup. After that, this run can no longer be undone.",
         [...new Set(stopped)].sort().join(", "),
       );
+    }
+    // Checked on the disk before any step: every model the run put in the vault.
+    const missing = (this.appliedGroups.get(applyId) ?? []).find(
+      (g) => !before.vault.has(g.sha256) && !this.world.vault.has(g.sha256),
+    );
+    if (missing) {
+      const path = `${VAULT_ROOT}\\${missing.vaultRelPath}`;
+      return {
+        ...error(
+          "conflict",
+          "A model this run put in the vault is no longer there, so this run can no longer be undone. Nothing was changed.",
+          path,
+        ),
+        path,
+      };
     }
     if (this.renamedSinceApply.size > 0) {
       const paths = vaultFilesOf(this.world)
@@ -1221,7 +1236,7 @@ export class FixtureEngine implements Engine {
   async previewRevert(applyId: string): Promise<RevertPreview> {
     this.requireVault();
     this.refuseBlocked(applyId);
-    const refusal = this.revertRefusal();
+    const refusal = this.revertRefusal(applyId);
     if (refusal) throw refusal;
     const all = this.revertSteps(applyId);
     const done = this.revertStepsDone.get(applyId) ?? 0;
@@ -1259,7 +1274,7 @@ export class FixtureEngine implements Engine {
     this.requireVault();
     if (this.busy) throw error("vaultBusy", "Something is already running.");
     this.refuseBlocked(applyId);
-    const refusal = this.revertRefusal();
+    const refusal = this.revertRefusal(applyId);
     if (refusal) throw refusal;
     const before = this.worldBeforeApply!;
     this.busy = { kind: "revert", id: applyId };
