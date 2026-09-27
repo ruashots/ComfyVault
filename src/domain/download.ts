@@ -100,7 +100,6 @@ const fraction = (r: Download) =>
 export function rowView(
   r: Download,
   installs: readonly Install[],
-  vaultVolume: string,
 ): RowView {
   const host = hostName(r.host);
   const at = `${fmt(r.bytesDone)} of ${fmt(r.bytesTotal)}`;
@@ -168,16 +167,6 @@ export function rowView(
           parts: [
             { text: `The connection to ${host} dropped at ${at}.`, tone: "bad" },
             { text: kept },
-          ],
-          bar: grey,
-          actions,
-        };
-      }
-      if (error.kind === "noSpace") {
-        return {
-          parts: [
-            { text: `Drive ${vaultVolume} ran out of space at ${at}.`, tone: "bad" },
-            { text: `${kept} Free some space, then continue.` },
           ],
           bar: grey,
           actions,
@@ -335,7 +324,8 @@ export function cutOffLine(
 
 /** Whether the vault drive has room for the file and the margin. */
 export function hasRoom(plan: Pick<AddressPlan, "spaceNeededBytes" | "vaultFreeBytes">): boolean {
-  return plan.vaultFreeBytes === null || plan.vaultFreeBytes >= plan.spaceNeededBytes;
+  // A drive that cannot say what it has free cannot be trusted with the file.
+  return plan.vaultFreeBytes !== null && plan.vaultFreeBytes >= plan.spaceNeededBytes;
 }
 
 /** "Then it will be linked in 2 installs." */

@@ -358,3 +358,20 @@ describe("what the engine keeps for the person", () => {
     expect(refused.detail).toBe("Invalid API key");
   });
 });
+
+describe("a vault drive that cannot say what it has free", () => {
+  it("refuses a new download, and ends a continued one for want of space", async () => {
+    const { e } = engine();
+    const r = await e.startDownload({ address: DREAM, category: "checkpoints", installIds: [] });
+    await e.stopDownload(r.downloadId);
+    e.devSetDriveReadable(false);
+    const refused = await refusal(e.startDownload({ address: DREAM, category: "checkpoints", installIds: [] }));
+    expect(refused.code).toBe("ioError");
+    expect(refused.message).toBe(
+      "ComfyVault could not read how much free space the vault's drive has, so the download did not start. Check that the drive is connected, then try again.",
+    );
+    const again = await e.continueDownload(r.downloadId);
+    expect(again.state).toBe("failed");
+    expect(again.error!.kind).toBe("noSpace");
+  });
+});

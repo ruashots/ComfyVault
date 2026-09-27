@@ -477,9 +477,10 @@ function Ready(props: { plan: AddressPlan }) {
           <span class="v">
             <Switch>
               <Match when={p().vaultFreeBytes === null}>
-                <span class="dim">
-                  Drive {volume()} did not say how much space it has free.
-                </span>
+                <span class="red">
+                  ComfyVault could not read how much free space drive {volume()} has.
+                </span>{" "}
+                <span class="dim">Check that the drive is connected, then read the address again.</span>
               </Match>
               <Match when={room()}>
                 <b>{fmt(p().vaultFreeBytes! - p().sizeBytes)}</b>{" "}
@@ -527,6 +528,11 @@ function Ready(props: { plan: AddressPlan }) {
           <Match when={p().category === null}>
             <button class="btn" disabled>
               Choose a folder first
+            </button>
+          </Match>
+          <Match when={p().vaultFreeBytes === null}>
+            <button class="btn" disabled>
+              Free space on drive {volume()} is not known
             </button>
           </Match>
           <Match when={!room()}>
@@ -807,7 +813,7 @@ const ACTION_WORDS: Record<RowAction, string> = {
 function DownloadRow(props: { record: Download }) {
   const app = useApp();
   const r = () => props.record;
-  const view = createMemo(() => rowView(r(), app.installs(), app.vaultVolume()));
+  const view = createMemo(() => rowView(r(), app.installs()));
 
   /** The model is found in the vault by its SHA-256, or else by where it went. */
   const showInLibrary = async () => {

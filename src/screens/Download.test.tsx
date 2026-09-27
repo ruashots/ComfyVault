@@ -257,6 +257,17 @@ describe("the plan for a Hugging Face file", () => {
   });
 });
 
+describe("a vault drive that cannot say what it has free", () => {
+  it("disables Download and says what to check", async () => {
+    await mount((e) => e.devSetDriveReadable(false));
+    await read(DREAM);
+    expect(text()).toContain(
+      "ComfyVault could not read how much free space drive C: has. Check that the drive is connected, then read the address again.",
+    );
+    expect(button("Free space on drive C: is not known")).toBeDisabled();
+  });
+});
+
 describe("a file the vault already holds", () => {
   it("downloads nothing and offers only the links that are missing", async () => {
     const { app } = await mount(async (e) => {

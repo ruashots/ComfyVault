@@ -63,11 +63,11 @@ const record = (over: Partial<Download> = {}): Download => ({
 });
 
 const say = (r: Download) =>
-  rowView(r, installs, "C:").parts.map((p) => p.text).join("");
+  rowView(r, installs).parts.map((p) => p.text).join("");
 
 describe("what a row of the Downloads list says", () => {
   it("says what is happening while it runs, with speed and time left", () => {
-    const view = rowView(record(), installs, "C:");
+    const view = rowView(record(), installs);
     expect(say(record())).toBe(
       "Downloading: 6.2 GB of 16 GB, 38 MB/s, about 4 minutes left.",
     );
@@ -87,12 +87,12 @@ describe("what a row of the Downloads list says", () => {
     expect(say(r)).toBe(
       "Will start when the download above is done. Then it will be linked in ComfyUI-Easy-Install and ComfyUI_windows_portable.",
     );
-    expect(rowView(r, installs, "C:").actions).toEqual(["remove"]);
-    expect(rowView(r, installs, "C:").bar).toBeNull();
+    expect(rowView(r, installs).actions).toEqual(["remove"]);
+    expect(rowView(r, installs).bar).toBeNull();
   });
 
   it("says a check comes before the vault and the links", () => {
-    const view = rowView(record({ state: "checking" }), installs, "C:");
+    const view = rowView(record({ state: "checking" }), installs);
     expect(say(record({ state: "checking" }))).toBe(
       "Checking the SHA-256 of the downloaded file. Then it goes into the vault and gets its links.",
     );
@@ -113,12 +113,12 @@ describe("what a row of the Downloads list says", () => {
     expect(say(dropped)).toBe(
       "The connection to Hugging Face dropped at 6.2 GB of 16 GB. The part already downloaded is kept.",
     );
-    expect(rowView(dropped, installs, "C:").parts[0]!.tone).toBe("bad");
+    expect(rowView(dropped, installs).parts[0]!.tone).toBe("bad");
     expect(say(record({ state: "cutOff" }))).toBe(
       "Cut off at 6.2 GB of 16 GB when ComfyVault closed. The part already downloaded is kept.",
     );
     for (const state of ["stopped", "failed", "cutOff"] as const) {
-      const view = rowView(record({ state }), installs, "C:");
+      const view = rowView(record({ state }), installs);
       expect(view.actions).toEqual(["continue", "discard"]);
       expect(view.bar!.stopped).toBe(true);
     }
@@ -139,14 +139,14 @@ describe("what a row of the Downloads list says", () => {
     );
   });
 
-  it("says the vault drive filled up, and what to do", () => {
+  it("says a stop for want of space in the engine's words", () => {
+    const message =
+      "ComfyVault could not read how much free space the vault's drive has, so the download did not start. Check that the drive is connected, then try again.";
     const r = record({
       state: "failed",
-      error: { kind: "noSpace", message: "The vault drive is full.", serviceMessage: null, detail: null },
+      error: { kind: "noSpace", message, serviceMessage: null, detail: null },
     });
-    expect(say(r)).toBe(
-      "Drive C: ran out of space at 6.2 GB of 16 GB. The part already downloaded is kept. Free some space, then continue.",
-    );
+    expect(say(r)).toBe(message);
   });
 
   it("says a file of the wrong size, and a compressed or untrusted answer, in the engine's words", () => {
@@ -218,7 +218,7 @@ describe("what a row of the Downloads list says", () => {
     expect(say(r)).toBe(
       "The downloaded file did not match the SHA-256 Civitai gave, so it was deleted. Nothing went into the vault and nothing was linked. This happens when the file changed on Civitai or the transfer was damaged.",
     );
-    expect(rowView(r, installs, "C:").actions).toEqual(["again", "remove"]);
+    expect(rowView(r, installs).actions).toEqual(["again", "remove"]);
   });
 
   it("says what happened when it is done", () => {
@@ -230,8 +230,8 @@ describe("what a row of the Downloads list says", () => {
     expect(say(r)).toBe(
       "Downloaded into the vault as checkpoints\\dreamshaper_8.safetensors, and linked in ComfyUI-Easy-Install and ComfyUI_windows_portable.",
     );
-    expect(rowView(r, installs, "C:").parts[0]).toEqual({ text: "Downloaded", tone: "ok" });
-    expect(rowView(r, installs, "C:").actions).toEqual(["library"]);
+    expect(rowView(r, installs).parts[0]).toEqual({ text: "Downloaded", tone: "ok" });
+    expect(rowView(r, installs).actions).toEqual(["library"]);
     expect(say(record({ state: "done", linkedInstallIds: [] }))).toBe(
       "Downloaded into the vault as diffusion_models\\flux1-dev-fp8.safetensors.",
     );
@@ -254,7 +254,7 @@ describe("what a row of the Downloads list says", () => {
       linkedInstallIds: ["a"],
       notLinked: [{ installId: "c", reason: "A file with that name appeared there in the meantime." }],
     });
-    const view = rowView(r, installs, "C:");
+    const view = rowView(r, installs);
     expect(say(r)).toBe(
       "Downloaded into the vault as loras\\x.safetensors, and linked in ComfyUI-Easy-Install. It was not linked in ComfyUI-Flux: A file with that name appeared there in the meantime.",
     );
@@ -352,8 +352,8 @@ describe("the plan card's rules", () => {
   it("needs the file size plus the margin free on the vault drive", () => {
     expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: 21 * GB })).toBe(true);
     expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: 21 * GB - 1 })).toBe(false);
-    // A drive that did not answer is left to the engine to refuse.
-    expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: null })).toBe(true);
+    // A drive that cannot say what it has free is not trusted with the file.
+    expect(hasRoom({ spaceNeededBytes: 21 * GB, vaultFreeBytes: null })).toBe(false);
   });
 
   it("says how many installs will get a link", () => {

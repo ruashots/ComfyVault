@@ -733,7 +733,13 @@ export class DownloadDesk {
       this.emit(job);
       return publicOf(job);
     }
-    if (plan.vaultFreeBytes !== null && plan.vaultFreeBytes < plan.spaceNeededBytes) {
+    if (plan.vaultFreeBytes === null) {
+      throw error(
+        "ioError",
+        "ComfyVault could not read how much free space the vault's drive has, so the download did not start. Check that the drive is connected, then try again.",
+      );
+    }
+    if (plan.vaultFreeBytes < plan.spaceNeededBytes) {
       throw error(
         "ioError",
         "There is not enough free space on the vault's drive for this file and the 5 GB kept free.",
@@ -826,7 +832,18 @@ export class DownloadDesk {
   private schedule(): void {
     if (!this.jobs.some((j) => j.state === "running" || j.state === "checking")) {
       const next = this.jobs.find((j) => j.state === "waiting");
-      if (next) {
+      if (next && !this.world().driveReadable) {
+        // A drive that cannot say what it has free is not written to.
+        next.state = "failed";
+        next.error = {
+          kind: "noSpace",
+          message:
+            "ComfyVault could not read how much free space the vault's drive has, so the download did not start. Check that the drive is connected, then try again.",
+          serviceMessage: null,
+          detail: null,
+        };
+        this.emit(next);
+      } else if (next) {
         next.state = "running";
         this.emit(next);
       }
