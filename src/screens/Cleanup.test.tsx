@@ -152,8 +152,8 @@ describe("the Cleanup sections, after a run", () => {
     const reasonsBefore = reasons();
 
     await userEvent.click(rowOf(other).querySelector('[role="radio"]')!);
-    await waitFor(() =>
-      expect(app.nameGroups().find((g) => g.sha256 === group.sha256)!.canonicalName).toBe(other),
+    await waitFor(
+      () => app.nameGroups().find((g) => g.sha256 === group.sha256)!.canonicalName === other,
     );
 
     expect(words(other)).toBe(`The vault file has this name now. ${usersBefore[other]}`);
