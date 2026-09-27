@@ -78,28 +78,39 @@ WebView2 Runtime from Microsoft.
 
 ## Get it
 
-There is no installer and no download yet. You build ComfyVault from source,
-and the result is one portable program, `comfyvault.exe`. It needs no install
-step. Put it where you like and run it.
+1. Open [Releases](https://github.com/ruashots/ComfyVault/releases) and download
+   `ComfyVault-v<version>-windows-x64.exe`.
+2. Put it in any folder you like and run it. It is one portable program, with no
+   installer and no install step.
 
-The program runs on Windows, but the tested build is made on Linux, or in WSL
-(the Linux that Windows can run inside itself), and it produces the Windows
-program from there. In short:
+**Windows warns you the first time.** The program is not signed yet, so
+Microsoft Defender SmartScreen shows "Windows protected your PC". Click **More
+info**, check that the publisher is shown as unknown and the file name is the
+one you downloaded, then click **Run anyway**. Windows asks only once for that
+file.
+
+**Check the download, if you want to be sure it is the file this project
+built.** Each release also has `SHA256SUMS.txt`. In PowerShell, in the folder
+with both files:
 
 ```
-git clone https://github.com/Ruashots/ComfyVault
-cd ComfyVault
-npm install
-npm run build
-cargo xwin build -p comfyvault --release --features custom-protocol \
-    --target x86_64-pc-windows-msvc
+Get-FileHash .\ComfyVault-v<version>-windows-x64.exe -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt
 ```
 
-The program is then at
-`target/x86_64-pc-windows-msvc/release/comfyvault.exe`.
+The two hashes must be the same.
 
-You need Node 22.13 or newer, Rust, `cargo-xwin` and LLVM. The full steps, and
-the check that tells you the build is good, are in
+Each program also carries a GitHub build attestation: a signed record that it
+was built by this repository's release workflow, from the tagged source. With
+the [GitHub CLI](https://cli.github.com/) installed:
+
+```
+gh attestation verify .\ComfyVault-v<version>-windows-x64.exe --repo ruashots/ComfyVault
+```
+
+It must end with a line saying the verification succeeded.
+
+To build ComfyVault from source instead, follow
 [docs/BUILD.md](docs/BUILD.md).
 
 ---

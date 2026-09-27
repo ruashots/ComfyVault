@@ -158,6 +158,26 @@ ls -l --time-style=+%s dist/assets
 
 If the two outputs differ, discard the executable and build again.
 
+### 2.6 On Windows itself, and the release
+
+On a Windows PC with Node and Rust installed, the build needs neither
+`cargo-xwin` nor LLVM:
+
+```
+npm ci
+npm run build
+cargo build -p comfyvault --release --locked --features custom-protocol
+```
+
+The program is at `target\release\comfyvault.exe`.
+
+This is what `.github/workflows/release.yml` does on GitHub's Windows runner
+for a pushed tag `v<version>`. It first checks that the tag matches the
+version in `Cargo.toml`, `src-tauri/tauri.conf.json` and `package.json`, runs
+every test, builds, runs the checks of section 2.4, and then drafts a release
+with `ComfyVault-v<version>-windows-x64.exe`, `SHA256SUMS.txt` and a build
+attestation. The draft is published by hand.
+
 ---
 
 ## 3. The tests
