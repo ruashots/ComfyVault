@@ -8,6 +8,12 @@
 //! say "a model page and nothing else". A Civitai page therefore does not go
 //! through it at all: the window sends two numbers to `open_civitai_page`, and
 //! the engine builds the address.
+//!
+//! Windows only: the window's page is served from `http://tauri.localhost`
+//! there, and every call below is made from that origin. Elsewhere the page
+//! has another origin, and the plugin refuses it before the scope is read.
+
+#![cfg(windows)]
 
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{get_ipc_response, mock_builder, INVOKE_KEY};
