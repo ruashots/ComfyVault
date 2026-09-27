@@ -443,8 +443,9 @@ impl<'a> Links<'a> {
     ///
     /// Run when a vault opens. A pending step whose link is on the disk,
     /// leading to the vault file it names, gets its record. One whose link
-    /// never appeared is marked failed. Anything else at that path is not
-    /// this engine's, and is left alone.
+    /// never appeared is marked failed. A pending unlink whose link is gone
+    /// loses its record. Anything else at that path is not this engine's, and
+    /// is left alone.
     pub fn finish_interrupted(&self) -> Result<u64> {
         let mut finished = 0;
         for id in self.store.journal_ids()? {
@@ -457,6 +458,13 @@ impl<'a> Links<'a> {
                 }
                 let state = match &e.step {
                     JournalStep::CreateLink { link, target } => self.finish_one(&e.group_id, &id, link, target)?,
+                    // An unlink cut off after the link went: its record goes too.
+                    JournalStep::RemoveLink { link, .. } if std::fs::symlink_metadata(link).is_err() => {
+                        if let Some(r) = self.store.link_at_path(link)? {
+                            self.store.delete_link(&r.id)?;
+                        }
+                        JournalState::Done
+                    }
                     // A folder is a folder whether or not the link followed.
                     JournalStep::CreateDir { path } if path.is_dir() => JournalState::Done,
                     _ => JournalState::Failed,
@@ -519,7 +527,20 @@ impl<'a> Links<'a> {
 
         match std::fs::symlink_metadata(&record.abs_path) {
             Ok(m) if m.file_type().is_symlink() => {
-                self.platform.remove_symlink(&record.abs_path)?;
+                // Written before the link goes, and marked done once its
+                // record is gone. A crash in between leaves the step pending,
+                // and the next vault open forgets the record of a link that
+                // is no longer there.
+                let mut journal = LinkJournal::new(self.store, &record.install_id);
+                let target = self.store.vault_root().join(&record.vault_rel_path);
+                let step = journal.pending(JournalStep::RemoveLink { link: record.abs_path.clone(), target })?;
+                if let Err(e) = self.platform.remove_symlink(&record.abs_path) {
+                    journal.mark(step, JournalState::Failed)?;
+                    return Err(e);
+                }
+                self.store.delete_link(link_id)?;
+                journal.mark(step, JournalState::Done)?;
+                return Ok(());
             }
             Ok(_) => {
                 // A real file took its place. Deleting it would destroy
@@ -1707,6 +1728,62 @@ pub(crate) mod tests {
             assert!(links.make_link_folder(&i.id, "loras", &bad).is_err(), "{bad:?}");
             assert!(!bad.exists(), "{bad:?} was made");
         }
+    }
+
+    // --- unlink --------------------------------------------------------------
+
+    fn one_link(w: &TestWorld) -> (crate::install::Install, LinkRecord) {
+        let i = w.add_install("A");
+        let sha = vault_a_file(w, "lora1", "loras", "lora1.safetensors");
+        std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+        let rec = links(w)
+            .create(&CreateLinkRequest {
+                install_id: i.id.clone(),
+                sha256: sha,
+                relative_dir: "models/loras".into(),
+                dir: None,
+                link_name: None,
+                create_dir: false,
+            })
+            .unwrap();
+        (i, rec)
+    }
+
+    #[test]
+    fn an_unlink_is_journaled_and_the_last_link_leaves_the_vault_file() {
+        let w = TestWorld::new();
+        let (_i, rec) = one_link(&w);
+        links(&w).remove(&rec.id).unwrap();
+
+        assert!(std::fs::symlink_metadata(&rec.abs_path).is_err());
+        assert!(w.store.link(&rec.id).unwrap().is_none());
+        let step = w
+            .store
+            .journal_ids()
+            .unwrap()
+            .into_iter()
+            .flat_map(|id| w.store.journal(&id).unwrap())
+            .find(|e| matches!(&e.step, JournalStep::RemoveLink { link, .. } if *link == rec.abs_path))
+            .expect("the unlink is in the journal");
+        assert_eq!(step.state, JournalState::Done);
+        // It was the only link. The file stays, and Cleanup lists it.
+        assert!(w.vault_root.join("loras/lora1.safetensors").is_file());
+        let orphans = crate::vault::Vault::new(&w.store, &w.platform).orphans().unwrap();
+        assert_eq!(orphans.len(), 1);
+    }
+
+    #[test]
+    fn an_unlink_cut_off_after_the_link_went_loses_its_record_when_the_vault_opens() {
+        let w = TestWorld::new();
+        let (i, rec) = one_link(&w);
+        let mut j = LinkJournal::new(&w.store, &i.id);
+        j.pending(JournalStep::RemoveLink { link: rec.abs_path.clone(), target: w.vault_root.join(&rec.vault_rel_path) })
+            .unwrap();
+        w.platform.remove_symlink(&rec.abs_path).unwrap();
+        // The power goes here, before the record is forgotten.
+
+        links(&w).finish_interrupted().unwrap();
+        assert!(w.store.link(&rec.id).unwrap().is_none());
     }
 }
 

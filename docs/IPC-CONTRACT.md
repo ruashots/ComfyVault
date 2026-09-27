@@ -1608,6 +1608,23 @@ The engine removes the symbolic link only. It never removes the vault file.
 It rejects with `conflict` if the path is not a symbolic link, because that
 means a real file took its place.
 
+- **It works while that install's ComfyUI runs.** ComfyUI holds a loaded model
+  open through the link, and Windows then holds the vault file, not the link,
+  so the link can go. This was tested on Windows with another program holding
+  the model open. If Windows still refuses, the command rejects with
+  `fileLocked`, and nothing changed: show "Close {install} to unlink this
+  model." for that code only.
+- **It works for the last link.** The vault file stays, and `list_orphans`
+  lists it.
+- **It is journaled.** A crash after the link went and before its record was
+  forgotten is finished when the vault next opens. An unlink never stands in
+  the way of undoing the consolidation that made the link.
+- **Which saved workflows lose the model:** call `check_model_usage` with
+  `names: [linkName]` and `installIds: [the link's install]`. Only workflows in
+  that install ask for the model through this link.
+- It rejects with `vaultBusy` while a consolidation, a resumed run or an undo
+  runs (section 1.6).
+
 ### 7.3 `create_model_folder`
 
 Arguments:

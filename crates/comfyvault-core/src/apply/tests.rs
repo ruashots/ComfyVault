@@ -3548,3 +3548,58 @@ fn an_extra_model_folder_inside_another_installs_custom_nodes_moves_nothing_ther
     let _ = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
     assert!(is_real_file_with(&bundled, &weights("w")), "planned: {paths:#?}");
 }
+
+#[test]
+fn a_link_unlinked_from_the_library_does_not_stand_in_the_way_of_the_undo() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let x = w.write_model(&a, "models/loras/x.safetensors", &weights("same"));
+    let y = w.write_model(&b, "models/loras/y.safetensors", &weights("same"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+    let b_link = w.store.link_at_path(&y).unwrap().unwrap();
+    crate::links::Links::new(&w.store, &w.platform).remove(&b_link.id).unwrap();
+
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    for p in [&x, &y] {
+        assert!(!w.is_link(p));
+        assert_eq!(std::fs::read(p).unwrap(), weights("same"));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn an_unlink_works_while_another_program_holds_the_model_open() {
+    // ComfyUI holds a loaded model open, through the link. Windows opens the
+    // file the link leads to, not the link, so the link itself can go.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    w.write_model(&a, "models/loras/x.safetensors", &weights("same"));
+    let y = w.write_model(&b, "models/loras/y.safetensors", &weights("same"));
+    let plan = w.plan(&[a, b]);
+    run_apply(&w, &plan);
+
+    let script = format!(
+        "$f=[IO.File]::Open('{}','Open','Read','Read'); Write-Output held; [Console]::Out.Flush(); Start-Sleep -Seconds 20; $f.Close()",
+        y.display()
+    );
+    let mut holder = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(holder.stdout.take().unwrap()), &mut first).unwrap();
+    assert_eq!(first.trim(), "held", "the other program did not open the model");
+
+    let rec = w.store.link_at_path(&y).unwrap().unwrap();
+    let r = crate::links::Links::new(&w.store, &w.platform).remove(&rec.id);
+    let _ = holder.kill();
+    let _ = holder.wait();
+    r.expect("Windows let the link go while the model was open");
+    assert!(std::fs::symlink_metadata(&y).is_err());
+    let vault_file = w.store.vault_files().unwrap().pop().unwrap();
+    assert_eq!(std::fs::read(w.vault_root.join(vault_file.vault_rel_path())).unwrap(), weights("same"));
+}

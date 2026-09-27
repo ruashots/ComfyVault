@@ -1432,6 +1432,11 @@ impl<'a> Applier<'a> {
                 if matches!(e.state, JournalState::Reverted | JournalState::Undone | JournalState::Failed) {
                     continue;
                 }
+                // An unlink from the Library leaves an empty place, which is
+                // exactly what the undo fills. It never stands in the way.
+                if other.starts_with(crate::links::LINK_JOURNAL_PREFIX) && matches!(e.step, JournalStep::RemoveLink { .. }) {
+                    continue;
+                }
                 if owned.is_none() && e.started_at < started {
                     continue;
                 }
