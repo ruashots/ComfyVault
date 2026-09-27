@@ -21,7 +21,7 @@ import { installName } from "~/domain/installname";
 import { installsTotalsOf } from "~/domain/view";
 import { cutOffLine } from "~/domain/download";
 import { messageOf, useApp } from "~/state/store";
-import type { DriveInfo, Install } from "~/ipc/contract";
+import type { ApplyState, DriveInfo, Install } from "~/ipc/contract";
 import { ScanScreen } from "~/screens/Scan";
 
 export function HomeScreen() {
@@ -428,7 +428,7 @@ function HomeReport() {
                     note={
                       held().stillOut.models === 0 && app.libraryTotal() > 0
                         ? "every model is in the Library"
-                        : `${held().stillOut.files} files, ${fmt(held().stillOut.bytes)}, not in the vault yet`
+                        : `${countOf(held().stillOut.files, "file", "files")}, ${fmt(held().stillOut.bytes)}, not in the vault yet`
                     }
                   />
                   <Tile
@@ -706,8 +706,9 @@ function PlanHero(props: { afterFree: number | null }) {
               }
             >
               <div class="l1">
-                {app.scan()?.totals.duplicateFiles ?? 0} copies of{" "}
-                {t().groupsFreeingSpace} models are held twice or more.
+                {countOf(app.scan()?.totals.duplicateFiles ?? 0, "copy", "copies")} of{" "}
+                {countOf(t().groupsFreeingSpace, "model", "models")}{" "}
+                {(app.scan()?.totals.duplicateFiles ?? 0) === 1 ? "is" : "are"} held twice or more.
               </div>
               <Show when={props.afterFree !== null}>
                 <div class="l2">
@@ -745,38 +746,56 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
   const lines: RecentLine[] = [];
   const scan = app.scan();
   if (scan) {
+    const t = scan.totals;
     lines.push({
-      event: scan.cancelled ? "vault.scan.cancelled" : "vault.scan.complete",
-      detail: `${installsTotalsOf(app.contents()).models} models · ${scan.totals.duplicateFiles} duplicate copies · ${fmt(scan.totals.reclaimableBytes)} reclaimable`,
+      event: scan.cancelled ? "Scan stopped" : "Scan finished",
+      detail: `${countOf(installsTotalsOf(app.contents()).models, "model", "models")} found, ${countOf(t.duplicateFiles, "extra copy", "extra copies")}, ${fmt(t.reclaimableBytes)} to be freed.`,
       when: scan.finishedAt,
     });
   }
   const run = app.lastApply();
   if (run?.finishedAt) {
     lines.push({
-      event: `vault.apply.${run.state}`,
-      detail: `${run.filesMoved} files moved · ${run.linksCreated} links · ${fmt(run.bytesFreed)} freed`,
+      event: RUN_EVENT[run.state],
+      detail: `${countOf(run.filesMoved, "file", "files")} moved into the vault, ${countOf(run.linksCreated, "link", "links")} made, ${fmt(run.bytesFreed)} freed.`,
       when: run.finishedAt,
     });
   }
   for (const install of app.installs()) {
     lines.push({
-      event: "install.add",
-      detail: `${installName(install, app.installs())} · ${install.root}`,
+      event: "Install added",
+      detail: `${installName(install, app.installs())}, at ${install.root}`,
       when: install.addedAt,
     });
   }
   const vault = app.vault();
   if (vault) {
     lines.push({
-      event: "vault.create",
-      detail: `${vault.root} · drive ${volumeLabel(vault.volume)}`,
+      event: "Vault created",
+      detail: `${vault.root}, on drive ${volumeLabel(vault.volume)}`,
       when: vault.createdAt,
     });
   }
   return lines
     .sort((a, b) => new Date(b.when).getTime() - new Date(a.when).getTime())
     .slice(0, 6);
+}
+
+/** What a run's state means, as the Recent list says it. */
+const RUN_EVENT: Record<ApplyState, string> = {
+  running: "Consolidating",
+  completed: "Consolidated",
+  completedWithErrors: "Consolidated, not all",
+  cancelled: "Consolidation stopped",
+  interrupted: "Consolidation cut off",
+  partlyReverted: "Undo not finished",
+  reverted: "Consolidation undone",
+  setAside: "Run set aside",
+};
+
+/** "1 model", "3 models". */
+function countOf(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 function Tile(props: {

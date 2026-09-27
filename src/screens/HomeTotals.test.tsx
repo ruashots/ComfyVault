@@ -83,7 +83,7 @@ describe("Home's cards", () => {
     }
     // The installs still have every model they had, as a file or a link.
     expect(document.querySelector(".act .d")!.textContent).toMatch(
-      new RegExp(`^${before.uniqueContents} models · `),
+      new RegExp(`^${before.uniqueContents} models found, `),
     );
   });
 
@@ -113,6 +113,42 @@ describe("Home's cards", () => {
     expect(value("Models in the Library")).toBe(String(vault.total));
     expect(document.querySelector(".hero")).toBeNull();
     expect(document.body.textContent).not.toContain("Review the plan");
+  });
+
+  it("says what happened lately in words, not event names", async () => {
+    const h = await home();
+    const before = h.app.scan()!.totals;
+    await consolidateAndRescan(h);
+    const run = h.app.lastApply()!;
+    const t = h.app.scan()!.totals;
+    const lines = [...document.querySelectorAll(".act")].map((a) => [
+      a.querySelector(".a")!.textContent,
+      a.querySelector(".d")!.textContent,
+    ]);
+    for (const [event] of lines) expect(event).not.toMatch(/[a-z]\.[a-z]/i);
+    expect(lines).toContainEqual([
+      "Scan finished",
+      `${before.uniqueContents} models found, ${t.duplicateFiles} ${t.duplicateFiles === 1 ? "extra copy" : "extra copies"}, ${fmt(t.reclaimableBytes)} to be freed.`,
+    ]);
+    // The sample run leaves out a few files it could not move.
+    expect(run.state).toBe("completedWithErrors");
+    expect(lines).toContainEqual([
+      "Consolidated, not all",
+      `${run.filesMoved} files moved into the vault, ${run.linksCreated} links made, ${fmt(run.bytesFreed)} freed.`,
+    ]);
+    const studio = h.app.installs().find((i) => i.root === "C:\\ComfyUI-Studio")!;
+    expect(lines).toContainEqual(["Install added", `ComfyUI-Studio, at ${studio.root}`]);
+    expect(lines).toContainEqual(["Vault created", "C:\\ComfyVault, on drive C:"]);
+  });
+
+  it("uses the one-form words for a count of one", async () => {
+    const h = await home();
+    await consolidateAndRescan(h);
+    // The sample run leaves one model held twice.
+    expect(h.app.scan()!.totals.duplicateFiles).toBe(1);
+    expect(h.app.plan()!.totals.groupsFreeingSpace).toBe(1);
+    expect(hero()).toContain("1 copy of 1 model is held twice or more.");
+    expect(document.body.textContent).not.toMatch(/\b1 (copies|models|files|links)\b/);
   });
 
   it("calls the installs installs, on Home and while a scan runs", async () => {
