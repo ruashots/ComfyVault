@@ -1006,7 +1006,10 @@ fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
     let f = Fixture::new();
     let locked = f.dir.path().join("Refused");
     std::fs::create_dir_all(&locked).unwrap();
-    let who = std::env::var("USERNAME").unwrap();
+    // The account this process really runs as. USERNAME names the account
+    // that logged on, which is not always the one running the tests.
+    let whoami = std::process::Command::new("whoami").output().unwrap();
+    let who = String::from_utf8_lossy(&whoami.stdout).trim().to_string();
     let deny = std::process::Command::new("icacls")
         .arg(&locked)
         .args(["/deny", &format!("{who}:(RD)")])
@@ -1018,7 +1021,14 @@ fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
     // skipped: if Windows never enforces it, the test fails and says so.
     let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::fs::read_dir(&locked).is_ok() {
-        assert!(std::time::Instant::now() < until, "Windows never enforced the denial on {locked:?}");
+        if std::time::Instant::now() >= until {
+            let privs = std::process::Command::new("whoami").arg("/priv").output().unwrap();
+            panic!(
+                "Windows never enforced the denial for {who} on {locked:?}. USERNAME is {:?}. Privileges:\n{}",
+                std::env::var("USERNAME"),
+                String::from_utf8_lossy(&privs.stdout)
+            );
+        }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let result = f.engine.list_directory(&locked.to_string_lossy());
