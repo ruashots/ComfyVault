@@ -399,6 +399,16 @@ impl<'a> Vault<'a> {
         let temp = temp_link(link, id);
         self.remove_temp(link, id)?;
         self.platform.create_file_symlink(&temp, target)?;
+        // Looked at again right before: a rename over the place replaces
+        // whatever is there, and a real file that took the link's place is
+        // the person's.
+        if !self.platform.is_symlink(link) {
+            let _ = self.platform.remove_symlink(&temp);
+            return Err(VaultError::conflict(
+                "Something that is not a link took this link's place, so it was left as it is.",
+            )
+            .with_path(link));
+        }
         if let Err(e) = self.platform.rename(&temp, link) {
             let _ = self.platform.remove_symlink(&temp);
             return Err(e.into_vault_error(link, "pointing the link at the vault file's new name"));
