@@ -1480,12 +1480,13 @@ the model, and it is never deleted to make way. `detail` names both places.
 Moving the other file away and undoing again finishes the undo. Where the same
 bytes sit there, the undo goes ahead, and the vault file is the one dropped.
 
-**Name changes made after the run are put back first.** A rename of one of
-the run's models in the vault (`set_canonical_name`, 8.5) and a
-`unify_name` job (8.12) would otherwise stand in the way, and the interface
-offers no undo for them. So `revert_apply` undoes them itself, newest first,
-before it touches the run's files. Everything else that would refuse the undo, room on the drives
-included, is checked before any name moves. When a name change cannot be put
+**Name changes made after the run are put back first.** A `unify_name` job
+(8.12) on one of the run's models would otherwise stand in the way, and the
+interface offers no undo for it. So `revert_apply` undoes those jobs itself,
+newest first, the vault renames they made included, before it touches the
+run's files. A vault rename written by the older `set_canonical_name` command
+is put back the same way. Everything else that would refuse the undo, room on
+the drives included, is checked before any name moves. When a name change cannot be put
 back, for example because a file of the person's own now has the old name in
 the vault, `revert_apply` rejects with `conflict` and the message "This run was
 not undone. A model's name changed after it, and that change could not be put
@@ -1826,36 +1827,12 @@ names the vault keeps (`aliases`):
 
 After `unify_name` gives every link one name, the model leaves the list.
 
-### 8.5 `set_canonical_name`
+### 8.5 and 8.6: no longer commands
 
-The person picks the name the vault keeps as the real file.
-
-Arguments: `{ sha256: string, name: string }`.
-
-Returns the updated `VaultFile`.
-
-The engine makes the chosen name the real file and turns the previous real name
-into an in-vault link. It then repoints every install link to the new real
-path, so no link resolves through a second link. Every step is journaled.
-
-If Windows refuses to make the old name a link beside the file, the rename is
-put back and the command rejects with that refusal: nothing changed. An install
-link Windows will not repoint is left as it was. It still loads the model
-through the old name, and its record still names that. `revert_apply` of the
-consolidation that brought the file in puts the old name back first (6.8).
-
-### 8.6 `remove_alias`
-
-Removes one in-vault name. This is a separate action, on purpose. Names stay by
-default, so saved workflows keep working.
-
-Arguments: `{ sha256: string, name: string }`.
-
-Returns `{ removed: true }`.
-
-The engine rejects with `conflict` if the name is the canonical name. It
-rejects with `conflict` if any install link resolves through that name, and
-`detail` lists the links.
+`set_canonical_name` and `remove_alias` are gone from the command layer. No
+screen used them once Cleanup's two-names card took their place, and they can
+no longer be called. `unify_name` (8.12) now changes the name the vault keeps,
+and it removes the second names nothing uses.
 
 ### 8.7 `list_orphans`
 
@@ -1968,7 +1945,7 @@ the path:
   again right before it is removed, so a real file that took its place is
   never removed.
 - A new link to the model was recorded while it was being deleted. The engine
-  makes `create_link`, `remove_link`, `set_canonical_name`, `remove_alias`,
+  makes `create_link`, `remove_link`, `unify_name`, `undo_unify_name`,
   `delete_vault_file` and `remove_dangling_links` wait while a delete with
   links runs, so this refusal is for anything that did not wait.
 
@@ -2596,8 +2573,6 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `create_link_folder` | 7.6 |
 | `list_vault_files` | 8.1 |
 | `list_name_groups` | 8.4 |
-| `set_canonical_name` | 8.5 |
-| `remove_alias` | 8.6 |
 | `list_orphans` | 8.7 |
 | `delete_vault_file` | 8.8 |
 | `check_vault_health` | 8.9 |

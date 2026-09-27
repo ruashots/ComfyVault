@@ -1103,18 +1103,6 @@ impl Engine {
         Vault::new(&store, self.platform.as_ref()).name_groups()
     }
 
-    pub fn set_canonical_name(&self, sha256: &str, name: &str) -> Result<VaultFile> {
-        let store = self.store()?;
-        let _writes = self.write_lock()?;
-        Vault::new(&store, self.platform.as_ref()).set_canonical_name(sha256, name)
-    }
-
-    pub fn remove_alias(&self, sha256: &str, name: &str) -> Result<()> {
-        let store = self.store()?;
-        let _writes = self.write_lock()?;
-        Vault::new(&store, self.platform.as_ref()).remove_alias(sha256, name)
-    }
-
     /// What giving a model one name in every install would do. Reads only.
     pub fn plan_unify_name(&self, sha256: &str, name: &str) -> Result<crate::unify::UnifyPlan> {
         let store = self.store()?;

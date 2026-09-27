@@ -410,8 +410,8 @@ fn link_and_name_changes_wait_for_a_delete_in_progress() {
             .is_err()
         }),
         ("remove_link", |e, _| e.remove_link("none").is_err()),
-        ("set_canonical_name", |e, sha| e.set_canonical_name(sha, "x.safetensors").is_err()),
-        ("remove_alias", |e, sha| e.remove_alias(sha, "x.safetensors").is_err()),
+        ("unify_name", |e, sha| e.unify_name(sha, "x.safetensors").is_err()),
+        ("undo_unify_name", |e, _| e.undo_unify_name("unify-none").is_err()),
         ("delete_vault_file", |e, sha| e.delete_vault_file(sha, sha).is_err()),
         ("remove_dangling_links", |e, _| e.remove_dangling_links().is_ok()),
         ("delete_vault_file_and_links", |e, sha| e.delete_vault_file_and_links(sha, sha).is_err()),

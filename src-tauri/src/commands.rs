@@ -634,22 +634,6 @@ pub async fn list_name_groups(state: State<'_, AppEngine>) -> Reply<Vec<NameGrou
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NameArgs {
-    pub sha256: String,
-    pub name: String,
-}
-
-#[tauri::command]
-pub async fn set_canonical_name(
-    state: State<'_, AppEngine>,
-    args: NameArgs,
-) -> Reply<VaultFile> {
-    let e = engine(&state);
-    blocking(move || e.set_canonical_name(&args.sha256, &args.name)).await
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UnifyArgs {
     pub sha256: String,
     pub name: String,
@@ -704,16 +688,6 @@ pub async fn set_hidden_name_cards(
 ) -> Reply<Vec<HiddenNameCard>> {
     let e = engine(&state);
     blocking(move || e.set_hidden_name_cards(&args.cards)).await
-}
-
-#[tauri::command]
-pub async fn remove_alias(state: State<'_, AppEngine>, args: NameArgs) -> Reply<Removed> {
-    let e = engine(&state);
-    blocking(move || {
-        e.remove_alias(&args.sha256, &args.name)?;
-        Ok(Removed { removed: true })
-    })
-    .await
 }
 
 #[tauri::command]
