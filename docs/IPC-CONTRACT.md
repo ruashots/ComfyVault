@@ -2397,7 +2397,11 @@ generic credentials `ComfyVault/huggingface` and `ComfyVault/civitai`. A token
 is never written to the vault, to a log, to an error, to an event or to the
 journal, and no command returns it. A token is sent only to the site it
 belongs to, in an `Authorization: Bearer` header, and never to the storage
-address a site sends a download to.
+address a site sends a download to. A redirect to the site's own address, the
+same scheme, host and port, keeps the token, because Hugging Face sends a
+file kept outside LFS to its own cache address, which a gated model guards
+too. A 401 or 403 from there ends the download as `refused`, in the site's
+words.
 
 These three commands answer before a vault is open.
 

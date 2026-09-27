@@ -19,24 +19,60 @@ thread_local! {
     static SIZE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// A site, and its storage on a server of its own, as the real ones are.
+struct Two {
+    site: Server,
+    storage: Server,
+}
+
+impl Two {
+    /// Every request either one received.
+    fn requests(&self) -> Vec<Req> {
+        let mut all = self.site.requests();
+        all.extend(self.storage.requests());
+        all
+    }
+}
+
+/// Where the site of a test world is.
+trait Based {
+    fn base(&self) -> String;
+}
+
+impl Based for Server {
+    fn base(&self) -> String {
+        self.base.clone()
+    }
+}
+
+impl Based for Two {
+    fn base(&self) -> String {
+        self.site.base.clone()
+    }
+}
+
 /// A site that redirects to storage, and storage that serves `content`.
 /// `storage` can replace the storage's answer, per request number.
-fn world(content: Vec<u8>, storage: impl Fn(usize, &Req, &[u8]) -> Option<Canned> + Send + Sync + 'static) -> (Server, Arc<AtomicUsize>) {
+fn world(content: Vec<u8>, storage: impl Fn(usize, &Req, &[u8]) -> Option<Canned> + Send + Sync + 'static) -> (Two, Arc<AtomicUsize>) {
     SIZE.with(|c| c.set(content.len() as u64));
     let hits = Arc::new(AtomicUsize::new(0));
     let h = hits.clone();
-    let server = Server::start(move |req| match req.path() {
-        "/site/file" => Canned::redirect("/store/file?X-Amz-Signature=abc"),
+    let store = Server::start(move |req| match req.path() {
         "/store/file" => {
             let n = h.fetch_add(1, Ordering::SeqCst);
             storage(n, req, &content).unwrap_or_else(|| Canned::file(req, &content, "\"v1\""))
         }
         _ => Canned::new(404),
     });
-    (server, hits)
+    let to = format!("{}/store/file?X-Amz-Signature=abc", store.base);
+    let site = Server::start(move |req| match req.path() {
+        "/site/file" => Canned::redirect(&to),
+        _ => Canned::new(404),
+    });
+    (Two { site, storage: store }, hits)
 }
 
-fn file(server: &Server) -> RemoteFile {
+fn file(server: &impl Based) -> RemoteFile {
     RemoteFile {
         host: Host::HuggingFace,
         title: "m".into(),
@@ -52,11 +88,11 @@ fn file(server: &Server) -> RemoteFile {
         suggested_because: None,
         page: None,
         model_id: None,
-        fetch_url: format!("{}/site/file", server.base),
+        fetch_url: format!("{}/site/file", server.base()),
     }
 }
 
-fn go(server: &Server, part: &Path, etag: Option<&str>, token: Option<&str>) -> Result<Outcome, Failure> {
+fn go(server: &impl Based, part: &Path, etag: Option<&str>, token: Option<&str>) -> Result<Outcome, Failure> {
     run(&UreqWeb::new(), &file(server), token, part, etag, &mut None, &CancelToken::new(), &mut |_, _| {})
 }
 
@@ -391,5 +427,37 @@ fn file_of(host: Host) -> RemoteFile {
         model_id: None,
         fetch_url: String::new(),
     }
+}
+
+#[test]
+fn a_redirect_to_the_sites_own_address_keeps_the_token_and_a_refusal_there_is_a_refusal() {
+    // Hugging Face sends a file kept outside LFS to its own cache address,
+    // and for a gated model that address wants the token as well.
+    let refuse = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let r2 = refuse.clone();
+    let s = Server::start(move |req| {
+        let authed = req.header("authorization") == Some("Bearer hf_ok");
+        match req.path() {
+            "/site/file" if authed => Canned::redirect("/api/resolve-cache/models/o/r/abc/m.safetensors"),
+            p if p.starts_with("/api/resolve-cache/") && authed && !r2.load(Ordering::SeqCst) => {
+                Canned::new(200).with_body(&data(10))
+            }
+            _ => Canned::new(401)
+                .with_header("x-error-code", "GatedRepo")
+                .with_header("x-error-message", "Access to model o/r is restricted."),
+        }
+    });
+    SIZE.with(|c| c.set(10));
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("x.part");
+    go(&s, &part, None, Some("hf_ok")).expect("the token went along to the site's own address");
+    assert_eq!(std::fs::read(&part).unwrap(), data(10));
+
+    // Refused there: a refusal in the site's words, never an expired address.
+    refuse.store(true, Ordering::SeqCst);
+    let _ = std::fs::remove_file(&part);
+    let err = go(&s, &part, None, Some("hf_ok")).unwrap_err();
+    assert_eq!(err.kind, FailureKind::Refused, "{err:?}");
+    assert_eq!(err.service_message.as_deref(), Some("Access to model o/r is restricted."));
 }
 

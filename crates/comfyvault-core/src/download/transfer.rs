@@ -114,8 +114,8 @@ pub fn run(
     let first = web
         .send(&ranged(Request::get(&file.fetch_url).bearer(token), have), None)
         .map_err(|e| dropped(host, &e.message))?;
-    let from_storage = first.is_redirect();
-    let reply = if from_storage {
+    let mut from_storage = false;
+    let reply = if first.is_redirect() {
         let to = first
             .header("location")
             .map(|l| absolute(&file.fetch_url, l))
@@ -128,9 +128,15 @@ pub fn run(
             )
             .with_detail(origin(&to).map(|o| o.host).unwrap_or_default()));
         }
-        // The storage address carries its own signature. No token goes there.
-        web.send(&ranged(Request::get(&to), have), None)
-            .map_err(|e| dropped(host, e.detail.as_deref().unwrap_or(&e.message)))?
+        // The token goes along only to the site itself: Hugging Face sends a
+        // file kept outside LFS to its own cache address, which a gated model
+        // guards too. Storage carries its own signature, and gets no token.
+        let same_site = origin(&to).is_some() && origin(&to) == origin(&file.fetch_url);
+        let req = if same_site { Request::get(&to).bearer(token) } else { Request::get(&to) };
+        let reply = web.send(&ranged(req, have), None)
+            .map_err(|e| dropped(host, e.detail.as_deref().unwrap_or(&e.message)))?;
+        from_storage = !same_site;
+        reply
     } else {
         first
     };

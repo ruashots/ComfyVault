@@ -43,6 +43,7 @@ struct World {
     ctx: Context,
     fake: Arc<FakePlatform>,
     server: Server,
+    storage: Server,
     site: Site,
     tokens: Arc<MemoryTokens>,
     dl: Arc<Downloader>,
@@ -75,6 +76,22 @@ fn world(bytes: Vec<u8>, lfs: bool) -> World {
         stall_first: Arc::new(Mutex::new(None)),
         storage_hits: Arc::new(AtomicUsize::new(0)),
     };
+    // Storage on a server of its own, as the real sites' storage is.
+    let st = site.clone();
+    let storage = Server::start(move |req: &Req| {
+        let bytes = st.bytes.lock().unwrap().clone();
+        let etag = format!("\"{}\"", &sha(&bytes)[..16]);
+        if !req.path().starts_with("/store/") {
+            return Canned::new(404);
+        }
+        let n = st.storage_hits.fetch_add(1, Ordering::SeqCst);
+        let c = Canned::file(req, &bytes, &etag);
+        match *st.stall_first.lock().unwrap() {
+            Some(k) if n == 0 => Canned { stall_after: Some((k, Duration::from_secs(3))), ..c },
+            _ => c,
+        }
+    });
+    let store_base = storage.base.clone();
     let s = site.clone();
     let base = Arc::new(Mutex::new(String::new()));
     let b2 = base.clone();
@@ -82,13 +99,12 @@ fn world(bytes: Vec<u8>, lfs: bool) -> World {
         let base = b2.lock().unwrap().clone();
         let bytes = s.bytes.lock().unwrap().clone();
         let claimed = s.claimed.lock().unwrap().clone().unwrap_or_else(|| sha(&bytes));
-        let etag = format!("\"{}\"", &sha(&bytes)[..16]);
         match (req.method.as_str(), req.path()) {
             (_, "/o/r/resolve/main/split_files/text_encoders/t5.safetensors") => {
                 if let Some(c) = s.refuse.lock().unwrap().clone() {
                     return c;
                 }
-                Canned::redirect(&format!("{base}/store/t5?X-Amz-Signature=sig"))
+                Canned::redirect(&format!("{store_base}/store/t5?X-Amz-Signature=sig"))
                     .with_header("x-linked-size", &bytes.len().to_string())
             }
             ("POST", "/api/models/o/r/paths-info/main") => {
@@ -109,15 +125,7 @@ fn world(bytes: Vec<u8>, lfs: bool) -> World {
                     bytes.len() as f64 / 1024.0
                 ),
             ),
-            (_, "/api/download/models/8") => Canned::new(307).with_header("location", &format!("{base}/store/ds8?sig=1")),
-            (_, p) if p.starts_with("/store/") => {
-                let n = s.storage_hits.fetch_add(1, Ordering::SeqCst);
-                let c = Canned::file(req, &bytes, &etag);
-                match *s.stall_first.lock().unwrap() {
-                    Some(k) if n == 0 => Canned { stall_after: Some((k, Duration::from_secs(3))), ..c },
-                    _ => c,
-                }
-            }
+            (_, "/api/download/models/8") => Canned::new(307).with_header("location", &format!("{store_base}/store/ds8?sig=1")),
             _ => Canned::new(404),
         }
     });
@@ -130,7 +138,7 @@ fn world(bytes: Vec<u8>, lfs: bool) -> World {
     dl.set_sink(Arc::new(Seen(seen.clone())));
     let fake = Arc::new(FakePlatform::new());
     let ctx = Context { store, platform: fake.clone(), vault_writes: Arc::new(Mutex::new(())) };
-    World { _dir: dir, root, ctx, fake, server, site, tokens, dl, seen }
+    World { _dir: dir, root, ctx, fake, server, storage, site, tokens, dl, seen }
 }
 
 impl World {
@@ -173,6 +181,13 @@ impl World {
             assert!(Instant::now() < until, "the download never settled: {:?}", d.state);
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// Every request the site or its storage received.
+    fn requests(&self) -> Vec<Req> {
+        let mut all = self.server.requests();
+        all.extend(self.storage.requests());
+        all
     }
 
     fn vault(&self, rel: &str) -> PathBuf {
@@ -233,7 +248,7 @@ fn an_address_that_is_not_a_model_file_is_a_refusal_without_a_request() {
     assert_eq!(r.refusal.unwrap().kind, RefusalKind::BadAddress);
     let r = w.read("https://huggingface.co/o/r", None);
     assert_eq!(r.refusal.unwrap().kind, RefusalKind::HfRepoNotFile);
-    assert!(w.server.requests().is_empty());
+    assert!(w.requests().is_empty());
 }
 
 #[test]
@@ -508,10 +523,10 @@ fn stop_then_continue_carries_on_from_the_kept_part() {
     let d = w.settle(&d.download_id);
     assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
     assert_eq!(std::fs::read(w.vault("text_encoders/t5.safetensors")).unwrap(), bytes, "the SHA-256 matched");
-    let storage: Vec<Req> = w.server.requests().into_iter().filter(|r| r.path().starts_with("/store/")).collect();
+    let storage: Vec<Req> = w.requests().into_iter().filter(|r| r.path().starts_with("/store/")).collect();
     assert_eq!(storage.last().unwrap().header("range"), Some("bytes=150000-"));
     // Continue asked the site again, never the old storage address alone.
-    let site_asks = w.server.requests().iter().filter(|r| r.method == "GET" && r.path().starts_with("/o/r/resolve")).count();
+    let site_asks = w.requests().iter().filter(|r| r.method == "GET" && r.path().starts_with("/o/r/resolve")).count();
     assert_eq!(site_asks, 2);
 }
 
@@ -558,7 +573,7 @@ fn a_token_goes_to_the_site_only() {
     let a = w.install("A");
     let d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
     assert_eq!(d.state, DownloadState::Done);
-    for r in w.server.requests() {
+    for r in w.requests() {
         let site = !r.path().starts_with("/store/");
         assert_eq!(r.header("authorization").is_some(), site, "{} {}", r.method, r.target);
         assert!(!r.target.contains("hf_secret"));
@@ -591,7 +606,7 @@ fn a_transfer_the_app_closed_on_is_cut_off_and_continues_from_its_part() {
     let d = w.settle(&d.download_id);
     assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
     assert_eq!(std::fs::read(w.vault("text_encoders/t5.safetensors")).unwrap(), bytes);
-    let last = w.server.requests().into_iter().filter(|r| r.path().starts_with("/store/")).last().unwrap();
+    let last = w.requests().into_iter().filter(|r| r.path().starts_with("/store/")).last().unwrap();
     assert_eq!(last.header("range"), Some("bytes=30000-"));
 }
 
@@ -826,7 +841,7 @@ fn a_key_pasted_in_the_address_is_never_written_to_the_vault() {
     assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
     assert_eq!(d.address, "https://civitai.com/models/4384");
     assert!(files_containing(&w.root.join("vault"), secret.as_bytes()).is_empty(), "the key is in the vault");
-    for r in w.server.requests() {
+    for r in w.requests() {
         assert!(!r.target.contains(secret));
     }
 }
