@@ -637,11 +637,13 @@ export class DownloadDesk {
       return d === root || d.startsWith(`${root}\\`);
     });
     if (!ok) {
-      throw error(
-        "pathOutsideBoundary",
-        "That folder is not one ComfyUI reads for this kind of model in that install.",
-        dir,
-      );
+      throw {
+        ...error(
+          "pathOutsideBoundary",
+          "That folder is not one ComfyUI reads for this kind of model, so a link there would not show. Choose a folder in the list.",
+        ),
+        path: dir,
+      } satisfies VaultError;
     }
   }
 

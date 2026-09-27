@@ -401,6 +401,10 @@ describe("the folder a new link goes in", () => {
       }),
     );
     expect(refused.code).toBe("pathOutsideBoundary");
+    expect(refused.message).toBe(
+      "That folder is not one ComfyUI reads for this kind of model, so a link there would not show. Choose a folder in the list.",
+    );
+    expect(refused.path).toBe("C:\\ComfyUI-Studio\\models\\loras");
     expect(await e.listDownloads()).toEqual([]);
     const orphan = (await e.listOrphans())[0]!;
     const linkRefused = await refusal(
