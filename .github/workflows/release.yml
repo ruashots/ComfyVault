@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build and draft the release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches the version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          tauri_version=$(python -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          npm_version=$(python -c "import json;print(json.load(open('package.json'))['version'])")
+          echo "tag $tag, Cargo.toml $cargo_version, tauri.conf.json $tauri_version, package.json $npm_version"
+          if [ "$tag" != "$cargo_version" ] || [ "$tag" != "$tauri_version" ] || [ "$tag" != "$npm_version" ]; then
+            echo "::error::The tag v$tag does not match the version in Cargo.toml ($cargo_version), tauri.conf.json ($tauri_version) and package.json ($npm_version). Nothing was built."
+            exit 1
+          fi
+          echo "VERSION=$tag" >> "$GITHUB_ENV"
+
+      - name: Turn on Developer Mode
+        shell: pwsh
+        run: |
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
+      - name: Prove a symbolic link can be made
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "linkprobe"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Set-Content -Path "$dir\target.txt" -Value "probe"
+          New-Item -ItemType SymbolicLink -Path "$dir\link.txt" -Target "$dir\target.txt" | Out-Null
+          if ((Get-Content "$dir\link.txt") -ne "probe") { throw "the link does not read its target" }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - name: Production interface build
+        run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+      # No build cache: a release is built from nothing but the tagged source.
+      - name: Rust tests
+        run: cargo test --workspace --locked
+
+      - name: Release build
+        run: cargo build -p comfyvault --release --locked --features custom-protocol
+
+      # The checks of docs/BUILD.md 2.4: a graphical program, with every built
+      # interface file inside it.
+      - name: Check the program
+        run: |
+          python - <<'PY'
+          import os, struct, sys
+          exe = open('target/release/comfyvault.exe', 'rb').read()
+          pe = struct.unpack_from('<I', exe, 0x3c)[0]
+          subsystem = struct.unpack_from('<H', exe, pe + 24 + 68)[0]
+          if subsystem != 2:
+              sys.exit(f'the program is not a graphical program (subsystem {subsystem})')
+          missing = [f for f in sorted(os.listdir('dist/assets')) if ('/assets/' + f).encode() not in exe]
+          if missing:
+              sys.exit(f'the program does not contain the interface files {missing}')
+          print('graphical program, interface complete')
+          PY
+
+      - name: Name the program and write its checksum
+        run: |
+          mkdir -p out
+          name="ComfyVault-v${VERSION}-windows-x64.exe"
+          cp target/release/comfyvault.exe "out/$name"
+          (cd out && sha256sum "$name" > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          echo "EXE=out/$name" >> "$GITHUB_ENV"
+
+      - name: Attest where the program was built
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.EXE }}
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$VERSION" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --draft $pre \
+            --title "ComfyVault v$VERSION" \
+            --notes "Download ComfyVault-v$VERSION-windows-x64.exe and run it. It is one portable program with no installer. See the README for what Windows shows the first time, and for how to check the file against SHA256SUMS.txt and its build attestation." \
+            "$EXE" out/SHA256SUMS.txt
