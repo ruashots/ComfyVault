@@ -1462,10 +1462,8 @@ export class FixtureEngine implements Engine {
 
   async removeLink(linkId: string): Promise<{ removed: true }> {
     this.refuseLinksWhileRunning();
-    const link = this.world.links.find((l) => l.id === linkId);
-    if (link && this.world.running.includes(link.installId)) {
-      const label = this.world.installs.find((i) => i.id === link.installId)?.label ?? link.installId;
-      throw error("conflict", `Close ${label} first`);
+    if (this.lockedLinks.has(linkId)) {
+      throw error("fileLocked", "Windows would not let the link go, because a program has it open.");
     }
     this.world.links = this.world.links.filter((l) => l.id !== linkId);
     return { removed: true };
@@ -2162,6 +2160,13 @@ export class FixtureEngine implements Engine {
     if (this.busy?.kind === "apply" || this.busy?.kind === "revert") {
       throw error("vaultBusy", "Something is already running.");
     }
+  }
+
+  /** Links Windows will not let go of, as when a program holds one open. */
+  private lockedLinks = new Set<string>();
+
+  devLockLink(linkId: string): void {
+    this.lockedLinks.add(linkId);
   }
 
   /** Put some other file at a place in an install, so a name is taken there. */

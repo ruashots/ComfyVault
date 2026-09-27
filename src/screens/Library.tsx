@@ -22,7 +22,7 @@ import { openConfirm } from "~/modals/confirm";
 import { openLibraryLinkChooser } from "~/modals/linkfolder";
 import { BusyWait } from "~/components/BusyWait";
 import { messageOf, useApp, type LibrarySort } from "~/state/store";
-import { nothingWasSearched } from "~/ipc/contract";
+import { isVaultError, nothingWasSearched } from "~/ipc/contract";
 import type { ContentRow, UsageResult } from "~/ipc/contract";
 
 export interface LibraryFilters {
@@ -792,9 +792,8 @@ function DrawerBody(props: { row: ContentRow }) {
  * "Civitai has no such file" for it would be false.
  */
 /**
- * Ask before a link leaves an install. What it breaks is read at the moment of
- * asking: whether that install's ComfyUI runs, and which of its saved
- * workflows name the file.
+ * Ask before a link leaves an install, naming the saved workflows in that
+ * install that ask for the model through this link.
  */
 async function openUnlink(
   app: ReturnType<typeof useApp>,
@@ -803,15 +802,9 @@ async function openUnlink(
 ): Promise<void> {
   const who = installNameOf(place.installId, app.installs());
   const last = places.filter((p) => p.linkId !== null).length === 1;
-  let running = false;
   let workflows: string[] = [];
   try {
-    const [processes, usage] = await Promise.all([
-      app.engine.getRunningComfy(),
-      app.engine.checkModelUsage([place.name]),
-    ]);
-    running = processes.some((p) => p.matchedInstallIds.includes(place.installId));
-    const answer = usage[0];
+    const [answer] = await app.engine.checkModelUsage([place.name], [place.installId]);
     if (answer?.searched) {
       workflows = [
         ...new Set(answer.matches.filter((m) => m.installId === place.installId).map((m) => m.workflowName)),
@@ -821,22 +814,24 @@ async function openUnlink(
     app.actions.showToast(messageOf(error), "bad");
     return;
   }
-  const body = running
-    ? [[{ text: `Close ${who} to unlink this model.` }]]
-    : [
-        ...(workflows.length > 0
-          ? [
-              [{ text: `Missing from ${countOf(workflows.length, "saved workflow", "saved workflows")}:` }],
-              [{ text: workflows.join(" · ") }],
-            ]
-          : []),
-        [{ text: last ? "Vault copy stays. Find it in Cleanup." : "Vault copy and other links stay." }],
-      ];
   openConfirm(app, {
     title: `Unlink from ${who}?`,
     cta: "Unlink",
-    ctaOff: running,
-    body,
+    body: [
+      ...(workflows.length > 0
+        ? [
+            [{ text: `Missing from ${countOf(workflows.length, "saved workflow", "saved workflows")}:` }],
+            [{ text: workflows.join(" · ") }],
+          ]
+        : []),
+      [{ text: last ? "Vault copy stays. Find it in Cleanup." : "Vault copy and other links stay." }],
+    ],
+    // Windows lets a link go while ComfyUI holds the model open. When it still
+    // will not, nothing changed, and closing that ComfyUI is the way through.
+    refusedAs: (error) =>
+      isVaultError(error) && error.code === "fileLocked"
+        ? [[{ text: `Close ${who} to unlink this model.` }]]
+        : null,
     action: async () => {
       await app.engine.removeLink(place.linkId!);
       app.actions.showToast(`Unlinked from ${who}.`);

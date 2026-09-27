@@ -91,13 +91,27 @@ describe("unlinking a model from an install", () => {
     expect(lines()).toContain("Vault copy stays. Find it in Cleanup.");
   });
 
-  it("asks to close that install's ComfyUI first, and offers no Unlink until then", async () => {
-    const { engine } = await drawerFor(inBoth);
+  it("asks to close that install's ComfyUI when Windows will not let the link go", async () => {
+    const { engine, row } = await drawerFor(inBoth);
+    const studio = (await engine.listLinks({ sha256: row.sha256 })).find((l) => l.installId === "studio")!;
+    engine.devLockLink(studio.id);
+    await unlink("ComfyUI-Studio");
+    await userEvent.click(dialogButton("Unlink"));
+    await waitFor(() => lines()[0] === "Close ComfyUI-Studio to unlink this model.");
+    expect(lines()).toEqual(["Close ComfyUI-Studio to unlink this model."]);
+    expect(dialogButton("Unlink").disabled).toBe(true);
+    expect(modal()!.querySelector(".verdict")).toBeNull();
+    expect((await engine.listLinks({ sha256: row.sha256 })).length).toBe(2);
+  });
+
+  it("unlinks while that install's ComfyUI runs, as Windows allows", async () => {
+    const { engine, row } = await drawerFor(inBoth);
     engine.devSetRunningInstalls(["studio"]);
     await unlink("ComfyUI-Studio");
-    expect(lines()).toEqual(["Close ComfyUI-Studio to unlink this model."]);
-    const go = dialogButton("Unlink");
-    expect((go as HTMLButtonElement).disabled).toBe(true);
+    expect(lines()).not.toContain("Close ComfyUI-Studio to unlink this model.");
+    await userEvent.click(dialogButton("Unlink"));
+    await waitFor(() => modal() === null);
+    expect((await engine.listLinks({ sha256: row.sha256 })).map((l) => l.installId)).toEqual(["sandbox"]);
   });
 
   it("removes that link, says so, and shows the model's other links", async () => {

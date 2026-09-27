@@ -1030,6 +1030,8 @@ export interface LinkFolderList {
   folders: LinkFolder[];
   /** The remembered folder, or else the usual one. The same with or without `dir`. */
   defaultDir: string | null;
+  /** The folder picked last time, while ComfyUI still reads it. Null when there is none. */
+  lastUsedDir: string | null;
 }
 
 /** One folder a new link can go in, for the chooser's tree. */

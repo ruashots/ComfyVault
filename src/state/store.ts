@@ -156,6 +156,11 @@ export interface ConfirmModal {
   /** The action is shown, but cannot be pressed yet. */
   ctaOff: boolean;
   action: () => Promise<void> | void;
+  /**
+   * A refusal the dialog answers in its own words: the lines that replace the
+   * body, with the action off. Null for any other refusal.
+   */
+  refusedAs: ((error: unknown) => ConfirmLine[] | null) | null;
   running: boolean;
   /** The heading over `error`. */
   errorHead: string;

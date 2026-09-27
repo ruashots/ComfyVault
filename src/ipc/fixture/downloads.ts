@@ -683,13 +683,16 @@ export class DownloadDesk {
       hasSubfolders: below(path).length > 0,
     });
     const defaultDir = this.defaultDir(install, args.category);
-    if (args.dir === undefined) return { folders: roots.map((r) => entry(r.path)), defaultDir };
+    const lastUsedDir = this.linkDirs.get(`${install.id}|${args.category}`) ?? null;
+    if (args.dir === undefined) {
+      return { folders: roots.map((r) => entry(r.path)), defaultDir, lastUsedDir };
+    }
     this.checkInside(install, args.category, args.dir);
     const inside = below(args.dir)
       .map((f) => `${args.dir}${f.slice(args.dir!.length)}`)
       .map((p) => entry(p))
       .sort((a, b) => a.name.localeCompare(b.name));
-    return { folders: inside, defaultDir };
+    return { folders: inside, defaultDir, lastUsedDir };
   }
 
   private stateIn(

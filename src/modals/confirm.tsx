@@ -25,6 +25,8 @@ export function openConfirm(
     refusal?: { head: string; message: string; detail: readonly string[] };
     /** Show the action, but not let it be pressed. The body says why. */
     ctaOff?: boolean;
+    /** A refusal the dialog answers in its own words, with the action off. */
+    refusedAs?: (error: unknown) => ConfirmLine[] | null;
   },
 ): void {
   app.setModal({
@@ -32,6 +34,7 @@ export function openConfirm(
     title: options.title,
     cta: options.cta,
     ctaOff: options.ctaOff ?? false,
+    refusedAs: options.refusedAs ?? null,
     body: options.body,
     list: options.list ?? [],
     after: options.after ?? [],
@@ -69,6 +72,17 @@ export function ConfirmModalView() {
       app.setModal(null);
       await app.actions.refresh();
     } catch (error) {
+      const lines = current.refusedAs?.(error) ?? null;
+      if (lines) {
+        app.patchModal((m) => {
+          if (m.kind === "confirm") {
+            m.running = false;
+            m.body = lines;
+            m.ctaOff = true;
+          }
+        });
+        return;
+      }
       app.patchModal((m) => {
         if (m.kind === "confirm") {
           m.running = false;
