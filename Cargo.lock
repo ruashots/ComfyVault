@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "comfyvault"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "comfyvault-core",
  "serde",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "comfyvault-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "native-tls",
  "rayon",
