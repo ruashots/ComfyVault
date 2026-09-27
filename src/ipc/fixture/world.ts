@@ -757,6 +757,10 @@ export function nameGroupsOf(world: World): NameGroup[] {
     const content = world.contents.find((c) => c.sha256 === entry.sha256);
     if (!content) continue;
     const names = [entry.canonicalName, ...entry.aliases];
+    // As in the engine: every install link points at the vault file's own
+    // name, whatever the link itself is called, and a rename repoints them
+    // all. So only that name is ever counted as used, and only by path.
+    const links = world.links.filter((l) => l.sha256 === entry.sha256);
     out.push({
       sha256: entry.sha256,
       sizeBytes: content.bytes,
@@ -766,16 +770,11 @@ export function nameGroupsOf(world: World): NameGroup[] {
         name,
         isCanonical: name === entry.canonicalName,
         vaultRelPath: `${content.category}\\${name}`,
-        usedByLinks: world.links.filter(
-          (l) => l.sha256 === entry.sha256 && l.linkName === name,
-        ).length,
-        seenInInstalls: [
-          ...new Set(
-            content.copies
-              .filter((c) => c.name === name)
-              .map((c) => c.installId),
-          ),
-        ],
+        usedByLinks: name === entry.canonicalName ? links.length : 0,
+        seenInInstalls:
+          name === entry.canonicalName
+            ? [...new Set(links.map((l) => l.installId))].sort()
+            : [],
       })),
     });
   }

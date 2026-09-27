@@ -1582,15 +1582,11 @@ export class FixtureEngine implements Engine {
     if (entry.canonicalName === name) {
       throw error("conflict", "That is the name the vault keeps.");
     }
-    const used = this.world.links.filter(
-      (l) => l.sha256 === sha256 && l.linkName === name,
-    );
-    if (used.length > 0) {
-      throw error(
-        "conflict",
-        `${used.length} ${used.length === 1 ? "link resolves" : "links resolve"} through that name.`,
-      );
+    if (!entry.aliases.includes(name)) {
+      throw error("notFound", "That name is not one this model has.");
     }
+    // Every install link points at the vault file's own name, never at
+    // another name, so no link resolves through the one removed here.
     entry.aliases = entry.aliases.filter((n) => n !== name);
     return { removed: true };
   }
