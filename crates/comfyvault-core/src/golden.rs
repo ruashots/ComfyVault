@@ -846,6 +846,7 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                     has_subfolders: true,
                 }],
                 default_dir: Some(r"C:\ComfyUI-Main\models\loras\portraits".into()),
+                last_used_dir: Some(r"C:\ComfyUI-Main\models\loras\portraits".into()),
             },
         ),
         s("AddressPlan", address_plan()),

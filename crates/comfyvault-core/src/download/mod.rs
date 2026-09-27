@@ -1286,12 +1286,18 @@ fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, va
 /// still one ComfyUI reads, or else where ComfyUI saves new files of that
 /// kind.
 pub(crate) fn default_dir(store: &Store, install: &Install, category: &str) -> Result<PathBuf> {
-    if let Some(dir) = store.link_dir(&install.id, category)? {
-        if folders::inside_roots(install, category, &dir, store.vault_root()).is_ok() {
-            return Ok(dir);
-        }
+    match last_used_dir(store, install, category)? {
+        Some(dir) => Ok(dir),
+        None => Ok(folders::link_folder(install, category)),
     }
-    Ok(folders::link_folder(install, category))
+}
+
+/// The folder picked last time for this category in this install, while
+/// ComfyUI still reads it.
+pub(crate) fn last_used_dir(store: &Store, install: &Install, category: &str) -> Result<Option<PathBuf>> {
+    Ok(store
+        .link_dir(&install.id, category)?
+        .filter(|dir| folders::inside_roots(install, category, dir, store.vault_root()).is_ok()))
 }
 
 fn leads_to(link: &Path, target: &Path) -> bool {

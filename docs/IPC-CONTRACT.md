@@ -1598,7 +1598,14 @@ If `createDir` is `false` and the folder does not exist, the engine rejects with
 `notFound`. If `createDir` is `true`, the engine creates the folder.
 
 If something already sits at the target name, the engine rejects with
-`conflict`. It never overwrites.
+`conflict`. It never overwrites. The message tells the two cases apart, and
+the interface can show it as it is:
+
+- A different file, a link to other content, or a folder has the name: "A
+  different file with this name is already here. Choose another folder." This
+  message is used for this case and nothing else.
+- This model is already linked there under that name: "This model is already
+  linked here with that name. Nothing was changed."
 
 ### 7.2 `remove_link`
 
@@ -1677,6 +1684,7 @@ Returns:
 type LinkFolderList = {
   folders: LinkFolder[]
   defaultDir: string | null   // the folder picked last time for this kind here, or where ComfyUI saves new files of it
+  lastUsedDir: string | null  // the folder picked last time, while ComfyUI still reads it; null when there is none
 }
 ```
 

@@ -66,6 +66,10 @@ pub struct CreateLinkRequest {
     pub create_dir: bool,
 }
 
+/// The refusal when a different file already has the link's name in the
+/// folder. The interface shows it as it is, so it is used for nothing else.
+pub const TAKEN_BY_ANOTHER_FILE: &str = "A different file with this name is already here. Choose another folder.";
+
 /// How the journal of a link made by hand is named.
 pub const LINK_JOURNAL_PREFIX: &str = "link-";
 
@@ -149,6 +153,9 @@ pub struct LinkFolderList {
     /// The folder picked last time for this kind in this install, while
     /// ComfyUI still reads it, or else where ComfyUI saves new files of it.
     pub default_dir: Option<String>,
+    /// The folder picked last time, while ComfyUI still reads it. `None` when
+    /// there is none, and `default_dir` is then where ComfyUI saves new files.
+    pub last_used_dir: Option<String>,
 }
 
 fn has_subfolders(path: &Path) -> bool {
@@ -226,7 +233,12 @@ impl<'a> Links<'a> {
     pub fn link_folders(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<LinkFolderList> {
         let (folders, install) = self.link_folders_of(install_id, category, dir)?;
         let default = crate::download::default_dir(self.store, &install, category)?;
-        Ok(LinkFolderList { folders, default_dir: Some(crate::paths::display_path(&default)) })
+        let last = crate::download::last_used_dir(self.store, &install, category)?;
+        Ok(LinkFolderList {
+            folders,
+            default_dir: Some(crate::paths::display_path(&default)),
+            last_used_dir: last.map(|d| crate::paths::display_path(&d)),
+        })
     }
 
     fn link_folders_of(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<(Vec<LinkFolder>, Install)> {
@@ -383,16 +395,17 @@ impl<'a> Links<'a> {
         // Never overwrite. Something already here is the person's file, and
         // replacing it would destroy whatever it is.
         if std::fs::symlink_metadata(&link_path).is_ok() {
-            let what = if self.platform.is_symlink(&link_path) {
-                "a link"
+            let same_model = self.platform.is_symlink(&link_path)
+                && matches!(
+                    (std::fs::canonicalize(&link_path), std::fs::canonicalize(&vault_path)),
+                    (Ok(a), Ok(b)) if a == b
+                );
+            let message = if same_model {
+                "This model is already linked here with that name. Nothing was changed."
             } else {
-                "a file"
+                TAKEN_BY_ANOTHER_FILE
             };
-            return Err(VaultError::new(
-                ErrorCode::Conflict,
-                format!("There is already {what} with that name in that folder. Nothing was changed."),
-            )
-            .with_path(&link_path));
+            return Err(VaultError::new(ErrorCode::Conflict, message).with_path(&link_path));
         }
 
         // Written before the link, and marked done only once its record is
@@ -1784,6 +1797,53 @@ pub(crate) mod tests {
 
         links(&w).finish_interrupted().unwrap();
         assert!(w.store.link(&rec.id).unwrap().is_none());
+    }
+
+    // --- the folder step and a taken place -----------------------------------
+
+    #[test]
+    fn the_folder_list_says_which_folder_was_last_used() {
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+        let first = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        assert_eq!(first.last_used_dir, None, "nothing was picked yet");
+        assert!(first.default_dir.is_some(), "the usual folder is still offered");
+
+        let chosen = i.root.join("models/loras/portraits");
+        links(&w).create(&by_dir(&i, &sha, chosen.clone(), true)).unwrap();
+        let next = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        assert_eq!(next.last_used_dir, Some(crate::paths::display_path(&chosen)));
+        assert_eq!(next.default_dir, next.last_used_dir);
+
+        // A remembered folder ComfyUI no longer reads is not "last used".
+        w.store.put_link_dir(&i.id, "loras", &w.path().join("elsewhere")).unwrap();
+        assert_eq!(links(&w).link_folders(&i.id, "loras", None).unwrap().last_used_dir, None);
+    }
+
+    #[test]
+    fn a_different_file_with_the_name_gets_its_own_refusal() {
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let dir = i.root.join("models/loras");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // The same model already linked there under that name.
+        links(&w).create(&by_dir(&i, &sha, dir.clone(), false)).unwrap();
+        let again = links(&w).create(&by_dir(&i, &sha, dir.clone(), false)).unwrap_err();
+        assert_eq!(again.code, ErrorCode::Conflict);
+        assert_ne!(again.message, TAKEN_BY_ANOTHER_FILE);
+
+        // A different file with the name.
+        let other = i.root.join("models/loras/other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("lora1.safetensors"), b"someone else's model").unwrap();
+        let taken = links(&w).create(&by_dir(&i, &sha, other.clone(), false)).unwrap_err();
+        assert_eq!(taken.code, ErrorCode::Conflict);
+        assert_eq!(taken.message, TAKEN_BY_ANOTHER_FILE);
+        assert_eq!(std::fs::read(other.join("lora1.safetensors")).unwrap(), b"someone else's model");
     }
 }
 
