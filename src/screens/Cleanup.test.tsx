@@ -117,7 +117,7 @@ describe("the Cleanup sections, after a run", () => {
     expect(card.textContent).not.toContain("links point at it");
     expect(screen.queryByRole("button", { name: /Type a different name/ })).toBeNull();
     expect(card.textContent!.replace(/\s+/g, " ")).toContain(
-      "Choosing another name renames that one file. Each install goes on using the name it uses now, and no disk space is freed.",
+      "Picking a name only changes what the file is called in the vault and the Library. Your installs are not affected.",
     );
     expect(card.textContent).not.toContain("·");
   });

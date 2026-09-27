@@ -244,8 +244,8 @@ function NameGroupCard(props: { view: NameGroupView }) {
 
       <div class="why">{props.view.suggestion.reason}</div>
       <div class="why">
-        Choosing another name renames that one file. Each install goes on using
-        the name it uses now, and no disk space is freed.
+        Picking a name only changes what the file is called in the vault and the
+        Library. Your installs are not affected.
       </div>
     </div>
   );

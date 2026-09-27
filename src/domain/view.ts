@@ -531,17 +531,20 @@ export function buildNameGroupView(
   );
   const best = ranked[0]!;
   const next = ranked[1];
-  const links1 = (n: number) => `${n} ${n === 1 ? "link" : "links"}`;
+  const longer = choices.length === 2 ? "longer" : "longest";
 
   let reason: string;
   if (best.linksNamed === 0) {
-    reason = "No link in the installs has any of these names, so the longer name is suggested.";
+    reason = `No install uses ${choices.length === 2 ? "either name" : "any of these names"}. The ${longer} one is suggested.`;
   } else if (next && next.linksNamed === best.linksNamed) {
-    reason = `As many links in the installs have each name, ${links1(best.linksNamed)} each, so the longer name is suggested.`;
+    reason =
+      best.installIds.length > next.installIds.length
+        ? "Your installs use these names as often as each other, and more of them use this one."
+        : `Your installs use these names as often as each other, so the ${longer} one is suggested.`;
   } else if (next && next.linksNamed > 0) {
-    reason = `Suggested because more of the installs' links have this name: ${links1(best.linksNamed)}, against ${next.linksNamed} for the next name.`;
+    reason = `Suggested because your installs use it more often: in ${best.linksNamed} places, against ${next.linksNamed}.`;
   } else {
-    reason = `Suggested because it is the only name the installs' links use: ${links1(best.linksNamed)} have it.`;
+    reason = "Suggested because it is the only name your installs use.";
   }
 
   return { group, choices, suggestion: { name: best.name, reason } };

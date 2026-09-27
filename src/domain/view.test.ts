@@ -557,18 +557,32 @@ describe("what each name of one model is", () => {
     const view = buildNameGroupView(owner(), links);
     expect(view.suggestion.name).toBe("upscaler_3d.safetensors");
     expect(view.suggestion.reason).toBe(
-      "Suggested because more of the installs' links have this name: 2 links, against 1 for the next name.",
+      "Suggested because your installs use it more often: in 2 places, against 1.",
     );
   });
 
   it("says when only one name is used, and when both are used as often", () => {
     expect(buildNameGroupView(owner(), links.slice(1)).suggestion.reason).toBe(
-      "Suggested because it is the only name the installs' links use: 2 links have it.",
+      "Suggested because it is the only name your installs use.",
     );
     const level = buildNameGroupView(owner(), links.slice(0, 2));
     expect(level.suggestion.name).toBe("upscaler_conv_v1.safetensors");
     expect(level.suggestion.reason).toBe(
-      "As many links in the installs have each name, 1 link each, so the longer name is suggested.",
+      "Your installs use these names as often as each other, so the longer one is suggested.",
+    );
+  });
+
+  it("says so when the names are used as often, but by more installs for one", () => {
+    const view = buildNameGroupView(owner(), [
+      { installId: "prod", linkName: "upscaler_3d.safetensors" },
+      { installId: "normal", linkName: "upscaler_3d.safetensors" },
+      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
+      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
+    ]);
+    // The shorter name, because two installs use it and one uses the other.
+    expect(view.suggestion.name).toBe("upscaler_3d.safetensors");
+    expect(view.suggestion.reason).toBe(
+      "Your installs use these names as often as each other, and more of them use this one.",
     );
   });
 
@@ -576,7 +590,7 @@ describe("what each name of one model is", () => {
     const view = buildNameGroupView(owner(), []);
     expect(view.suggestion.name).toBe("upscaler_conv_v1.safetensors");
     expect(view.suggestion.reason).toBe(
-      "No link in the installs has any of these names, so the longer name is suggested.",
+      "No install uses either name. The longer one is suggested.",
     );
   });
 
