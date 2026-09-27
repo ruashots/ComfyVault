@@ -291,6 +291,13 @@ impl<'a> Links<'a> {
         crate::download::folders::folder_name_ok(&name)?;
         // Made where it really is: the place just proved, not the text given.
         let dir = &crate::download::folders::inside_roots(&install, category, dir, self.store.vault_root())?;
+        // Never inside the vault, as for a link.
+        if crate::paths::canonicalize_clean(self.store.vault_root())
+            .map(|v| crate::download::folders::is_under(&v, dir))
+            .unwrap_or(false)
+        {
+            return Err(outside_boundary(dir));
+        }
         if dir.is_dir() {
             return Ok((dir.to_path_buf(), false));
         }
@@ -1645,6 +1652,61 @@ pub(crate) mod tests {
         };
         assert!(links(&w).create(&escape).is_err());
         assert!(!w.path().join("D-drive/elsewhere").exists());
+    }
+
+    // --- a root that holds custom_nodes or the vault ---------------------------
+
+    /// A vault on its own drive folder and an install beside it, as
+    /// `D:\\Vault` and `C:\\ComfyUI`.
+    fn apart() -> (tempfile::TempDir, Store, crate::platform::FakePlatform) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("drive/vault"), true).unwrap();
+        (dir, store, crate::platform::FakePlatform::new())
+    }
+
+    fn register_with_yaml(store: &Store, root: &Path, category: &str, folder: &Path) -> Install {
+        crate::install::detect::fixtures::make_install(root);
+        std::fs::write(
+            root.join("extra_model_paths.yaml"),
+            format!("x:\n    {category}: {}\n", folder.display()),
+        )
+        .unwrap();
+        let c = crate::install::detect::inspect(root).unwrap();
+        let i = Install::from_candidate("i".into(), "A".into(), root.to_path_buf(), &c).unwrap();
+        store.put_install(&i).unwrap();
+        i
+    }
+
+    #[test]
+    fn a_yaml_junction_to_the_install_itself_opens_nothing_in_custom_nodes() {
+        let (dir, store, platform) = apart();
+        let root = dir.path().join("A");
+        let j = dir.path().join("j-root");
+        let i = register_with_yaml(&store, &root, "loras", &j);
+        junction(&j, &root);
+        std::fs::create_dir_all(root.join("custom_nodes/Pack")).unwrap();
+        let links = Links::new(&store, &platform);
+
+        let roots = links.link_folders(&i.id, "loras", None).unwrap().folders;
+        assert!(roots.iter().all(|r| r.path != j), "the junction to the install is offered: {roots:?}");
+        assert!(links.make_link_folder(&i.id, "loras", &j.join("custom_nodes").join("NewPack")).is_err());
+        assert!(!root.join("custom_nodes/NewPack").exists(), "a folder was made in custom_nodes");
+    }
+
+    #[test]
+    fn a_yaml_folder_that_holds_the_vault_opens_nothing_in_the_vault() {
+        let (dir, store, platform) = apart();
+        let root = dir.path().join("A");
+        let drive = dir.path().join("drive");
+        let i = register_with_yaml(&store, &root, "loras", &drive);
+        let links = Links::new(&store, &platform);
+
+        let roots = links.link_folders(&i.id, "loras", None).unwrap().folders;
+        assert!(roots.iter().all(|r| r.path != drive), "the folder around the vault is offered: {roots:?}");
+        for bad in [store.vault_root().join("loras").join("new"), store.internal_dir().join("new")] {
+            assert!(links.make_link_folder(&i.id, "loras", &bad).is_err(), "{bad:?}");
+            assert!(!bad.exists(), "{bad:?} was made");
+        }
     }
 }
 

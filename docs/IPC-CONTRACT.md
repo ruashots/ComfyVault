@@ -2683,8 +2683,10 @@ So:
   the whole install is never used; the link then goes into
   `models\{category}`. Neither is a YAML folder inside the install's
   `custom_nodes`, where ComfyUI imports code from, or inside the vault, whose
-  folders hold the models the links point at. None of these is offered in
-  `roots`, and no link or folder is made in one.
+  folders hold the models the links point at, or a YAML folder whose real
+  place holds either of them, such as a junction to the install itself or a
+  whole drive that holds the vault. None of these is offered in `roots`, and
+  no link or folder is made in one.
 - A folder ComfyUI reads for the category counts wherever it really is. A
   `models\loras` that is a junction to another drive takes links, in it and
   in folders inside it, because ComfyUI reads that drive through it. Any

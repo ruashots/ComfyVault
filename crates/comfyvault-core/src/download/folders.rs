@@ -140,8 +140,11 @@ pub fn roots(install: &Install, category: &str, vault: &Path) -> Vec<Root> {
     searched(install, category)
         .into_iter()
         .filter(|p| boundaries.iter().any(|b| p.starts_with(b)))
+        // Either way round: a folder inside `custom_nodes` or the vault, and
+        // a folder that holds one of them, such as a junction to the install
+        // itself or a whole drive that holds the vault.
         .filter(|p| match real(p) {
-            Some(r) => !fenced.iter().any(|f| is_under(f, &r)),
+            Some(r) => !fenced.iter().any(|f| is_under(f, &r) || is_under(&r, f)),
             None => false,
         })
         .map(|path| {
