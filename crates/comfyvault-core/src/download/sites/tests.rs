@@ -101,6 +101,8 @@ fn civitai_asking_for_a_token_is_a_refusal_with_its_own_words() {
     assert_eq!(r.kind, RefusalKind::TokenMissing);
     assert_eq!(r.host, Some(Host::Civitai));
     assert_eq!(r.service_message.as_deref(), Some("You must be logged in to download this model."));
+    assert_eq!(r.title.as_deref(), Some("DreamShaper"), "the name Civitai gave before it refused");
+    assert!(r.subtitle.as_deref().unwrap().ends_with("/models/4384"));
 
     let Reading::Refused(r) = read_at(&s, "https://civitai.com/models/4384", Some("bad")) else { panic!() };
     assert_eq!(r.kind, RefusalKind::TokenRejected);
@@ -186,6 +188,8 @@ fn a_gated_model_without_a_token_asks_for_one_in_the_sites_words() {
     assert_eq!(r.kind, RefusalKind::TokenMissing);
     assert_eq!(r.service_message.as_deref(), Some(msg));
     assert_eq!(r.page, Some(HfPage { owner: "Comfy-Org".into(), repo: "flux1-dev".into() }));
+    assert_eq!(r.title.as_deref(), Some("t5.safetensors"));
+    assert_eq!(r.subtitle.as_deref(), Some("Comfy-Org/flux1-dev"));
 
     let Reading::Refused(r) = read_at(&s, HF_FILE, Some("hf_x")) else { panic!() };
     assert_eq!(r.kind, RefusalKind::TokenRejected);

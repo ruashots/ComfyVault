@@ -5,5 +5,7 @@
     "owner": "black-forest-labs",
     "repo": "FLUX.1-dev"
   },
-  "serviceMessage": "Access to model black-forest-labs/FLUX.1-dev is restricted. You must have access to it and be authenticated to access it. Please log in."
+  "serviceMessage": "Access to model black-forest-labs/FLUX.1-dev is restricted. You must have access to it and be authenticated to access it. Please log in.",
+  "subtitle": "black-forest-labs/FLUX.1-dev",
+  "title": "flux1-dev.safetensors"
 }

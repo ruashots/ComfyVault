@@ -2485,6 +2485,8 @@ type AddressRefusal = {
   host: 'huggingface' | 'civitai' | null     // null for badAddress
   serviceMessage: string | null              // the site's own words, verbatim
   page: HfPage | null                        // Hugging Face: for "Open the model's page"
+  title: string | null                       // as in AddressPlan, when the site said it before refusing
+  subtitle: string | null
 }
 ```
 
@@ -2554,7 +2556,8 @@ type InstallTarget = {
   `embeddings`; `VAE` to `vae`; `Controlnet` to `controlnet`; `Upscaler` to
   `upscale_models`), or from the deepest folder in the Hugging Face path that
   names a category. Anything else suggests nothing.
-- `category` is the argument, or else `suggestedCategory`. When it is null,
+- `category` is the argument, or else the folder of the file the vault
+  already holds, or else `suggestedCategory`. When it is null,
   `vaultRelPath` and every `linkPath` are null, and a download cannot start.
 - `categories` holds ComfyUI's own categories and every folder the vault
   already has, sorted.
@@ -2650,6 +2653,7 @@ type Download = {
   linkedInstallIds: string[]    // the installs linked, once done or linkedOnly
   notLinked: NotLinked[]
   alreadyInVault: boolean
+  sha256: string | null         // once the file is proven: after the check, or at once for linkedOnly
   state: 'waiting' | 'running' | 'checking' | 'stopped' | 'failed' | 'mismatch' | 'cutOff' | 'done' | 'linkedOnly'
   bytesDone: number
   bytesTotal: number

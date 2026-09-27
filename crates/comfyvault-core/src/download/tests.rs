@@ -321,6 +321,7 @@ fn a_hugging_face_file_downloads_checks_goes_into_the_vault_and_is_linked() {
 
     assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
     assert!(!d.already_in_vault);
+    assert_eq!(d.sha256.as_deref(), Some(sha(&bytes).as_str()), "the proven hash, for Show it in Library");
     assert_eq!(d.bytes_done, 300_000);
     let file = w.vault("text_encoders/t5.safetensors");
     assert_eq!(std::fs::read(&file).unwrap(), bytes);
@@ -366,6 +367,7 @@ fn a_file_that_does_not_match_its_hash_is_deleted_and_nothing_is_linked() {
     let d = w.settle(&w.start(CIVITAI, "checkpoints", &[&a]).download_id);
 
     assert_eq!(d.state, DownloadState::Mismatch);
+    assert_eq!(d.sha256, None, "nothing was proven");
     assert_eq!(d.error.as_ref().unwrap().kind, FailureKind::Mismatch);
     assert!(!part_path(&w.ctx, &d.download_id).exists(), "the wrong file is deleted");
     assert!(w.ctx.store.vault_files().unwrap().is_empty(), "nothing went into the vault");
@@ -390,10 +392,24 @@ fn a_model_already_in_the_vault_is_only_linked() {
 
     let d = w.start(CIVITAI, "checkpoints", &[&a, &b]);
     assert_eq!(d.state, DownloadState::LinkedOnly);
+    assert_eq!(d.sha256.as_deref(), Some(sha(&bytes).as_str()));
     assert!(d.already_in_vault);
     assert_eq!(w.site.storage_hits.load(Ordering::SeqCst), hits, "nothing was downloaded");
     assert_eq!(read_link(&b.root.join("models/checkpoints/dreamshaper_8.safetensors")), bytes);
     assert_eq!(d.linked_install_ids.len(), 2);
+}
+
+#[test]
+fn a_model_the_vault_holds_is_planned_in_the_folder_it_is_in() {
+    // The repository path suggests text_encoders, but the vault keeps this
+    // model under loras. Its links come from there.
+    let w = world(content("held", 2_000), true);
+    let a = w.install("A");
+    w.settle(&w.start(HF, "loras", &[&a]).download_id);
+    let p = w.read(HF, None).plan.unwrap();
+    assert!(p.already_in_vault.is_some());
+    assert_eq!(p.category.as_deref(), Some("loras"));
+    assert_eq!(p.suggested_category.as_deref(), Some("text_encoders"));
 }
 
 #[test]

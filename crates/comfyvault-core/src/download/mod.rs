@@ -166,6 +166,9 @@ pub struct Download {
     pub linked_install_ids: Vec<String>,
     pub not_linked: Vec<NotLinked>,
     pub already_in_vault: bool,
+    /// The file's SHA-256, once the file is proven: after the check, or at
+    /// once when the vault already had it. `None` until then.
+    pub sha256: Option<String>,
     pub state: DownloadState,
     pub bytes_done: u64,
     pub bytes_total: u64,
@@ -342,7 +345,16 @@ impl Downloader {
         if let Some(c) = category {
             validate_category(c)?;
         }
-        let category = category.map(str::to_string).or_else(|| file.suggested_category.clone());
+        let in_vault_category = match &file.sha256 {
+            Some(sha) => ctx.store.vault_file(sha)?.map(|r| r.category),
+            None => None,
+        };
+        // A model the vault already holds is linked from the folder it is in,
+        // unless the person chose another.
+        let category = category
+            .map(str::to_string)
+            .or(in_vault_category)
+            .or_else(|| file.suggested_category.clone());
         let plan = self.plan_for(ctx, &file, category)?;
         Ok(AddressReading { plan: Some(plan), refusal: None })
     }
@@ -493,6 +505,7 @@ impl Downloader {
                 linked_install_ids: Vec::new(),
                 not_linked: Vec::new(),
                 already_in_vault: false,
+                sha256: None,
                 state: DownloadState::Waiting,
                 bytes_done: 0,
                 bytes_total: file.size_bytes,
@@ -514,6 +527,8 @@ impl Downloader {
                 if ctx.store.vault_root().join(existing.vault_rel_path()).is_file() {
                     let _w = ctx.vault_writes.lock().map_err(|_| poisoned())?;
                     d.already_in_vault = true;
+                    d.sha256 = Some(existing.sha256.clone());
+                    d.vault_rel_path = crate::paths::display_path(&existing.vault_rel_path());
                     self.link_all(ctx, &mut d, &existing)?;
                     d.state = DownloadState::LinkedOnly;
                     d.bytes_total = 0;
@@ -962,6 +977,7 @@ impl Downloader {
                 Failure::new(FailureKind::Disk, "The file in the vault is not the one this download brought. Nothing was linked."),
             );
         }
+        d.expected_sha256 = Some(sha.clone());
         let _w = ctx.vault_writes.lock().map_err(|_| poisoned())?;
         let size = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
         let record = match ctx.store.vault_file(&sha)? {
@@ -987,6 +1003,7 @@ impl Downloader {
     }
 
     fn done(&self, ctx: &Context, d: &mut DownloadRecord) -> Result<()> {
+        d.sha256 = d.expected_sha256.clone();
         d.state = if d.already_in_vault && d.bytes_done == 0 { DownloadState::LinkedOnly } else { DownloadState::Done };
         d.bytes_per_second = None;
         d.finished_at = Some(Timestamp::now());
@@ -1233,7 +1250,10 @@ fn refused(p: AddressProblem) -> AddressReading {
         AddressProblem::HfRepoNotFile => RefusalKind::HfRepoNotFile,
     };
     let host = matches!(p, AddressProblem::HfRepoNotFile).then_some(Host::HuggingFace);
-    AddressReading { plan: None, refusal: Some(Refusal { kind, host, service_message: None, page: None }) }
+    AddressReading {
+        plan: None,
+        refusal: Some(Refusal { kind, host, service_message: None, page: None, title: None, subtitle: None }),
+    }
 }
 
 fn refusal_error(r: &Refusal) -> VaultError {

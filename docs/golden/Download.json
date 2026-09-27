@@ -20,6 +20,7 @@
   ],
   "linkedInstallIds": [],
   "notLinked": [],
+  "sha256": null,
   "startedAt": "2025-09-22T00:00:00Z",
   "state": "failed",
   "title": "t5xxl_fp16.safetensors",

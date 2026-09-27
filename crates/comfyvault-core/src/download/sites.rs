@@ -89,6 +89,10 @@ pub struct Refusal {
     /// The site's own words, exactly as it sent them.
     pub service_message: Option<String>,
     pub page: Option<HfPage>,
+    /// What the site said the model is called before it refused, the same
+    /// as a plan's title and subtitle. `None` when it said nothing.
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
 }
 
 /// One file a site will hand over, as the site describes it.
@@ -170,7 +174,10 @@ pub fn check_access(web: &dyn Web, file: &RemoteFile, token: Option<&str>) -> Re
     if reply.is_redirect() || (200..300).contains(&reply.status) {
         return Ok(None);
     }
-    Ok(Some(refusal_from(file.host, reply, token.is_some(), file.page.clone())?))
+    let mut refusal = refusal_from(file.host, reply, token.is_some(), file.page.clone())?;
+    refusal.title = Some(file.title.clone());
+    refusal.subtitle = Some(file.subtitle.clone());
+    Ok(Some(refusal))
 }
 
 /// Turns a site's refusal into the kind the interface explains, keeping the
@@ -202,7 +209,7 @@ pub fn refusal_from(host: Host, reply: Reply, had_token: bool, page: Option<HfPa
             }
         }
     };
-    Ok(Refusal { kind, host: Some(host), service_message, page })
+    Ok(Refusal { kind, host: Some(host), service_message, page, title: None, subtitle: None })
 }
 
 /// The human message in a site's answer, as the site wrote it.
@@ -250,7 +257,10 @@ fn hugging_face(
     // The access question first: a gated or missing file stops here.
     let head = web.send(&Request::head(&fetch_url).bearer(token), None)?;
     if !(head.is_redirect() || (200..300).contains(&head.status)) {
-        return Ok(Reading::Refused(refusal_from(Host::HuggingFace, head, token.is_some(), Some(page))?));
+        let mut refusal = refusal_from(Host::HuggingFace, head, token.is_some(), Some(page))?;
+        refusal.title = Some(file_name);
+        refusal.subtitle = Some(format!("{owner}/{repo}"));
+        return Ok(Reading::Refused(refusal));
     }
     let linked_size = head.header("x-linked-size").and_then(|s| s.parse::<u64>().ok());
     let linked_sha = head.header("x-linked-etag").and_then(sha_in);
@@ -404,6 +414,8 @@ fn civitai(
             host: Some(Host::Civitai),
             service_message: None,
             page: None,
+            title: Some(name),
+            subtitle: Some(format!("{base}/models/{model_id}")),
         }));
     };
     let version_id = version.get("id").and_then(Value::as_u64);
