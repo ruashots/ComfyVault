@@ -23,12 +23,15 @@ export function openConfirm(
     action: () => Promise<void> | void;
     /** Why the action cannot happen, known before the person presses it. */
     refusal?: { head: string; message: string; detail: readonly string[] };
+    /** Show the action, but not let it be pressed. The body says why. */
+    ctaOff?: boolean;
   },
 ): void {
   app.setModal({
     kind: "confirm",
     title: options.title,
     cta: options.cta,
+    ctaOff: options.ctaOff ?? false,
     body: options.body,
     list: options.list ?? [],
     after: options.after ?? [],
@@ -138,7 +141,7 @@ export function ConfirmModalView() {
                 {(cta) => (
                   <button
                     class="btn dng"
-                    disabled={current().running}
+                    disabled={current().running || current().ctaOff}
                     onClick={() => void run()}
                   >
                     {current().running ? "Working…" : cta()}

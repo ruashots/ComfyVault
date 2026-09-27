@@ -16,7 +16,7 @@ import { EmptyScreen, Header } from "~/components/Shell";
 import { Wrap } from "~/components/Wrap";
 import { blockedShort, blockedWhy } from "~/domain/blocked";
 import { countOf, dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
-import { placesOf } from "~/domain/view";
+import { placesOf, type Place } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
 import { openLibraryLinkChooser } from "~/modals/linkfolder";
@@ -462,7 +462,9 @@ function DrawerBody(props: { row: ContentRow }) {
         : [];
       return placesOf(
         current.sha256,
-        app.plan(),
+        // A plan from a scan taken before the last run describes the disk as it
+        // was then. Its paths are links now, or gone.
+        app.scanPredatesRun() ? null : app.plan(),
         links,
         new Map(app.installs().map((i) => [i.id, installName(i, app.installs())])),
       );
@@ -492,33 +494,16 @@ function DrawerBody(props: { row: ContentRow }) {
 
   return (
     <>
-      <div class="det-acts">
-        <Show when={row().inVault}>
-          <button
-            class="btn sm"
-            disabled={app.linkBusy() !== null}
-            onClick={() =>
-              openLibraryLinkChooser(app, {
-                sha256: row().sha256,
-                category: row().category,
-                fileName: row().name,
-              })
-            }
-          >
-            <Icon name="plus" size={11} />
-            Link into an install
-          </button>
-        </Show>
-        <Show when={row().inVault && row().occurrenceCount === 0}>
+      <Show when={row().inVault && row().occurrenceCount === 0}>
+        <div class="det-acts">
           <button class="btn sm dng" disabled={app.linkBusy() !== null} onClick={deleteFromVault}>
             <Icon name="trash" size={11} />
             Delete
           </button>
-        </Show>
-        <BusyWait reason={app.linkBusy()} />
-      </div>
+        </div>
+      </Show>
 
-      <div class="sec" style={{ "margin-top": "14px" }}>
+      <div class="sec" style={{ "margin-top": row().inVault && row().occurrenceCount === 0 ? "14px" : "0" }}>
         <span class="t">Where it reaches</span>
         <span class="n">{row().occurrenceCount || "none"}</span>
       </div>
@@ -554,19 +539,22 @@ function DrawerBody(props: { row: ContentRow }) {
                   <Show
                     when={place.blocked}
                     fallback={
-                      <span
-                        class="pill"
-                        classList={{
-                          link: place.kind === "isLink",
-                          pend: place.kind !== "isLink",
-                        }}
+                      <Show
+                        when={place.linkId}
+                        fallback={
+                          <span class="pill pend">
+                            {place.kind === "source" ? "becomes the vault copy" : "becomes a link"}
+                          </span>
+                        }
                       >
-                        {place.kind === "isLink"
-                          ? "link"
-                          : place.kind === "source"
-                            ? "becomes the vault copy"
-                            : "becomes a link"}
-                      </span>
+                        <button
+                          class="btn sm"
+                          disabled={app.linkBusy() !== null}
+                          onClick={() => void openUnlink(app, place, places() ?? [])}
+                        >
+                          Unlink
+                        </button>
+                      </Show>
                     }
                   >
                     {(blocked) => (
@@ -586,6 +574,25 @@ function DrawerBody(props: { row: ContentRow }) {
               </div>
             )}
           </For>
+        </div>
+      </Show>
+      <Show when={row().inVault}>
+        <div class="det-acts" style={{ "margin-top": "10px" }}>
+          <button
+            class="btn sm"
+            disabled={app.linkBusy() !== null}
+            onClick={() =>
+              openLibraryLinkChooser(app, {
+                sha256: row().sha256,
+                category: row().category,
+                fileName: row().name,
+              })
+            }
+          >
+            <Icon name="plus" size={11} />
+            Link into an install
+          </button>
+          <BusyWait reason={app.linkBusy()} />
         </div>
       </Show>
 
@@ -784,6 +791,59 @@ function DrawerBody(props: { row: ContentRow }) {
  * or asked while Civitai could not be reached, is a different fact, and saying
  * "Civitai has no such file" for it would be false.
  */
+/**
+ * Ask before a link leaves an install. What it breaks is read at the moment of
+ * asking: whether that install's ComfyUI runs, and which of its saved
+ * workflows name the file.
+ */
+async function openUnlink(
+  app: ReturnType<typeof useApp>,
+  place: Place,
+  places: readonly Place[],
+): Promise<void> {
+  const who = installNameOf(place.installId, app.installs());
+  const last = places.filter((p) => p.linkId !== null).length === 1;
+  let running = false;
+  let workflows: string[] = [];
+  try {
+    const [processes, usage] = await Promise.all([
+      app.engine.getRunningComfy(),
+      app.engine.checkModelUsage([place.name]),
+    ]);
+    running = processes.some((p) => p.matchedInstallIds.includes(place.installId));
+    const answer = usage[0];
+    if (answer?.searched) {
+      workflows = [
+        ...new Set(answer.matches.filter((m) => m.installId === place.installId).map((m) => m.workflowName)),
+      ];
+    }
+  } catch (error) {
+    app.actions.showToast(messageOf(error), "bad");
+    return;
+  }
+  const body = running
+    ? [[{ text: `Close ${who} to unlink this model.` }]]
+    : [
+        ...(workflows.length > 0
+          ? [
+              [{ text: `Missing from ${countOf(workflows.length, "saved workflow", "saved workflows")}:` }],
+              [{ text: workflows.join(" · ") }],
+            ]
+          : []),
+        [{ text: last ? "Vault copy stays. Find it in Cleanup." : "Vault copy and other links stay." }],
+      ];
+  openConfirm(app, {
+    title: `Unlink from ${who}?`,
+    cta: "Unlink",
+    ctaOff: running,
+    body,
+    action: async () => {
+      await app.engine.removeLink(place.linkId!);
+      app.actions.showToast(`Unlinked from ${who}.`);
+    },
+  });
+}
+
 function CivitaiNothing(props: { answered: boolean }) {
   const app = useApp();
   const on = () => app.appState()?.settings.metadataLookupsEnabled === true;

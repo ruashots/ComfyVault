@@ -153,6 +153,8 @@ export interface ConfirmModal {
   after: ConfirmLine[];
   /** Null when the action is refused before it starts, so none is offered. */
   cta: string | null;
+  /** The action is shown, but cannot be pressed yet. */
+  ctaOff: boolean;
   action: () => Promise<void> | void;
   running: boolean;
   /** The heading over `error`. */

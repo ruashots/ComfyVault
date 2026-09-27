@@ -1462,6 +1462,11 @@ export class FixtureEngine implements Engine {
 
   async removeLink(linkId: string): Promise<{ removed: true }> {
     this.refuseLinksWhileRunning();
+    const link = this.world.links.find((l) => l.id === linkId);
+    if (link && this.world.running.includes(link.installId)) {
+      const label = this.world.installs.find((i) => i.id === link.installId)?.label ?? link.installId;
+      throw error("conflict", `Close ${label} first`);
+    }
     this.world.links = this.world.links.filter((l) => l.id !== linkId);
     return { removed: true };
   }

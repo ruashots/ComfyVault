@@ -261,6 +261,8 @@ export function addedCode(
 export type PlaceKind = "source" | "willLink" | "isLink" | "stays";
 
 export interface Place {
+  /** The vault's record of this link, for one already made. */
+  linkId: string | null;
   installId: string;
   installLabel: string;
   absPath: string;
@@ -286,6 +288,7 @@ export function placesOf(
 ): Place[] {
   const label = (id: string) => installLabels.get(id) ?? id;
   const places: Place[] = links.map((link) => ({
+    linkId: link.id,
     installId: link.installId,
     installLabel: label(link.installId),
     absPath: link.absPath,
@@ -302,6 +305,7 @@ export function placesOf(
       if (seen.has(link.absPath.toLowerCase())) continue;
       seen.add(link.absPath.toLowerCase());
       places.push({
+        linkId: null,
         installId: link.installId,
         installLabel: label(link.installId),
         absPath: link.absPath,
@@ -318,6 +322,7 @@ export function placesOf(
     if (seen.has(row.absPath.toLowerCase())) continue;
     seen.add(row.absPath.toLowerCase());
     places.push({
+      linkId: null,
       installId: row.installId ?? "",
       installLabel: row.installId ? label(row.installId) : "",
       absPath: row.absPath,
