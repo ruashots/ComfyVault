@@ -5,7 +5,7 @@ import { Wrap } from "~/components/Wrap";
 import { folderNameError } from "~/domain/foldername";
 import { joinPath } from "~/domain/format";
 import { installName } from "~/domain/installname";
-import { current, inside, load, patch, same } from "~/modals/linkfolder";
+import { current, inside, load, open, patch, same } from "~/modals/linkfolder";
 import { messageOf, useApp } from "~/state/store";
 
 /**
@@ -34,26 +34,53 @@ export function LinkIntoView() {
     return new Set(file?.links.map((l) => l.installId) ?? []);
   });
 
-  /** The folder used last time, then the others ComfyUI reads, each new one after where it was made. */
+  /**
+   * The folder used last time, then the others ComfyUI reads. Each opens to
+   * show the folders inside it, and a new one sits inside where it was made.
+   */
   const rows = createMemo(() => {
     const x = m();
     const inst = install();
     if (!x || !inst) return [];
-    const out: { path: string; last: boolean }[] = [];
-    if (x.lastUsed) out.push({ path: x.lastUsed, last: true });
-    for (const root of x.folders[""] ?? []) {
-      if (!out.some((r) => same(r.path, root.path))) out.push({ path: root.path, last: false });
+    const roots = x.folders[""] ?? [];
+    const top: { path: string; last: boolean }[] = [];
+    if (x.lastUsed) top.push({ path: x.lastUsed, last: true });
+    for (const root of roots) {
+      if (!top.some((r) => same(r.path, root.path))) top.push({ path: root.path, last: false });
     }
-    for (const added of x.added) {
-      const parent = added.slice(0, added.lastIndexOf("\\"));
-      const at = out.findIndex((r) => same(r.path, parent));
-      out.splice(at < 0 ? out.length : at + 1, 0, { path: added, last: false });
-    }
-    return out.map((r) => ({
-      ...r,
-      label: inside(r.path, inst.root) ? r.path.slice(inst.root.length + 1) : r.path,
-    }));
+    const known = (path: string) =>
+      Object.values(x.folders)
+        .flat()
+        .find((f) => same(f.path, path));
+    const out: { path: string; label: string; depth: number; last: boolean; canOpen: boolean }[] = [];
+    // As the approved design writes them: each folder from the install's root.
+    const labelOf = (path: string) => (inside(path, inst.root) ? path.slice(inst.root.length + 1) : path);
+    const walk = (path: string, depth: number, last: boolean, isNew: boolean) => {
+      const added = x.added.filter((a) => same(a.slice(0, a.lastIndexOf("\\")), path));
+      const children = x.folders[path];
+      out.push({
+        path,
+        label: labelOf(path),
+        depth,
+        last,
+        // Not read yet: it may hold folders, so it can be opened to see.
+        canOpen: added.length > 0 || (children ? children.length > 0 : !isNew && (known(path)?.hasSubfolders ?? true)),
+      });
+      if (!x.expanded.includes(path)) return;
+      for (const child of children ?? []) walk(child.path, depth + 1, false, false);
+      for (const a of added) walk(a, depth + 1, false, true);
+    };
+    for (const t of top) walk(t.path, 0, t.last, false);
+    return out;
   });
+
+  const toggle = (path: string) => {
+    const x = m();
+    if (!x) return;
+    if (x.expanded.includes(path)) {
+      patch(app, (y) => (y.expanded = y.expanded.filter((p) => p !== path)));
+    } else void open(app, path);
+  };
 
   const choose = (id: string) => {
     patch(app, (y) => (y.installId = id));
@@ -76,6 +103,7 @@ export function LinkIntoView() {
     const path = joinPath(parent, x.naming.draft.trim());
     patch(app, (y) => {
       y.added.push(path);
+      if (!y.expanded.includes(parent)) y.expanded.push(parent);
       y.selected = path;
       y.naming = null;
       y.error = null;
@@ -151,26 +179,45 @@ export function LinkIntoView() {
                   </div>
                 }
               >
-                <div class="tree">
+                <div class="tree" role="tree">
                   <For each={rows()}>
                     {(row) => (
-                      <button
-                        class="tnode"
-                        classList={{ on: x().selected !== null && same(x().selected!, row.path) }}
-                        title={row.path}
-                        onClick={() =>
-                          patch(app, (y) => {
-                            y.selected = row.path;
-                            y.error = null;
-                          })
-                        }
-                      >
-                        <Icon name="folder" size={12} />
-                        <span>{row.label}</span>
-                        <Show when={row.last}>
-                          <span class="hint">Last used</span>
+                      <div class="trow" style={{ "padding-left": `${row.depth * 16}px` }}>
+                        <Show when={row.canOpen} fallback={<span class="twist leaf" />}>
+                          <button
+                            class="twist"
+                            classList={{
+                              open: x().expanded.includes(row.path),
+                              shut: !x().expanded.includes(row.path),
+                              busy: x().loading.includes(row.path),
+                            }}
+                            aria-expanded={x().expanded.includes(row.path)}
+                            aria-label={`${x().expanded.includes(row.path) ? "Close" : "Open"} ${row.label}`}
+                            onClick={() => toggle(row.path)}
+                          >
+                            <Icon name={x().loading.includes(row.path) ? "refresh" : "chev"} size={11} />
+                          </button>
                         </Show>
-                      </button>
+                        <button
+                          class="tnode"
+                          classList={{ on: x().selected !== null && same(x().selected!, row.path) }}
+                          role="treeitem"
+                          aria-selected={x().selected !== null && same(x().selected!, row.path)}
+                          title={row.path}
+                          onClick={() =>
+                            patch(app, (y) => {
+                              y.selected = row.path;
+                              y.error = null;
+                            })
+                          }
+                        >
+                          <Icon name="folder" size={12} />
+                          <span>{row.label}</span>
+                          <Show when={row.last}>
+                            <span class="hint">Last used</span>
+                          </Show>
+                        </button>
+                      </div>
                     )}
                   </For>
                 </div>

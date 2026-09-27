@@ -138,7 +138,7 @@ async function loadRoots(app: AppStore, selected: string | null): Promise<void> 
   }
 }
 
-async function open(app: AppStore, path: string): Promise<void> {
+export async function open(app: AppStore, path: string): Promise<void> {
   patch(app, (x) => {
     if (!x.expanded.includes(path)) x.expanded.push(path);
   });

@@ -602,6 +602,12 @@ export class DownloadDesk {
   // ── the folder a new link goes in ─────────────────────────────────────────
 
   private linkDirs = new Map<string, string>();
+  /** Folders a person made in an install, beyond the ones its files sit in. */
+  private madeDirs = new Set<string>();
+
+  devAddFolder(path: string): void {
+    this.madeDirs.add(path);
+  }
 
   /** Every folder ComfyUI reads for a category in an install, in its order. */
   rootsFor(install: Install, category: string): LinkRoot[] {
@@ -670,7 +676,7 @@ export class DownloadDesk {
         }
       }
     }
-    for (const dir of this.linkDirs.values()) folders.add(dir.toLowerCase());
+    for (const dir of [...this.linkDirs.values(), ...this.madeDirs]) folders.add(dir.toLowerCase());
     const below = (path: string) =>
       [...folders].filter((f) => f.startsWith(`${path.toLowerCase()}\\`) && !f.slice(path.length + 1).includes("\\"));
     const originOf = (path: string) =>

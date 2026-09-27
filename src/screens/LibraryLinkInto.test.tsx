@@ -42,6 +42,30 @@ async function pickStudio() {
 }
 
 describe("linking a model into an install from the Library", () => {
+  it("opens a folder to show the folders already inside it, and picks one of those", async () => {
+    // A folder the person made inside the usual one, as loras\\portraits.
+    let sub = "";
+    const { engine, model } = await details((e, m) => {
+      sub = `C:\\ComfyUI-Studio\\models\\${m.category}\\portraits`;
+      e.downloads.devAddFolder(sub);
+    });
+    await pickStudio();
+    // Closed at first: only the folders ComfyUI reads show.
+    expect(nodes().some((n) => text(n.querySelector("span")).endsWith("portraits"))).toBe(false);
+    const root = nodes().find((n) => text(n.querySelector("span")) === `models\\${model.category}`)!;
+    const twist = root.parentElement!.querySelector(".twist") as HTMLButtonElement;
+    await userEvent.click(twist);
+    await waitFor(() => nodes().some((n) => text(n.querySelector("span")) === `models\\${model.category}\\portraits`));
+    const child = nodes().find((n) => text(n.querySelector("span")) === `models\\${model.category}\\portraits`)!;
+    await userEvent.click(child);
+    expect(text(dialog()!.querySelector(".res"))).toBe(`${sub}\\${model.canonicalName}`);
+    await userEvent.click(button("Link here")!);
+    await waitFor(() => dialog() === null);
+    expect((await engine.listLinks({ sha256: model.sha256 })).map((l) => l.absPath)).toEqual([
+      `${sub}\\${model.canonicalName}`,
+    ]);
+  });
+
   it("first asks which install, and says which already have it", async () => {
     const { engine, model } = await details();
     await engine.createLink({ installId: "sandbox", sha256: model.sha256, relativeDir: `models\\${model.category}` });
