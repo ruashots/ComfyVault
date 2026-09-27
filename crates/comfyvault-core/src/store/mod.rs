@@ -123,7 +123,40 @@ impl Store {
 
         let store = Self { db, vault_root };
         store.initialize()?;
+        let first_time = store.get::<bool>(META, "downloadAddressesScrubbed")?.is_none();
+        if store.scrub_download_addresses()? || first_time {
+            // The rows are rewritten, but an earlier build's bytes stay in
+            // the pages the database freed, including those of rows the list
+            // already forgot. Compacting moves every live page down and cuts
+            // the file after the last one, so the freed pages go. Done every
+            // time a row changes, and once for every vault an earlier build
+            // wrote to.
+            store.put_meta("downloadAddressesScrubbed", &true)?;
+            let Self { mut db, vault_root } = store;
+            db.compact().map_err(|e| {
+                VaultError::new(ErrorCode::StoreError, "The vault database could not be tidied.").with_detail(e.to_string())
+            })?;
+            return Ok(Self { db, vault_root });
+        }
         Ok(store)
+    }
+
+    /// Rewrites every stored download address in the form the engine keeps.
+    ///
+    /// An earlier build kept the address as pasted, and Civitai's own
+    /// instructions put the person's key in it. Answers whether anything
+    /// changed.
+    fn scrub_download_addresses(&self) -> Result<bool> {
+        let mut changed = false;
+        for mut d in self.downloads()? {
+            let kept = crate::download::address::stored_form(&d.address).unwrap_or_default();
+            if kept != d.address {
+                d.address = kept;
+                self.put_download(&d)?;
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
 
     fn initialize(&self) -> Result<()> {

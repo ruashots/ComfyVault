@@ -805,6 +805,110 @@ fn a_download_does_not_stand_in_the_way_of_undoing_an_earlier_run() {
     assert_eq!(read_link(&a.root.join("models/text_encoders/t5.safetensors")), content("new", 2_000));
 }
 
+/// Every file under `dir` whose bytes contain `needle`.
+fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
+    walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| std::fs::read(e.path()).map(|b| b.windows(needle.len()).any(|w| w == needle)).unwrap_or(false))
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
+#[test]
+fn a_key_pasted_in_the_address_is_never_written_to_the_vault() {
+    // Civitai's own instructions give the address with the key in it.
+    let w = world(content("keyed", 4_000), true);
+    let a = w.install("A");
+    let secret = "PASTEDKEY9f3a1c";
+    let d = w.settle(&w.start(&format!("{CIVITAI}?token={secret}"), "checkpoints", &[&a]).download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    assert_eq!(d.address, "https://civitai.com/models/4384");
+    assert!(files_containing(&w.root.join("vault"), secret.as_bytes()).is_empty(), "the key is in the vault");
+    for r in w.server.requests() {
+        assert!(!r.target.contains(secret));
+    }
+}
+
+fn plain_download() -> Download {
+    Download {
+        download_id: String::new(),
+        host: Host::Civitai,
+        title: "DreamShaper".into(),
+        file_name: "dreamshaper_8.safetensors".into(),
+        category: "checkpoints".into(),
+        vault_rel_path: String::new(),
+        install_ids: Vec::new(),
+        linked_install_ids: Vec::new(),
+        not_linked: Vec::new(),
+        already_in_vault: false,
+        sha256: None,
+        state: DownloadState::Stopped,
+        bytes_done: 0,
+        bytes_total: 0,
+        bytes_per_second: None,
+        error: None,
+        started_at: None,
+        finished_at: None,
+    }
+}
+
+#[test]
+fn a_key_an_earlier_build_kept_is_gone_from_the_database_file() {
+    // Two ways an earlier build left a key in the file: a row that still
+    // holds it, and a finished row the list already forgot, whose bytes stay
+    // in pages the database freed.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    let (kept, forgotten) = ("KEPTROWKEY7e21", "FORGOTTENKEY4b9");
+    {
+        let store = Store::open(&vault, true).unwrap();
+        let mut rec = DownloadRecord {
+            download: plain_download(),
+            address: format!("https://civitai.com/api/download/models/8?token={kept}"),
+            version_id: Some(8),
+            file_id: None,
+            expected_sha256: None,
+            part_version: None,
+            seq: 0,
+        };
+        rec.download.download_id = uuid::Uuid::new_v4().to_string();
+        let mut gone = rec.clone();
+        gone.download.download_id = uuid::Uuid::new_v4().to_string();
+        gone.address = format!("https://civitai.com/api/download/models/9?token={forgotten}");
+        store.put_download(&gone).unwrap();
+        // The work a download does in between: its row saved again and
+        // again as its bytes move.
+        for n in 0..20u64 {
+            gone.download.bytes_done = n;
+            store.put_download(&gone).unwrap();
+        }
+        store.put_download(&rec).unwrap();
+        store.delete_download(&gone.download_id).unwrap();
+        // The app ended without closing the database, as a crash or a kill
+        // does. A clean close gives the freed pages back; this does not.
+        // Its lock stays with this process, so the file as the crash left it
+        // is copied to a vault of its own.
+        std::mem::forget(store);
+    }
+    let crashed = dir.path().join("crashed");
+    std::fs::create_dir_all(crashed.join(".comfyvault")).unwrap();
+    std::fs::copy(vault.join(".comfyvault/vault.redb"), crashed.join(".comfyvault/vault.redb")).unwrap();
+    let vault = crashed;
+    for key in [kept, forgotten] {
+        assert!(!files_containing(&vault, key.as_bytes()).is_empty(), "the setup did not leave {key}");
+    }
+
+    let store = Store::open(&vault, false).unwrap();
+    let rows = store.downloads().unwrap();
+    assert_eq!(rows[0].address, "https://civitai.com/api/download/models/8");
+    drop(store);
+    for key in [kept, forgotten] {
+        assert!(files_containing(&vault, key.as_bytes()).is_empty(), "{key} is still in the database file");
+    }
+}
+
 /// Against the real sites. They run only when asked (`--ignored`), and each
 /// one reads the address first and stops if the file is bigger than a few
 /// megabytes, so a wrong address can never fill a disk.

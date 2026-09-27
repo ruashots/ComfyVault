@@ -514,7 +514,8 @@ impl Downloader {
                 started_at: Some(Timestamp::now()),
                 finished_at: None,
             },
-            address: req.address.clone(),
+            // Never the pasted text: it can carry a key.
+            address: addr.stored_form(),
             version_id: file.version_id,
             file_id: file.file_id,
             expected_sha256: file.sha256.clone(),

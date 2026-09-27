@@ -19,6 +19,36 @@ pub enum ModelAddress {
     Civitai { model_id: Option<u64>, version_id: Option<u64> },
 }
 
+impl ModelAddress {
+    /// The address rebuilt from what was read, and nothing else.
+    ///
+    /// This is what the engine keeps. A pasted address can carry more than
+    /// the model: Civitai's own instructions put the person's key in it, as
+    /// `?token=`. Rebuilt, the key is never written anywhere.
+    pub fn stored_form(&self) -> String {
+        match self {
+            ModelAddress::HuggingFace { owner, repo, revision, path } => {
+                let path: Vec<String> = path.split('/').map(encode_segment).collect();
+                format!("https://huggingface.co/{owner}/{repo}/blob/{}/{}", encode_segment(revision), path.join("/"))
+            }
+            ModelAddress::Civitai { model_id: Some(m), version_id: Some(v) } => {
+                format!("https://civitai.com/models/{m}?modelVersionId={v}")
+            }
+            ModelAddress::Civitai { model_id: Some(m), version_id: None } => format!("https://civitai.com/models/{m}"),
+            ModelAddress::Civitai { model_id: None, version_id: Some(v) } => {
+                format!("https://civitai.com/api/download/models/{v}")
+            }
+            ModelAddress::Civitai { model_id: None, version_id: None } => String::new(),
+        }
+    }
+}
+
+/// The form of a pasted address the engine may keep, or nothing when it
+/// cannot be read.
+pub fn stored_form(text: &str) -> Option<String> {
+    parse(text).ok().map(|a| a.stored_form())
+}
+
 /// Why an address was not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressProblem {
@@ -263,6 +293,23 @@ mod tests {
         ] {
             assert_eq!(parse(a), Err(AddressProblem::Bad), "{a}");
         }
+    }
+
+    #[test]
+    fn the_kept_form_of_an_address_carries_nothing_but_the_model() {
+        assert_eq!(
+            stored_form("https://civitai.com/api/download/models/128713?type=Model&format=SafeTensor&token=SECRETKEY").as_deref(),
+            Some("https://civitai.com/api/download/models/128713")
+        );
+        assert_eq!(
+            stored_form("https://civitai.com/models/4384/dreamshaper?modelVersionId=8&token=SECRETKEY#x").as_deref(),
+            Some("https://civitai.com/models/4384?modelVersionId=8")
+        );
+        let hf = "https://huggingface.co/o/r/resolve/main/split_files/my%20model.safetensors?download=true&token=hf_x";
+        let kept = stored_form(hf).unwrap();
+        assert_eq!(kept, "https://huggingface.co/o/r/blob/main/split_files/my%20model.safetensors");
+        // Read again, the kept form names the same file.
+        assert_eq!(parse(&kept), parse(hf));
     }
 
     #[test]
