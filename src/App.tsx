@@ -5,6 +5,7 @@ import { Boundary } from "~/components/Boundary";
 import { NAV, Rail, Titlebar, Toaster } from "~/components/Shell";
 import { ConfirmModalView } from "~/modals/confirm";
 import { LinkFolderView } from "~/modals/linkfolder";
+import { LinkIntoView } from "~/modals/linkinto";
 import { PickerModalView } from "~/modals/picker";
 import { UnifyModalView } from "~/screens/NameCard";
 import { CleanupScreen } from "~/screens/Cleanup";
@@ -81,6 +82,7 @@ export function App() {
       <PickerModalView />
       <ConfirmModalView />
       <LinkFolderView />
+      <LinkIntoView />
       <UnifyModalView />
       <Toaster />
     </div>

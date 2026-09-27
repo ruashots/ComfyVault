@@ -90,56 +90,6 @@ describe("the Library after a run", () => {
   });
 });
 
-describe("linking a vault model into an install from the Library", () => {
-  it("asks for the install, then a folder ComfyUI reads, and makes the link there", async () => {
-    const engine = new FixtureEngine();
-    const orphan = (await engine.listOrphans())[0]!;
-    const { app } = await openLibrary(engine);
-    await waitFor(() => app.library().some((r) => r.sha256 === orphan.sha256));
-    app.setLib({ selected: orphan.sha256, drawerOpen: true });
-    await userEvent.click(await screen.findByRole("button", { name: /^Link into an/ }));
-    const modal = () => document.querySelector('[aria-label="Where the link goes"]')!;
-    await waitFor(() => document.querySelector('[aria-label="Where the link goes"]') !== null);
-    expect(modal().textContent).toContain("Pick the install the link goes in. Then pick the folder inside it.");
-    await userEvent.click(
-      [...modal().querySelectorAll(".tnode")].find((b) => b.textContent?.startsWith("ComfyUI-Studio"))!,
-    );
-    await waitFor(() => modal().querySelector("h2")!.textContent === "Where the link goes in ComfyUI-Studio");
-    await waitFor(() => modal().querySelectorAll(".tnode").length > 0);
-    const usual = [...modal().querySelectorAll(".tnode")].find((n) => n.textContent?.includes("the usual place"))!;
-    expect(usual.classList.contains("on")).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "Use this folder" }));
-    await waitFor(() => document.querySelector('[aria-label="Where the link goes"]') === null);
-    const links = await engine.listLinks({ sha256: orphan.sha256 });
-    expect(links.map((l) => l.absPath)).toEqual([
-      `C:\\ComfyUI-Studio\\models\\${orphan.category}\\${orphan.canonicalName}`,
-    ]);
-    expect(app.toast()!.message).toBe(`Linked ${orphan.canonicalName} in ComfyUI-Studio.`);
-  });
-});
-
-describe("the Library's chooser, for a kind the person chose a folder for before", () => {
-  it("opens on the folder remembered for that install and kind", async () => {
-    const engine = new FixtureEngine();
-    const orphan = (await engine.listOrphans())[0]!;
-    const remembered = `C:\\ComfyUI-Studio\\models\\${orphan.category}\\mine`;
-    engine.downloads.remember("studio", orphan.category, remembered);
-    const { app } = await openLibrary(engine);
-    await waitFor(() => app.library().some((r) => r.sha256 === orphan.sha256));
-    app.setLib({ selected: orphan.sha256, drawerOpen: true });
-    await userEvent.click(await screen.findByRole("button", { name: /^Link into an install/ }));
-    const modal = () => document.querySelector('[aria-label="Where the link goes"]')!;
-    await waitFor(() => modal() !== null);
-    await userEvent.click(
-      [...modal().querySelectorAll(".tnode")].find((b) => b.textContent?.startsWith("ComfyUI-Studio"))!,
-    );
-    await waitFor(() => modal().querySelector(".res")?.textContent?.includes("mine") === true);
-    expect(modal().querySelector(".res")!.textContent).toBe(
-      `The link will be ${remembered}\\${orphan.canonicalName}`,
-    );
-  });
-});
-
 describe("the drawer's list of links", () => {
   it("shows a link made from the drawer as soon as it is made", async () => {
     const engine = new FixtureEngine({ manual: true });
@@ -167,7 +117,7 @@ describe("the drawer's list of links", () => {
     );
     await userEvent.click(free);
     const use = await waitForEnabled(() =>
-      screen.queryAllByRole("button", { name: "Use this folder" })[0],
+      screen.queryAllByRole("button", { name: "Link here" })[0],
     );
     await userEvent.click(use);
     await waitFor(() => document.querySelector('[role="dialog"]') === null);

@@ -1439,8 +1439,15 @@ export class FixtureEngine implements Engine {
       folder = args.dir;
     }
     const absPath = `${folder}\\${linkName}`;
-    if (this.world.links.some((l) => l.absPath === absPath)) {
-      throw error("conflict", "Something already sits at that name.");
+    const there = this.world.links.find((l) => sameName(l.absPath, absPath));
+    if (there || this.takenPaths.has(absPath.toLowerCase())) {
+      // The engine's own words, used for nothing else.
+      throw error(
+        "conflict",
+        there?.sha256 === args.sha256
+          ? "This model is already linked here with that name. Nothing was changed."
+          : "A different file with this name is already here. Choose another folder.",
+      );
     }
     const link: LinkRecord = {
       id: `link-${this.world.links.length + 1}`,

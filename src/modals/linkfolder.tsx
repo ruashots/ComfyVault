@@ -43,6 +43,7 @@ export function openLinkFolderChooser(
     error: null,
     working: false,
     onUse: options.onUse,
+    lastUsed: null,
   });
   void loadRoots(app, options.current);
 }
@@ -67,25 +68,26 @@ export function openLibraryLinkChooser(
     error: null,
     working: false,
     onUse: null,
+    lastUsed: null,
   });
 }
 
-const current = (app: AppStore): LinkFolderModal | null => {
+export const current = (app: AppStore): LinkFolderModal | null => {
   const m = app.modal();
   return m && m.kind === "linkFolder" ? m : null;
 };
 
-const patch = (app: AppStore, fn: (m: LinkFolderModal) => void) =>
+export const patch = (app: AppStore, fn: (m: LinkFolderModal) => void) =>
   app.patchModal((m) => {
     if (m.kind === "linkFolder") fn(m);
   });
 
-const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-const inside = (path: string, parent: string) =>
+export const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+export const inside = (path: string, parent: string) =>
   path.toLowerCase().startsWith(`${parent.toLowerCase()}\\`);
 
 /** The folders under one folder, "" for the roots. */
-async function load(app: AppStore, dir: string): Promise<void> {
+export async function load(app: AppStore, dir: string): Promise<void> {
   const m = current(app);
   if (!m || !m.installId || m.folders[dir] || m.loading.includes(dir)) return;
   patch(app, (x) => void x.loading.push(dir));
@@ -99,7 +101,10 @@ async function load(app: AppStore, dir: string): Promise<void> {
       x.folders[dir] = list.folders;
       x.loading = x.loading.filter((d) => d !== dir);
       // The folder remembered for this install and kind, where the chooser opens.
-      if (dir === "" && !x.selected) x.selected = list.defaultDir;
+      if (dir === "") {
+        x.lastUsed = list.lastUsedDir;
+        if (!x.selected) x.selected = list.lastUsedDir ?? list.defaultDir;
+      }
     });
   } catch (error) {
     patch(app, (x) => {
@@ -157,13 +162,14 @@ function rootHint(root: LinkFolder, install: Install, category: string): string 
   return "an older folder name ComfyUI still reads";
 }
 
+/** Download's chooser. The Library's is in modals/linkinto.tsx. */
 export function LinkFolderView() {
   const app = useApp();
-  const m = () => current(app);
+  const m = () => {
+    const x = current(app);
+    return x && x.onUse !== null ? x : null;
+  };
   const install = () => app.installs().find((i) => i.id === m()?.installId);
-  // Making the link waits for an undo in the engine. Only picking a folder,
-  // for Download, does not.
-  const waits = () => (m()?.onUse === null ? app.linkBusy() : null);
 
   const rows = createMemo<Row[]>(() => {
     const x = m();
@@ -226,50 +232,12 @@ export function LinkFolderView() {
     });
   };
 
-  const use = async () => {
+  const use = () => {
     const x = m();
-    if (!x?.selected || !x.installId || x.working) return;
-    if (x.onUse) {
-      x.onUse(x.selected);
-      app.setModal(null);
-      return;
-    }
-    // From the Library, the chooser makes the link itself.
-    patch(app, (y) => {
-      y.working = true;
-      y.error = null;
-    });
-    try {
-      await app.engine.createLink({
-        installId: x.installId,
-        sha256: x.sha256!,
-        dir: x.selected,
-        createDir: true,
-      });
-      const name = install() ? installName(install()!, app.installs()) : x.installId;
-      app.setModal(null);
-      app.actions.showToast(`Linked ${x.fileName} in ${name}.`);
-      await app.actions.refresh();
-    } catch (error) {
-      patch(app, (y) => {
-        y.working = false;
-        y.error = messageOf(error);
-      });
-    }
+    if (!x?.selected || !x.onUse) return;
+    x.onUse(x.selected);
+    app.setModal(null);
   };
-
-  const chooseInstall = (id: string) => {
-    patch(app, (y) => (y.installId = id));
-    void loadRoots(app, null);
-  };
-
-  /** Installs that already link this model: nothing to add there. */
-  const linkedIn = createMemo(() => {
-    const sha = m()?.sha256;
-    if (!sha) return new Set<string>();
-    const file = app.vaultFiles().find((f) => f.sha256 === sha);
-    return new Set(file?.links.map((l) => l.installId) ?? []);
-  });
 
   return (
     <Show when={m()}>
@@ -284,40 +252,12 @@ export function LinkFolderView() {
             <div class="mh">
               <Icon name="folder" size={14} />
               <h2>
-                <Show when={install()} fallback={<>Link {x().fileName} into an install</>}>
+                <Show when={install()}>
                   {(inst) => <>Where the link goes in {installName(inst(), app.installs())}</>}
                 </Show>
               </h2>
             </div>
             <div class="mb">
-              <Show
-                when={x().installId}
-                fallback={
-                  <>
-                    <p class="mnote">
-                      Pick the install the link goes in. Then pick the folder inside it.
-                    </p>
-                    <div class="tree">
-                      <For each={app.installs()}>
-                        {(inst) => (
-                          <button
-                            class="tnode"
-                            disabled={linkedIn().has(inst.id)}
-                            title={inst.root}
-                            onClick={() => chooseInstall(inst.id)}
-                          >
-                            <Icon name="folder" size={12} />
-                            <span>{installName(inst, app.installs())}</span>
-                            <span class="hint">
-                              {linkedIn().has(inst.id) ? "already has this link" : inst.root}
-                            </span>
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </>
-                }
-              >
                 <p class="mnote">
                   ComfyUI finds {x().category} in these folders and in every folder inside
                   them. Pick the folder you keep this kind of model in, or make a new one.
@@ -424,7 +364,6 @@ export function LinkFolderView() {
                     )}
                   </Show>
                 </div>
-              </Show>
               <Show when={x().error}>
                 {(why) => (
                   <div class="verdict no" role="alert">
@@ -439,7 +378,7 @@ export function LinkFolderView() {
             </div>
             <div class="mf">
               <span class="res">
-                <Show when={x().installId && x().selected}>
+                <Show when={x().selected}>
                   <span class="faint">The link will be</span>{" "}
                   {joinPath(x().selected!, x().fileName)}
                 </Show>
@@ -447,12 +386,8 @@ export function LinkFolderView() {
               <button class="btn" disabled={x().working} onClick={() => app.setModal(null)}>
                 Cancel
               </button>
-              <button
-                class="btn pri"
-                disabled={!x().installId || !x().selected || x().working || waits() !== null}
-                onClick={() => void use()}
-              >
-                {x().working ? "Working…" : (waits() ?? "Use this folder")}
+              <button class="btn pri" disabled={!x().selected} onClick={use}>
+                Use this folder
               </button>
             </div>
           </div>

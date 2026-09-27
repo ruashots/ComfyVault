@@ -47,6 +47,12 @@ export async function createEngine(): Promise<Engine> {
     processFacts: (facts: Parameters<typeof engine.devSetProcessFacts>[0]) =>
       engine.devSetProcessFacts(facts),
     taskManagerStarts: (starts: boolean) => engine.devSetTaskManagerStarts(starts),
+    // Windows will not let any link go, as when a program holds each one open.
+    lockLinks: async () => {
+      for (const link of await engine.listLinks()) engine.devLockLink(link.id);
+    },
+    // Some other file sits at this place in an install.
+    takePath: (absPath: string) => engine.devTakePath(absPath),
     // The first two-names card: its other name is taken in the install that
     // uses the picked one, and a second folder there links the other name.
     nameTaken: async () => {

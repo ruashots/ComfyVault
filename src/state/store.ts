@@ -190,6 +190,8 @@ export interface LinkFolderModal {
   working: boolean;
   /** From Download: what to do with the folder. The card keeps it. */
   onUse: ((dir: string) => void) | null;
+  /** The folder picked last time for this install and kind, while ComfyUI still reads it. */
+  lastUsed: string | null;
 }
 
 /** Giving one model one name in every install. */

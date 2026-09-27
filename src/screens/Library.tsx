@@ -505,7 +505,7 @@ function DrawerBody(props: { row: ContentRow }) {
 
       <div class="sec" style={{ "margin-top": row().inVault && row().occurrenceCount === 0 ? "14px" : "0" }}>
         <span class="t">Where it reaches</span>
-        <span class="n">{row().occurrenceCount || "none"}</span>
+        <span class="n">{(places() ?? []).length || "none"}</span>
       </div>
       <Show
         when={(places() ?? []).length > 0}

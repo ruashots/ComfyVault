@@ -122,6 +122,7 @@ describe("unlinking a model from an install", () => {
     expect(text(modal()?.querySelector(".verdict") ?? null)).toBe("");
     await waitFor(() => reach().length === 1);
     expect(text(reach()[0]!.querySelector(".top span"))).toBe("ComfyUI-Sandbox");
+    expect(text(document.querySelector(".reach")!.previousElementSibling!.querySelector(".n"))).toBe("1");
     expect(app.toast()!.message).toBe("Unlinked from ComfyUI-Studio.");
     const links = await engine.listLinks({ sha256: row.sha256 });
     expect(links.map((l) => l.installId)).toEqual(["sandbox"]);
