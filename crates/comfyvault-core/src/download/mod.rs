@@ -1247,7 +1247,15 @@ fn validate_category(c: &str) -> Result<()> {
 }
 
 fn check_space(ctx: &Context, needed: u64) -> Result<()> {
-    let Ok(space) = ctx.platform.disk_space(ctx.store.vault_root()) else { return Ok(()) };
+    // Not knowing is not room. The margin exists to keep the drive from
+    // filling, and a drive that cannot say how full it is may be nearly so.
+    let space = ctx.platform.disk_space(ctx.store.vault_root()).map_err(|e| {
+        VaultError::new(
+            ErrorCode::IoError,
+            "ComfyVault could not read how much free space the vault's drive has, so the download did not start. Check that the drive is connected, then try again.",
+        )
+        .with_detail(e.detail.unwrap_or(e.message))
+    })?;
     let want = needed + SPACE_MARGIN;
     if space.free_bytes < want {
         return Err(VaultError::new(

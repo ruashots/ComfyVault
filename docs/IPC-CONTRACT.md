@@ -2631,7 +2631,9 @@ Returns a `Download`.
 The engine reads the address again, so this takes a few seconds, and it can
 refuse as `read_model_address` can. A refusal comes back as `conflict`, with
 the site's words in `detail`. The engine also refuses with `ioError` when the
-vault's drive has less free space than `spaceNeededBytes`, and with
+vault's drive has less free space than `spaceNeededBytes`, or when the
+drive does not say how much free space it has (`vaultFreeBytes` is then
+null), and with
 `notFound` for an install that is not registered.
 
 With the model already in the vault, the engine makes the links at once,
@@ -2720,6 +2722,10 @@ What happens, in order:
 storage address, a 401 or 403 in the middle, and a full drive each end the
 attempt as `failed`, with its `kind`, and the part is kept. The engine does not
 try again on its own. `continue_download` tries again.
+
+Each start and each continue checks the free space again. A drive that does
+not say how much it has gets no download: the state is `failed`, kind
+`noSpace`, with a sentence that the free space could not be read.
 
 `changedOnSite`: the site now gives a different SHA-256 for this file than
 when the download started. Discard it and read the address again.

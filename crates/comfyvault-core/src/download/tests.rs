@@ -962,6 +962,36 @@ fn a_database_that_refuses_writes_stops_the_worker_instead_of_spinning() {
     assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
 }
 
+#[test]
+fn a_drive_that_cannot_say_how_full_it_is_gets_no_download() {
+    let w = world(content("unknown", 1_000), true);
+    let a = w.install("A");
+    w.fake.fail_disk_space(true);
+    let p = w.read(HF, None).plan.unwrap();
+    assert_eq!(p.vault_free_bytes, None, "the plan says it does not know");
+    let err = w
+        .dl
+        .start(&w.ctx, &StartDownload { address: HF.into(), version_id: None, file_id: None, category: "text_encoders".into(), install_ids: vec![a.id.clone()] })
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::IoError);
+    assert!(err.message.contains("could not read how much free space"), "{}", err.message);
+    assert!(w.ctx.store.downloads().unwrap().is_empty());
+    assert_eq!(w.site.storage_hits.load(Ordering::SeqCst), 0);
+
+    // A download already in the list is held to the same rule when it runs.
+    w.fake.fail_disk_space(false);
+    *w.site.stall_first.lock().unwrap() = Some(10);
+    let d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
+    assert_eq!(d.state, DownloadState::Failed);
+    w.fake.fail_disk_space(true);
+    let hits = w.site.storage_hits.load(Ordering::SeqCst);
+    w.dl.resume(&w.ctx, &d.download_id).unwrap();
+    let d = w.settle(&d.download_id);
+    assert_eq!(d.state, DownloadState::Failed);
+    assert!(d.error.as_ref().unwrap().message.contains("could not read how much free space"));
+    assert_eq!(w.site.storage_hits.load(Ordering::SeqCst), hits, "nothing more was downloaded");
+}
+
 /// Against the real sites. They run only when asked (`--ignored`), and each
 /// one reads the address first and stops if the file is bigger than a few
 /// megabytes, so a wrong address can never fill a disk.
