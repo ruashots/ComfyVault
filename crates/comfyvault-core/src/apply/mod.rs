@@ -1085,6 +1085,9 @@ impl<'a> Applier<'a> {
         if !later.is_empty() {
             let (_, steps) = self.revertible_steps_with(apply_id, &later)?;
             self.check_revert_space(&steps.iter().map(|e| self.undo_action(e)).collect::<Vec<_>>())?;
+            // Every name change is checked before any of them is put back,
+            // so a refusal leaves every install as it was.
+            self.name_changes_can_be_undone(&later)?;
             self.undo_name_changes(&later)?;
         }
 
@@ -1556,9 +1559,22 @@ impl<'a> Applier<'a> {
         Ok(out)
     }
 
+    /// The checks each name change's undo makes before it changes anything,
+    /// for all of them, with nothing changed.
+    fn name_changes_can_be_undone(&self, later: &[NameChange]) -> Result<()> {
+        for change in later {
+            let checked = match &change.kind {
+                NameChangeKind::Unify(job) => crate::unify::Unify::new(self.store, self.platform).check_undo(&job.unify_id),
+                NameChangeKind::Rename(id) => crate::vault::Vault::new(self.store, self.platform).check_undo_rename(id),
+            };
+            checked.map_err(name_change_refusal)?;
+        }
+        Ok(())
+    }
+
     /// Puts back each name change, newest first.
     fn undo_name_changes(&self, later: &[NameChange]) -> Result<()> {
-        for change in later {
+        for (put_back, change) in later.iter().enumerate() {
             let done = match &change.kind {
                 NameChangeKind::Unify(job) => {
                     crate::unify::Unify::new(self.store, self.platform).undo(&job.unify_id).map(|_| ())
@@ -1566,13 +1582,21 @@ impl<'a> Applier<'a> {
                 NameChangeKind::Rename(id) => crate::vault::Vault::new(self.store, self.platform).undo_rename(id),
             };
             if let Err(e) = done {
+                // Checked beforehand, so this is the disk refusing part way.
+                // What was already put back is said, never hidden.
+                if put_back == 0 {
+                    return Err(name_change_refusal(e));
+                }
                 let detail = match &e.detail {
                     Some(d) => format!("{} {d}", e.message),
                     None => e.message.clone(),
                 };
                 return Err(VaultError::new(
                     e.code,
-                    "This run was not undone. A model's name changed after it, and that change could not be put back first.",
+                    match put_back {
+                        1 => "This run was not undone. One name change made after it was put back, and the next one could not be. Undo again to finish.".to_string(),
+                        n => format!("This run was not undone. {n} name changes made after it were put back, and the next one could not be. Undo again to finish."),
+                    },
                 )
                 .with_detail(detail));
             }
@@ -2074,6 +2098,19 @@ fn block_reason_for(e: &VaultError) -> BlockReason {
         ErrorCode::Conflict => BlockReason::TargetExistsNotLink,
         _ => BlockReason::ReadError,
     }
+}
+
+/// The refusal of an undo because a later name change cannot be put back.
+fn name_change_refusal(e: VaultError) -> VaultError {
+    let detail = match &e.detail {
+        Some(d) => format!("{} {d}", e.message),
+        None => e.message.clone(),
+    };
+    VaultError::new(
+        e.code,
+        "This run was not undone. A model's name changed after it, and that change could not be put back first.",
+    )
+    .with_detail(detail)
 }
 
 /// A name change made after a run, which an undo of the run puts back first.

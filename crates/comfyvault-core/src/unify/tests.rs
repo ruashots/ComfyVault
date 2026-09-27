@@ -1142,6 +1142,44 @@ mod review {
     // at the old target. If that also fails, the `?` returns with the link gone.
     // ---------------------------------------------------------------------------
     #[test]
+    fn u3_a_refused_consolidation_undo_changes_nothing() {
+        const THIRD: &str = "third.safetensors";
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        w.write_model(&c, &format!("models/loras/{THIRD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone(), c.clone()]);
+        // B already has an unrelated file called THIRD, so job 1 skips B.
+        std::fs::write(loras(&b).join(THIRD), b"another model").unwrap();
+
+        // Job 1: THIRD everywhere it can. A: KEPT -> THIRD. B keeps OLD.
+        let j1 = Unify::new(&w.store, &w.platform).unify(&sha(), THIRD).unwrap();
+        assert_eq!(j1.skipped.len(), 1, "{j1:?}");
+        // Job 2: OLD everywhere. A and C: THIRD -> OLD.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let j2 = Unify::new(&w.store, &w.platform).unify(&sha(), OLD).unwrap();
+        assert!(j2.stopped.is_none() && j2.skipped.is_empty(), "{j2:?}");
+
+        // Somebody's own file now has A's first name, so job 1 cannot be put back.
+        std::fs::write(loras(&a).join(KEPT), b"the person's own file").unwrap();
+
+        let before = installs_state(&w, &[&a, &b, &c]);
+        let r = Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink);
+        let after = installs_state(&w, &[&a, &b, &c]);
+        eprintln!("U3 revert: {:?}", r.as_ref().map(|x| x.state).map_err(|e| (e.message.clone(), e.detail.clone())));
+        assert!(r.is_err(), "setup: the undo must be refused");
+        assert_eq!(
+            before,
+            after,
+            "the undo was refused ({}), but it changed the installs anyway",
+            r.unwrap_err().message
+        );
+    }
+
+    #[test]
     fn u4_a_link_the_vault_rename_cannot_repoint_is_never_lost() {
         let w = TestWorld::new();
         let a = w.add_install("A");

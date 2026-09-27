@@ -1507,7 +1507,10 @@ the drives included, is checked before any name moves. When a name change cannot
 back, for example because a file of the person's own now has the old name in
 the vault, `revert_apply` rejects with `conflict` and the message "This run was
 not undone. A model's name changed after it, and that change could not be put
-back first." `detail` carries the reason, and nothing changed. `preview_revert`
+back first." `detail` carries the reason, and nothing changed: every name
+change is checked before any is put back. If the disk still refuses one part
+way, the message says how many were already put back, and undoing again
+finishes. `preview_revert`
 reads the vault as it will be once those names are back, so it does not refuse
 because of them.
 
