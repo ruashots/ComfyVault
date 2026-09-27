@@ -1571,12 +1571,19 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("InstallTargetState", wire(&t), expected));
     }
 
-    for u in [UnifyAction::Keep, UnifyAction::Rename, UnifyAction::Remove, UnifyAction::BlockedTaken] {
+    for u in [
+        UnifyAction::Keep,
+        UnifyAction::Rename,
+        UnifyAction::Remove,
+        UnifyAction::BlockedTaken,
+        UnifyAction::Unreachable,
+    ] {
         let expected = match u {
             UnifyAction::Keep => "keep",
             UnifyAction::Rename => "rename",
             UnifyAction::Remove => "remove",
             UnifyAction::BlockedTaken => "blockedTaken",
+            UnifyAction::Unreachable => "unreachable",
         };
         out.push(("UnifyAction", wire(&u), expected));
     }

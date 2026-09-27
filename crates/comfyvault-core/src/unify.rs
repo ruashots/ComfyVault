@@ -55,6 +55,10 @@ pub enum UnifyAction {
     /// Something else already has the name in that folder. The link keeps
     /// its name.
     BlockedTaken,
+    /// The link is recorded but not on the disk now, for example on a drive
+    /// that is unplugged. It keeps its name, and the vault keeps the place it
+    /// names, so it loads the model again when the drive is back.
+    Unreachable,
 }
 
 /// One link of the model, and what the job does to it.
@@ -173,6 +177,8 @@ struct Target {
     /// The chosen name, spelled as the first link that carries it.
     name: String,
     links: Vec<LinkRecord>,
+    /// Recorded links of the model that are not on the disk now.
+    unreachable: Vec<LinkRecord>,
 }
 
 pub struct Unify<'a> {
@@ -252,6 +258,14 @@ impl<'a> Unify<'a> {
 
         for planned in &plan {
             if planned.action == UnifyAction::Keep {
+                continue;
+            }
+            if planned.action == UnifyAction::Unreachable {
+                out.skipped.push(SkippedLink {
+                    install_id: planned.install_id.clone(),
+                    path: planned.abs_path.clone(),
+                    reason: "This link is not on the disk now, for example on a drive that is unplugged. It keeps its name, and loads the model again when the drive is back.".into(),
+                });
                 continue;
             }
             let Some(record) = t.links.iter().find(|l| l.abs_path == planned.abs_path) else { continue };
@@ -569,9 +583,18 @@ impl<'a> Unify<'a> {
 
         let links = Links::new(self.store, self.platform);
         let mut live: Vec<LinkRecord> = Vec::new();
+        let mut unreachable: Vec<LinkRecord> = Vec::new();
         for l in self.store.links_for_hash(&sha)? {
-            if links.state_of(&l) != LinkState::Ok || self.store.install(&l.install_id)?.is_none() {
+            if self.store.install(&l.install_id)?.is_none() {
                 continue;
+            }
+            match links.state_of(&l) {
+                LinkState::Ok => {}
+                LinkState::Missing => {
+                    unreachable.push(l);
+                    continue;
+                }
+                _ => continue,
             }
             // A link someone pointed somewhere else by hand is not this
             // model's any more.
@@ -588,7 +611,8 @@ impl<'a> Unify<'a> {
             .ok_or_else(|| {
                 VaultError::invalid("That name is not one the installs use for this model. Nothing was changed.")
             })?;
-        Ok(Target { record, vault_path, name: spelled, links: live })
+        unreachable.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
+        Ok(Target { record, vault_path, name: spelled, links: live, unreachable })
     }
 
     /// The vault file's real place, which must hold the real file.
@@ -662,6 +686,15 @@ impl<'a> Unify<'a> {
             out.push(row);
         }
         self.prove_places(&touched, &t.record.category)?;
+        out.extend(t.unreachable.iter().map(|l| UnifyLink {
+            install_id: l.install_id.clone(),
+            abs_path: l.abs_path.clone(),
+            link_name: l.link_name.clone(),
+            action: UnifyAction::Unreachable,
+            new_abs_path: None,
+            taken_by: None,
+        }));
+        out.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
         Ok(out)
     }
 
@@ -838,23 +871,13 @@ impl<'a> Unify<'a> {
             .store
             .vault_file(sha)?
             .ok_or_else(|| VaultError::not_found("That model is not in the vault."))?;
-        let links = Links::new(self.store, self.platform);
-        let used: Vec<PathBuf> = self
-            .store
-            .links_for_hash(sha)?
-            .into_iter()
-            .filter(|l| matches!(links.state_of(l), LinkState::Ok | LinkState::Dangling))
-            .map(|l| l.vault_rel_path)
-            .collect();
         for alias in &record.aliases {
-            if used.contains(&PathBuf::from(&record.category).join(alias)) {
-                continue;
-            }
             job.removed_aliases.push(alias.clone());
             self.store.put_unify_job(job)?;
-            // A name that cannot be removed, such as one a real file dropped
-            // in by hand now holds, stays as it was. Nothing is lost by that,
-            // and the install links already carry the chosen name.
+            // Removing refuses a name any recorded link still names, one on a
+            // drive that is unplugged included, and a name a real file now
+            // holds. Such a name stays as it was: nothing is lost by that, and
+            // the install links on the disk already carry the chosen name.
             if vault.remove_alias(sha, alias).is_err() {
                 job.removed_aliases.pop();
                 self.store.put_unify_job(job)?;

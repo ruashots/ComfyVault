@@ -2073,7 +2073,7 @@ type UnifyLink = {
   installId: string
   absPath: string
   linkName: string
-  action: 'keep' | 'rename' | 'remove' | 'blockedTaken'
+  action: 'keep' | 'rename' | 'remove' | 'blockedTaken' | 'unreachable'
   newAbsPath: string | null  // for 'rename': where the link goes
   takenBy: string | null     // for 'blockedTaken': what already has the name
 }
@@ -2086,6 +2086,10 @@ type UnifyLink = {
 - `'blockedTaken'`: something else has the name in that folder: a real file, a
   link to other content, a folder, or a link to this model that the vault has
   no record of. The link keeps its name, and nothing is overwritten.
+- `'unreachable'`: the vault records this link, but it is not on the disk now,
+  for example because its drive is unplugged. It keeps its name, and the vault
+  keeps the place it names, so it loads the model again when the drive is
+  back. Its name does not count as one in use for `name`.
 
 `running` lists only installs whose links change (`'rename'` or `'remove'`).
 While it is not empty, `unify_name` refuses. Show "Close {install} first".
@@ -2167,7 +2171,8 @@ consolidation or an undo runs. Its other refusals are the ones in 8.11.
   finish, and the plan then shows `'remove'` for the old link. Or call
   `undo_unify_name`.
 - **The vault last.** When every link is done, the vault file takes the name
-  and each second name that no link uses any more is removed. If another model
+  and each second name that no recorded link names any more is removed. A
+  link on a drive that is unplugged still counts, so its name stays. If another model
   or another file already has that name in the vault, the vault keeps its name.
   That is not a failure, and `vaultName` says which name it kept. If renaming
   the vault file fails, it is put back, `stopped` has `installId: null`, and

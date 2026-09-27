@@ -622,8 +622,8 @@ impl<'a> Vault<'a> {
 
     /// Removes one of a content's names from the vault.
     ///
-    /// Refuses the real file's own name, and refuses a name an install link
-    /// still resolves through.
+    /// Refuses the real file's own name, and refuses a name any recorded
+    /// install link resolves through.
     pub fn remove_alias(&self, sha256: &str, name: &str) -> Result<()> {
         let Some(sha) = crate::scan::hash::normalize_sha256(sha256) else {
             return Err(VaultError::invalid("That is not a file hash."));
@@ -642,9 +642,13 @@ impl<'a> Vault<'a> {
             return Err(VaultError::not_found("That name is not one this model has."));
         }
 
+        // Every record counts, whatever its link looks like now. A link on a
+        // drive that is unplugged still names this place, and works again
+        // when the drive comes back, as long as the name is still here.
         let rel = PathBuf::from(&record.category).join(name);
         let through: Vec<LinkRecord> = self
-            .live_links(&sha)?
+            .store
+            .links_for_hash(&sha)?
             .into_iter()
             .filter(|l| l.vault_rel_path == rel)
             .collect();

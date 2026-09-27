@@ -287,6 +287,27 @@ fn a_recorded_link_outside_every_install_refuses_the_whole_job() {
     assert_eq!(snapshot(&w), before);
 }
 
+#[test]
+fn a_link_on_a_drive_that_is_away_is_listed_and_kept() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let c = w.add_install("C");
+    link_by_hand(&w, &c, "models/loras", KEPT);
+    // C's drive is unplugged.
+    let away = c.root.with_extension("away");
+    std::fs::rename(&c.root, &away).unwrap();
+
+    let plan = unify(&w).plan(&sha(), OLD).unwrap();
+    assert_eq!(action_at(&plan, &loras(&c).join(KEPT)), UnifyAction::Unreachable);
+    assert!(!plan.running.contains(&c.id));
+    let done = unify(&w).unify(&sha(), OLD).unwrap();
+    assert!(done.skipped.iter().any(|s| s.install_id == c.id), "{:?}", done.skipped);
+    assert_eq!(done.renamed.len(), 1, "A still changed");
+
+    std::fs::rename(&away, &c.root).unwrap();
+    assert_eq!(w.read(&loras(&c).join(KEPT)), weights("same"), "C loads the model again");
+}
+
 // --- the job ---------------------------------------------------------------
 
 #[test]
@@ -1073,6 +1094,41 @@ mod review {
         );
     }
 
+    #[test]
+    fn u2b_an_unplugged_install_keeps_a_working_link_with_a_vault_rename() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&c, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone(), c.clone()]);
+        assert_eq!(w.store.vault_file(&sha()).unwrap().unwrap().canonical_name, KEPT);
+        let b_target = std::fs::read_link(loras(&b).join(KEPT)).unwrap();
+
+        let away = b.root.with_extension("unplugged");
+        std::fs::rename(&b.root, &away).unwrap();
+        let r = Unify::new(&w.store, &w.platform).unify(&sha(), OLD).unwrap();
+        std::fs::rename(&away, &b.root).unwrap();
+
+        let b_rec = w
+            .store
+            .links_for_hash(&sha())
+            .unwrap()
+            .into_iter()
+            .find(|l| l.install_id == b.id)
+            .map(|l| l.vault_rel_path);
+        let dead = dead_links(&w, &[&a, &b, &c]);
+        assert!(
+            dead.is_empty(),
+            "B was plugged back in and its link loads nothing: {dead:#?}\nB's link on disk points at {b_target:?}; \
+             B's record now says {b_rec:?}\nvault_name={} stopped={:?}; vault names now {:?}",
+            r.vault_name,
+            r.stopped,
+            w.store.vault_file(&sha()).unwrap().map(|f| (f.canonical_name, f.aliases)),
+        );
+    }
 
     // ---------------------------------------------------------------------------
     // U3. A consolidation undo puts back the name changes made after it, newest
