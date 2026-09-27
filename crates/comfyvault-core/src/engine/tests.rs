@@ -1286,7 +1286,7 @@ fn opening_another_vault_stops_a_download_and_keeps_its_part() {
             version_id: None,
             file_id: None,
             category: "loras".into(),
-            install_ids: vec![],
+            install_ids: vec![], links: None,
         })
         .unwrap();
     let part = first.join(".comfyvault/downloads").join(format!("{}.part", d.download_id));

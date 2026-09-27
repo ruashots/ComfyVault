@@ -76,6 +76,13 @@ pub struct InstallTarget {
     /// Ticked by default: every install the first time, then the ones the
     /// person ticked last time.
     pub ticked: bool,
+    /// Every folder ComfyUI reads for the category in this install, in its
+    /// order. The link can go in one of them or in any folder inside one.
+    pub roots: Vec<folders::Root>,
+    /// Where the link goes unless the person picks another folder: the one
+    /// they picked last time for this category, or else where ComfyUI saves
+    /// new files of that kind.
+    pub default_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +200,9 @@ pub struct DownloadRecord {
     pub part_version: Option<String>,
     /// Queue order.
     pub seq: u64,
+    /// The folder chosen for each install, where the person chose one.
+    #[serde(default)]
+    pub link_dirs: Vec<LinkChoice>,
 }
 
 impl std::ops::Deref for DownloadRecord {
@@ -226,6 +236,17 @@ pub struct StartDownload {
     pub category: String,
     #[serde(default)]
     pub install_ids: Vec<String>,
+    /// The folder chosen for each install. Given, it replaces `install_ids`.
+    #[serde(default)]
+    pub links: Option<Vec<LinkChoice>>,
+}
+
+/// The folder a person chose for the link in one install.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkChoice {
+    pub install_id: String,
+    pub dir: PathBuf,
 }
 
 /// The answer to asking about a saved token.
@@ -402,6 +423,8 @@ impl Downloader {
                     link_path: None,
                     state: InstallTargetState::Unavailable,
                     ticked: false,
+                    roots: Vec::new(),
+                    default_dir: None,
                 });
                 continue;
             };
@@ -411,11 +434,14 @@ impl Downloader {
                     link_path: None,
                     state: InstallTargetState::Free,
                     ticked: ticked_before,
+                    roots: Vec::new(),
+                    default_dir: None,
                 });
                 continue;
             };
-            let link = folders::link_folder(&install, cat).join(&file.file_name);
-            let state = target_state(&install, cat, &file.file_name, target.as_deref());
+            let dir = default_dir(store, &install, cat)?;
+            let link = dir.join(&file.file_name);
+            let state = target_state_in(&install, cat, &dir, &file.file_name, target.as_deref());
             installs.push(InstallTarget {
                 install_id: i.id.clone(),
                 link_path: Some(crate::paths::display_path(&link)),
@@ -425,6 +451,8 @@ impl Downloader {
                     _ => false,
                 },
                 state,
+                roots: folders::roots(&install, cat),
+                default_dir: Some(crate::paths::display_path(&dir)),
             });
         }
 
@@ -479,10 +507,25 @@ impl Downloader {
     pub fn start(self: &Arc<Self>, ctx: &Context, req: &StartDownload) -> Result<Download> {
         validate_category(&req.category)?;
         let installs = ctx.store.installs()?;
-        for id in &req.install_ids {
+        let install_ids: Vec<String> = match &req.links {
+            Some(links) => links.iter().map(|l| l.install_id.clone()).collect(),
+            None => req.install_ids.clone(),
+        };
+        for id in &install_ids {
             if !installs.iter().any(|i| &i.id == id) {
                 return Err(VaultError::not_found("One of the chosen installs is not registered any more."));
             }
+        }
+        // Every chosen folder is proved before anything is queued.
+        let mut link_dirs = Vec::new();
+        for choice in req.links.iter().flatten() {
+            let install = ctx
+                .store
+                .install(&choice.install_id)?
+                .ok_or_else(|| VaultError::not_found("One of the chosen installs is not registered any more."))?
+                .proved()?;
+            folders::inside_roots(&install, &req.category, &choice.dir)?;
+            link_dirs.push(choice.clone());
         }
         let addr = address::parse(&req.address)
             .map_err(|_| VaultError::invalid("That is not a Hugging Face or Civitai address."))?;
@@ -490,7 +533,10 @@ impl Downloader {
             Reading::File(f) => f,
             Reading::Refused(r) => return Err(refusal_error(&r)),
         };
-        ctx.store.put_last_download_installs(&req.install_ids)?;
+        ctx.store.put_last_download_installs(&install_ids)?;
+        for c in &link_dirs {
+            ctx.store.put_link_dir(&c.install_id, &req.category, &c.dir)?;
+        }
 
         let seq = ctx.store.downloads()?.iter().map(|d| d.seq).max().map(|m| m + 1).unwrap_or(0);
         let mut d = DownloadRecord {
@@ -501,7 +547,7 @@ impl Downloader {
                 file_name: file.file_name.clone(),
                 category: req.category.clone(),
                 vault_rel_path: String::new(),
-                install_ids: req.install_ids.clone(),
+                install_ids: install_ids.clone(),
                 linked_install_ids: Vec::new(),
                 not_linked: Vec::new(),
                 already_in_vault: false,
@@ -521,6 +567,7 @@ impl Downloader {
             expected_sha256: file.sha256.clone(),
             part_version: None,
             seq,
+            link_dirs,
         };
 
         if let Some(sha) = &file.sha256 {
@@ -1062,14 +1109,25 @@ impl Downloader {
                     continue;
                 }
             };
-            let folder = folders::link_folder(&install, &d.category);
+            let chosen = d.link_dirs.iter().find(|c| c.install_id == id).map(|c| c.dir.clone());
+            let folder = match chosen {
+                // Proved again: the disk may have changed since it was chosen.
+                Some(dir) => match folders::inside_roots(&install, &d.category, &dir) {
+                    Ok(_) => dir,
+                    Err(e) => {
+                        d.not_linked.push(NotLinked { install_id: id, reason: e.message });
+                        continue;
+                    }
+                },
+                None => default_dir(&ctx.store, &install, &d.category)?,
+            };
             let path = folder.join(&d.file_name);
             // Two installs that share one folder share one link.
             if made.iter().any(|m| crate::paths::same_path_lexically(m, &path)) {
                 d.linked_install_ids.push(id);
                 continue;
             }
-            match target_state(&install, &d.category, &d.file_name, Some(&target)) {
+            match target_state_in(&install, &d.category, &folder, &d.file_name, Some(&target)) {
                 InstallTargetState::HasLink => {
                     if ctx.store.link_at_path(&path)?.is_none() && leads_to(&path, &target) {
                         links_record(ctx, &install, &path, record, &journal.id)?;
@@ -1086,6 +1144,17 @@ impl Downloader {
                     continue;
                 }
                 _ => {}
+            }
+            // A folder the person made in the chooser exists only once the
+            // link is made, and its making is journaled like the link.
+            if !folder.is_dir() {
+                let seq = journal.pending(JournalStep::CreateDir { path: folder.clone() })?;
+                if let Err(e) = std::fs::create_dir_all(&folder) {
+                    journal.mark(seq, JournalState::Failed)?;
+                    d.not_linked.push(NotLinked { install_id: id, reason: VaultError::from_io(&e, &folder, "making the folder").message });
+                    continue;
+                }
+                journal.mark(seq, JournalState::Done)?;
             }
             let seq = journal.pending(JournalStep::CreateLink { link: path.clone(), target: target.clone() })?;
             match links.create_in(&install, &folder, &record.sha256, &d.file_name, LinkOrigin::Download, Some(journal.id.clone())) {
@@ -1177,10 +1246,18 @@ fn links_record(ctx: &Context, install: &Install, path: &Path, record: &VaultFil
 
 /// What an install already holds under this name, across every folder
 /// ComfyUI searches for the category.
-fn target_state(install: &Install, category: &str, name: &str, vault_file: Option<&Path>) -> InstallTargetState {
+/// The same question for a link in `dir`, which can be a folder inside a
+/// root. ComfyUI names a model by its path under the root, for example
+/// `portraits\x.safetensors`, so that path is what is looked for in every
+/// folder it searches.
+fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, vault_file: Option<&Path>) -> InstallTargetState {
+    let under = folders::roots(install, category)
+        .into_iter()
+        .find_map(|r| dir.strip_prefix(&r.path).ok().map(Path::to_path_buf))
+        .unwrap_or_default();
     let mut has_link = false;
     for folder in folders::searched(install, category) {
-        let p = folder.join(name);
+        let p = folder.join(&under).join(name);
         if std::fs::symlink_metadata(&p).is_err() {
             continue;
         }
@@ -1194,6 +1271,19 @@ fn target_state(install: &Install, category: &str, name: &str, vault_file: Optio
     } else {
         InstallTargetState::Free
     }
+}
+
+/// Where a new link for this category goes in this install, unless the
+/// person picks another folder: the folder they picked last time, while it is
+/// still one ComfyUI reads, or else where ComfyUI saves new files of that
+/// kind.
+pub(crate) fn default_dir(store: &Store, install: &Install, category: &str) -> Result<PathBuf> {
+    if let Some(dir) = store.link_dir(&install.id, category)? {
+        if folders::inside_roots(install, category, &dir).is_ok() {
+            return Ok(dir);
+        }
+    }
+    Ok(folders::link_folder(install, category))
 }
 
 fn leads_to(link: &Path, target: &Path) -> bool {

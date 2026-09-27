@@ -164,7 +164,7 @@ impl World {
                     version_id: None,
                     file_id: None,
                     category: category.into(),
-                    install_ids: installs.iter().map(|i| i.id.clone()).collect(),
+                    install_ids: installs.iter().map(|i| i.id.clone()).collect(), links: None,
                 },
             )
             .unwrap()
@@ -350,7 +350,17 @@ fn a_hugging_face_file_downloads_checks_goes_into_the_vault_and_is_linked() {
 
     // Every step went into the journal first, and is done.
     let j = w.ctx.store.journal(&format!("{JOURNAL_PREFIX}{}", d.download_id)).unwrap();
-    assert_eq!(j.len(), 3, "one move and two links");
+    let kinds: Vec<&str> = j
+        .iter()
+        .map(|e| match e.step {
+            JournalStep::MoveToVault { .. } => "move",
+            JournalStep::CreateDir { .. } => "folder",
+            JournalStep::CreateLink { .. } => "link",
+            _ => "other",
+        })
+        .collect();
+    // Neither install had a text_encoders folder yet, so each is made first.
+    assert_eq!(kinds, vec!["move", "folder", "link", "folder", "link"]);
     assert!(j.iter().all(|e| e.state == JournalState::Done));
     assert!(matches!(j[0].step, JournalStep::MoveToVault { .. }));
 
@@ -489,7 +499,7 @@ fn a_download_that_needs_more_room_than_the_drive_has_is_refused() {
                 version_id: None,
                 file_id: None,
                 category: "text_encoders".into(),
-                install_ids: vec![a.id.clone()],
+                install_ids: vec![a.id.clone()], links: None,
             },
         )
         .unwrap_err();
@@ -889,6 +899,7 @@ fn earlier_build_writes_keys_and_crashes() {
         expected_sha256: None,
         part_version: None,
         seq: 0,
+        link_dirs: Vec::new(),
     };
     rec.download.download_id = uuid::Uuid::new_v4().to_string();
     let mut gone = rec.clone();
@@ -971,7 +982,7 @@ fn a_drive_that_cannot_say_how_full_it_is_gets_no_download() {
     assert_eq!(p.vault_free_bytes, None, "the plan says it does not know");
     let err = w
         .dl
-        .start(&w.ctx, &StartDownload { address: HF.into(), version_id: None, file_id: None, category: "text_encoders".into(), install_ids: vec![a.id.clone()] })
+        .start(&w.ctx, &StartDownload { address: HF.into(), version_id: None, file_id: None, category: "text_encoders".into(), install_ids: vec![a.id.clone()], links: None })
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::IoError);
     assert!(err.message.contains("could not read how much free space"), "{}", err.message);
@@ -990,6 +1001,144 @@ fn a_drive_that_cannot_say_how_full_it_is_gets_no_download() {
     assert_eq!(d.state, DownloadState::Failed);
     assert!(d.error.as_ref().unwrap().message.contains("could not read how much free space"));
     assert_eq!(w.site.storage_hits.load(Ordering::SeqCst), hits, "nothing more was downloaded");
+}
+
+// --- the folder a new link goes in -----------------------------------------
+
+impl World {
+    fn start_in(&self, address: &str, category: &str, links: Vec<(&Install, PathBuf)>) -> Result<Download> {
+        self.dl.start(
+            &self.ctx,
+            &StartDownload {
+                address: address.into(),
+                version_id: None,
+                file_id: None,
+                category: category.into(),
+                install_ids: vec![],
+                links: Some(links.into_iter().map(|(i, dir)| LinkChoice { install_id: i.id.clone(), dir }).collect()),
+            },
+        )
+    }
+
+    /// An install whose extra_model_paths.yaml adds a folder outside it.
+    fn install_with_shared(&self, label: &str, category: &str) -> (Install, PathBuf) {
+        let i = self.install(label);
+        let shared = self.root.join(format!("{label}-other-drive")).join(category);
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            i.root.join("extra_model_paths.yaml"),
+            format!("shared:\n    base_path: {}\n    {category}: {category}\n", shared.parent().unwrap().display()),
+        )
+        .unwrap();
+        let c = detect::inspect(&i.root).unwrap();
+        let i = Install::from_candidate(i.id.clone(), label.into(), i.root.clone(), &c).unwrap();
+        self.ctx.store.put_install(&i).unwrap();
+        (i, shared)
+    }
+}
+
+#[test]
+fn the_plan_lists_every_folder_comfyui_reads_for_the_kind() {
+    let w = world(content("roots", 1_000), true);
+    let (a, shared) = w.install_with_shared("A", "text_encoders");
+    let p = w.read(HF, None).plan.unwrap();
+    let t = &p.installs[0];
+    let roots: Vec<(PathBuf, crate::install::RootOrigin)> = t.roots.iter().map(|r| (r.path.clone(), r.origin)).collect();
+    use crate::install::RootOrigin::*;
+    assert!(roots.contains(&(a.root.join("models/text_encoders"), ModelsDir)), "{roots:?}");
+    assert!(roots.contains(&(a.root.join("models/clip"), ModelsDir)), "the old name ComfyUI still reads");
+    assert!(roots.iter().any(|(p, o)| same(Some(&p.to_string_lossy()), &shared) && *o == ExtraPath), "{roots:?}");
+    assert!(same(t.default_dir.as_deref(), &a.root.join("models/text_encoders")));
+}
+
+#[test]
+fn a_link_goes_in_the_folder_the_person_chose_and_the_choice_is_remembered() {
+    let bytes = content("portraits", 2_000);
+    let w = world(bytes.clone(), true);
+    let a = w.install("A");
+    let chosen = a.root.join("models/text_encoders/portraits");
+    let d = w.settle(&w.start_in(HF, "text_encoders", vec![(&a, chosen.clone())]).unwrap().download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    assert_eq!(read_link(&chosen.join("t5.safetensors")), bytes, "the link is in the chosen folder");
+    assert!(std::fs::symlink_metadata(a.root.join("models/text_encoders/t5.safetensors")).is_err());
+    let j = w.ctx.store.journal(&format!("{JOURNAL_PREFIX}{}", d.download_id)).unwrap();
+    assert!(
+        j.iter().any(|e| matches!(&e.step, JournalStep::CreateDir { path } if *path == chosen) && e.state == JournalState::Done),
+        "the new folder was made as a journaled step"
+    );
+
+    // The next model of that kind goes there by default.
+    *w.site.bytes.lock().unwrap() = content("next", 2_000);
+    let p = w.read(HF, None).plan.unwrap();
+    assert!(same(p.installs[0].default_dir.as_deref(), &chosen), "{:?}", p.installs[0].default_dir);
+}
+
+#[test]
+fn a_link_can_go_in_an_extra_paths_folder_outside_the_install() {
+    let bytes = content("other drive", 2_000);
+    let w = world(bytes.clone(), true);
+    let (a, shared) = w.install_with_shared("A", "text_encoders");
+    let chosen = shared.join("flux");
+    let d = w.settle(&w.start_in(HF, "text_encoders", vec![(&a, chosen.clone())]).unwrap().download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    assert_eq!(read_link(&chosen.join("t5.safetensors")), bytes);
+}
+
+#[test]
+fn a_folder_comfyui_does_not_read_for_the_kind_is_refused_and_nothing_is_queued() {
+    let w = world(content("outside", 1_000), true);
+    let a = w.install("A");
+    let outside = w.root.join("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    for bad in [
+        a.root.join("models/checkpoints"),
+        a.root.join("custom_nodes/pack"),
+        a.root.join("models/text_encoders/../../custom_nodes"),
+        outside.clone(),
+        PathBuf::from("models/text_encoders"),
+    ] {
+        let err = w.start_in(HF, "text_encoders", vec![(&a, bad.clone())]).unwrap_err();
+        assert!(
+            matches!(err.code, ErrorCode::PathOutsideBoundary | ErrorCode::InvalidArgument),
+            "{bad:?} was accepted: {err:?}"
+        );
+    }
+    assert!(w.ctx.store.downloads().unwrap().is_empty());
+    assert!(!a.root.join("custom_nodes/pack").exists(), "a refused folder was made");
+}
+
+#[test]
+fn a_linked_folder_planted_inside_a_root_cannot_lead_out() {
+    let w = world(content("planted", 1_000), true);
+    let a = w.install("A");
+    let outside = w.root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::create_dir_all(a.root.join("models/text_encoders")).unwrap();
+    let planted = a.root.join("models/text_encoders/escape");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &planted).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&outside, &planted).unwrap();
+    let err = w.start_in(HF, "text_encoders", vec![(&a, planted.join("deeper"))]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{err:?}");
+    assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "something was written outside");
+}
+
+#[test]
+fn a_name_taken_in_the_same_subfolder_of_another_root_is_not_linked_over() {
+    // ComfyUI names the model `portraits\t5.safetensors` in every root it
+    // reads, so the same subfolder path in another root is the same name.
+    let w = world(content("sub", 1_000), true);
+    let (a, shared) = w.install_with_shared("A", "text_encoders");
+    let theirs = shared.join("portraits/t5.safetensors");
+    std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+    std::fs::write(&theirs, b"another model").unwrap();
+    let chosen = a.root.join("models/text_encoders/portraits");
+    let d = w.settle(&w.start_in(HF, "text_encoders", vec![(&a, chosen.clone())]).unwrap().download_id);
+    assert_eq!(d.state, DownloadState::Done);
+    assert_eq!(d.not_linked.len(), 1, "{:?}", d.not_linked);
+    assert!(std::fs::symlink_metadata(chosen.join("t5.safetensors")).is_err());
+    assert_eq!(std::fs::read(&theirs).unwrap(), b"another model");
 }
 
 /// Against the real sites. They run only when asked (`--ignored`), and each
@@ -1029,7 +1178,7 @@ mod real_sites {
         let d = dl
             .start(
                 &ctx,
-                &StartDownload { address: address.into(), version_id: None, file_id: None, category: category.clone(), install_ids: vec![install.id.clone()] },
+                &StartDownload { address: address.into(), version_id: None, file_id: None, category: category.clone(), install_ids: vec![install.id.clone()], links: None },
             )
             .unwrap();
         let until = Instant::now() + Duration::from_secs(120);

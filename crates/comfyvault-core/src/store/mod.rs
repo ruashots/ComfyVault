@@ -742,6 +742,21 @@ impl Store {
         self.put_meta("lastDownloadInstalls", &ids)
     }
 
+    /// The folder the person last chose for a new link of this category in
+    /// this install.
+    pub fn link_dir(&self, install_id: &str, category: &str) -> Result<Option<PathBuf>> {
+        let all: std::collections::BTreeMap<String, std::collections::BTreeMap<String, PathBuf>> =
+            self.get(META, "linkDirs")?.unwrap_or_default();
+        Ok(all.get(install_id).and_then(|c| c.get(category)).cloned())
+    }
+
+    pub fn put_link_dir(&self, install_id: &str, category: &str, dir: &Path) -> Result<()> {
+        let mut all: std::collections::BTreeMap<String, std::collections::BTreeMap<String, PathBuf>> =
+            self.get(META, "linkDirs")?.unwrap_or_default();
+        all.entry(install_id.to_string()).or_default().insert(category.to_string(), dir.to_path_buf());
+        self.put_meta("linkDirs", &all)
+    }
+
     /// Where a download keeps its part while it runs. Inside the engine's own
     /// folder, so a scan and the health check never take it for a model, and
     /// on the vault's drive, so moving it into place is a rename.

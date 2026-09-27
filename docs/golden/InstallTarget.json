@@ -1,6 +1,21 @@
 {
+  "defaultDir": "C:\\ComfyUI-Main\\models\\checkpoints\\sd15",
   "installId": "inst-1",
-  "linkPath": "C:\\ComfyUI-Main\\models\\checkpoints\\dreamshaper_8.safetensors",
+  "linkPath": "C:\\ComfyUI-Main\\models\\checkpoints\\sd15\\dreamshaper_8.safetensors",
+  "roots": [
+    {
+      "origin": "modelsDir",
+      "path": "C:\\ComfyUI-Main\\models\\checkpoints"
+    },
+    {
+      "origin": "extraPath",
+      "path": "D:\\SD-models\\checkpoints"
+    },
+    {
+      "origin": "outputDir",
+      "path": "C:\\ComfyUI-Main\\output\\checkpoints"
+    }
+  ],
   "state": "free",
   "ticked": true
 }

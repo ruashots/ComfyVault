@@ -179,11 +179,33 @@ fn address_plan() -> AddressPlan {
         installs: vec![
             InstallTarget {
                 install_id: "inst-1".into(),
-                link_path: Some(r"C:\ComfyUI-Main\models\checkpoints\dreamshaper_8.safetensors".into()),
+                link_path: Some(r"C:\ComfyUI-Main\models\checkpoints\sd15\dreamshaper_8.safetensors".into()),
                 state: InstallTargetState::Free,
                 ticked: true,
+                roots: vec![
+                    crate::download::folders::Root {
+                        path: PathBuf::from(r"C:\ComfyUI-Main\models\checkpoints"),
+                        origin: crate::install::RootOrigin::ModelsDir,
+                    },
+                    crate::download::folders::Root {
+                        path: PathBuf::from(r"D:\SD-models\checkpoints"),
+                        origin: crate::install::RootOrigin::ExtraPath,
+                    },
+                    crate::download::folders::Root {
+                        path: PathBuf::from(r"C:\ComfyUI-Main\output\checkpoints"),
+                        origin: crate::install::RootOrigin::OutputDir,
+                    },
+                ],
+                default_dir: Some(r"C:\ComfyUI-Main\models\checkpoints\sd15".into()),
             },
-            InstallTarget { install_id: "inst-2".into(), link_path: None, state: InstallTargetState::Unavailable, ticked: false },
+            InstallTarget {
+                install_id: "inst-2".into(),
+                link_path: None,
+                state: InstallTargetState::Unavailable,
+                ticked: false,
+                roots: vec![],
+                default_dir: None,
+            },
         ],
         vault_free_bytes: Some(412_000_000_000),
         space_needed_bytes: 7_132_625_894,

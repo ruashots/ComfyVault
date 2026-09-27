@@ -2547,10 +2547,14 @@ type AlreadyInVault = {
 
 type InstallTarget = {
   installId: string
-  linkPath: string | null       // null while category is null, and for an unavailable install
+  linkPath: string | null       // defaultDir plus the file name; null while category is null, and for an unavailable install
   state: 'free' | 'hasLink' | 'nameTaken' | 'unavailable'
   ticked: boolean
+  roots: LinkRoot[]             // the folders ComfyUI reads for the category here, in its order
+  defaultDir: string | null     // the folder picked last time for this kind, or where ComfyUI saves new files of it
 }
+
+type LinkRoot = { path: string, origin: 'modelsDir' | 'extraPath' | 'outputDir' }
 ```
 
 - `sizeBytes` is exact for Hugging Face. Civitai states sizes in kilobytes, so
@@ -2623,8 +2627,23 @@ Arguments:
   fileId?: number
   category: string
   installIds: string[]     // may be empty: the file is then only in the vault
+  links?: { installId: string, dir: string }[]   // a folder chosen for each install; given, it replaces installIds
 }
 ```
+
+Each `dir` in `links` is proved before anything is queued: it must be one of the folders ComfyUI
+reads for the category in that install, or a folder inside one, resolved
+through every link that exists; a folder outside the roots for the category is
+refused with `pathOutsideBoundary`, and nothing is downloaded. It is proved
+again when the link is made. A `dir` that does not exist yet is made then, as
+a journaled step before the link. Each chosen `dir` is remembered for that
+install and category. An install given only in `installIds` gets its
+`defaultDir`.
+
+ComfyUI names a model in a folder inside a root by its path under the root,
+for example `portraits\\t5.safetensors`. So a name is taken when any folder
+ComfyUI reads for the category holds that same path, and that install is
+listed in `notLinked`.
 
 Returns a `Download`.
 

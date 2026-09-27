@@ -117,6 +117,79 @@ pub fn link_folder(install: &Install, category: &str) -> PathBuf {
     own
 }
 
+/// One folder a new link for a category may go in, or under.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Root {
+    pub path: PathBuf,
+    pub origin: crate::install::RootOrigin,
+}
+
+/// The folders ComfyUI reads for `category` in this install, in its order,
+/// that a link may go in. A person keeps models in folders inside them too,
+/// for example `models\loras\portraits`, and ComfyUI finds those.
+///
+/// A folder the YAML file names that contains the whole install is left out:
+/// it is not a model folder, and `custom_nodes` is inside it.
+pub fn roots(install: &Install, category: &str) -> Vec<Root> {
+    let boundaries = install.link_boundaries();
+    searched(install, category)
+        .into_iter()
+        .filter(|p| boundaries.iter().any(|b| p.starts_with(b)))
+        .map(|path| {
+            let origin = if install.extra_paths.iter().any(|e| crate::paths::same_path_lexically(&e.path, &path)) {
+                crate::install::RootOrigin::ExtraPath
+            } else if install.output_model_dirs.iter().any(|o| crate::paths::same_path_lexically(&o.path, &path)) {
+                crate::install::RootOrigin::OutputDir
+            } else {
+                crate::install::RootOrigin::ModelsDir
+            };
+            Root { path, origin }
+        })
+        .collect()
+}
+
+/// Proves `dir` is one of the category's roots or a folder inside one, and
+/// answers where it really is.
+///
+/// Both sides are resolved through every link that exists, so neither a `..`
+/// nor a linked folder planted in the chain can lead out. A folder that does
+/// not exist yet is judged by the part that does.
+pub fn inside_roots(install: &Install, category: &str, dir: &Path) -> crate::Result<PathBuf> {
+    if !dir.is_absolute() {
+        return Err(crate::VaultError::invalid("Choose a folder by its full path."));
+    }
+    let real = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(dir))?;
+    for root in roots(install, category) {
+        let Ok(real_root) = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(&root.path)) else {
+            continue;
+        };
+        if is_under(&real_root, &real) {
+            return Ok(real);
+        }
+    }
+    Err(crate::VaultError::new(
+        crate::ErrorCode::PathOutsideBoundary,
+        "That folder is not one ComfyUI reads for this kind of model, so a link there would not show. Choose a folder in the list.",
+    )
+    .with_path(dir))
+}
+
+/// `path` is `root` or inside it, component by component, ignoring case
+/// where the system does.
+fn is_under(root: &Path, path: &Path) -> bool {
+    let key = |p: &Path| -> Vec<String> {
+        p.components()
+            .map(|c| {
+                let s = c.as_os_str().to_string_lossy().to_string();
+                if cfg!(windows) { s.to_lowercase() } else { s }
+            })
+            .collect()
+    };
+    let (r, p) = (key(root), key(path));
+    p.len() >= r.len() && p[..r.len()] == r[..]
+}
+
 fn is_built_in(name: &str) -> bool {
     BUILT_IN.iter().any(|(c, _)| *c == name)
 }
