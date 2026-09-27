@@ -140,7 +140,9 @@ there are the install's own and are consolidated like any other. Only the
 category folders count, the ones directly inside `models`. A link further down
 leads somewhere you never named, and its files stay where they are. A category
 folder that leads to the install itself, its `custom_nodes` or the vault does
-not count either.
+not count either, and neither does one that leads into another install you
+registered: that install's files, its bundled weights above all, are never
+taken for this one's models.
 
 ---
 

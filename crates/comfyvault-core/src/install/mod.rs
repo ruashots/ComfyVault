@@ -144,20 +144,13 @@ impl Install {
     /// install's own models. Only these folders count. A link further down
     /// leads somewhere the person never declared.
     ///
-    /// A folder whose real place is, or contains, the install, its
-    /// `custom_nodes` or the vault is left out: the whole of such a place is
-    /// not a model folder. So is one whose real place is inside
-    /// `custom_nodes` or the vault.
-    pub fn category_folders(&self, follow_extra: bool, include_output: bool, vault: &Path) -> Vec<(PathBuf, PathBuf)> {
+    /// A folder whose real place is one of `fences`, holds one, or is inside
+    /// one is left out. The fences are every registered install's folder and
+    /// its `custom_nodes`, and the vault ([`Install::fences`]): a link into
+    /// another install would make that install's files, bundled weights
+    /// included, look like this one's models.
+    pub fn category_folders(&self, follow_extra: bool, include_output: bool, fences: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
         let real = |p: &Path| crate::paths::canonicalize_clean(p).ok();
-        // Never one of these, and never a folder that holds one.
-        let whole: Vec<PathBuf> = [self.root.clone(), self.custom_nodes_dir(), vault.to_path_buf()]
-            .iter()
-            .filter_map(|p| real(p))
-            .collect();
-        // Never inside one of these either.
-        let inside: Vec<PathBuf> =
-            [self.custom_nodes_dir(), vault.to_path_buf()].iter().filter_map(|p| real(p)).collect();
         let mut out = Vec::new();
         for root in self.scan_roots(follow_extra, include_output) {
             if root.origin != RootOrigin::ModelsDir {
@@ -167,11 +160,43 @@ impl Install {
             for e in entries.flatten() {
                 let path = e.path();
                 let Some(place) = real(&path).filter(|p| p.is_dir()) else { continue };
-                if whole.iter().any(|f| f.starts_with(&place)) || inside.iter().any(|f| place.starts_with(f)) {
+                if fences.iter().any(|f| f.starts_with(&place) || place.starts_with(f)) {
                     continue;
                 }
                 out.push((path, place));
             }
+        }
+        out
+    }
+
+    /// Where every registered install's folder and `custom_nodes` really are,
+    /// and the vault: the places no category folder may lead to, hold, or sit
+    /// inside.
+    pub fn fences(installs: &[Install], vault: &Path) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = installs
+            .iter()
+            .flat_map(|i| [i.root.clone(), i.custom_nodes_dir()])
+            .chain(std::iter::once(vault.to_path_buf()))
+            .filter_map(|p| crate::paths::canonicalize_clean(&p).ok())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Every registered install's `custom_nodes`, as written and where it
+    /// really is. A file inside any of them is counted and never moved,
+    /// whichever install's folders reached it.
+    pub fn all_custom_nodes(installs: &[Install]) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        for i in installs {
+            let written = i.custom_nodes_dir();
+            if let Ok(real) = crate::paths::canonicalize_clean(&written) {
+                if real != written {
+                    out.push(real);
+                }
+            }
+            out.push(written);
         }
         out
     }

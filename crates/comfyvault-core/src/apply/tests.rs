@@ -3397,3 +3397,154 @@ fn a_category_folder_that_leads_to_the_whole_install_does_not_make_its_files_mov
         "the file under input is not offered as a lora"
     );
 }
+
+// --- a category folder that leads into another install (review, finding 7) --
+
+/// Makes `install/models/<category>` a folder link to `to`.
+fn category_link(w: &TestWorld, install: &Install, category: &str, to: &Path) -> Install {
+    let p = install.root.join("models").join(category);
+    let _ = std::fs::remove_dir_all(&p);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    crate::links::tests::junction(&p, to);
+    w.refresh(install)
+}
+
+fn is_real_file_with(p: &Path, content: &[u8]) -> bool {
+    std::fs::symlink_metadata(p).map(|m| m.file_type().is_file()).unwrap_or(false)
+        && std::fs::read(p).map(|b| b == content).unwrap_or(false)
+}
+
+fn planned_paths(plan: &ConsolidationPlan) -> Vec<String> {
+    plan.groups
+        .iter()
+        .flat_map(|g| g.links.iter().map(|l| crate::paths::display_path(&l.abs_path)))
+        .collect()
+}
+
+#[test]
+fn k1_a_category_link_into_another_installs_custom_nodes_moves_nothing_there() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let bundled = w.write_model(&b, "custom_nodes/node/weights/w.safetensors", &weights("w"));
+    w.write_model(&c, "models/loras/w.safetensors", &weights("w"));
+    let a = category_link(&w, &a, "loras", &b.root.join("custom_nodes/node/weights"));
+
+    let plan = w.plan(&[a, c]);
+    let paths = planned_paths(&plan);
+    let r = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
+    assert!(
+        is_real_file_with(&bundled, &weights("w")),
+        "B's custom_nodes file was moved or replaced. planned: {paths:#?}; apply: {:?}",
+        r.map(|x| x.state).map_err(|e| e.message)
+    );
+}
+
+#[test]
+fn k1b_the_same_with_the_other_install_scanned_too() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let bundled = w.write_model(&b, "custom_nodes/node/weights/w.safetensors", &weights("w"));
+    w.write_model(&c, "models/loras/w.safetensors", &weights("w"));
+    let a = category_link(&w, &a, "loras", &b.root.join("custom_nodes/node/weights"));
+
+    let plan = w.plan(&[a, b, c]);
+    let paths = planned_paths(&plan);
+    let r = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
+    assert!(
+        is_real_file_with(&bundled, &weights("w")),
+        "B's custom_nodes file was moved or replaced. planned: {paths:#?}; apply: {:?}",
+        r.map(|x| x.state).map_err(|e| e.message)
+    );
+}
+
+#[test]
+fn k1c_a_category_link_to_another_installs_root_moves_nothing_in_its_custom_nodes() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let bundled = w.write_model(&b, "custom_nodes/node/w.safetensors", &weights("w"));
+    w.write_model(&c, "models/loras/w.safetensors", &weights("w"));
+    let a = category_link(&w, &a, "loras", &b.root);
+
+    let plan = w.plan(&[a, c]);
+    let paths = planned_paths(&plan);
+    let r = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
+    assert!(
+        is_real_file_with(&bundled, &weights("w")),
+        "B's custom_nodes file was moved or replaced. planned: {paths:#?}; apply: {:?}",
+        r.map(|x| x.state).map_err(|e| e.message)
+    );
+}
+
+#[test]
+fn a_stored_plan_naming_another_installs_custom_nodes_is_refused_by_the_apply() {
+    // The scan no longer offers such a file. The checks before an apply
+    // refuse it on their own too, for a plan written by an older build.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let inside = w.write_model(&b, "custom_nodes/node/w.safetensors", &weights("w"));
+    // A's extra model folders reach into B's custom_nodes.
+    w.add_extra_model_path(&a, "loras", &b.root.join("custom_nodes/node"));
+    let places = crate::apply::boundary::Places::read(&w.store).unwrap();
+    assert!(!places.in_an_install(&inside), "a place inside another install's custom_nodes");
+    assert!(places.in_an_install(&a.root.join("models/loras/x.safetensors")), "the control: A's own folder");
+}
+
+#[test]
+fn a_category_link_to_another_install_offers_none_of_that_installs_files() {
+    // Not only its custom_nodes: nothing in another install becomes this
+    // install's models by way of a category link.
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let theirs = w.write_model(&b, "input/z.safetensors", &weights("z"));
+    w.write_model(&c, "models/loras/z.safetensors", &weights("z"));
+    let a = category_link(&w, &a, "loras", &b.root);
+
+    let plan = w.plan(&[a.clone(), c]);
+    let paths = planned_paths(&plan);
+    assert!(!paths.iter().any(|p| p.contains("input")), "{paths:#?}");
+    assert!(
+        !plan.groups.iter().any(|g| g.source.abs_path.to_string_lossy().contains("input")),
+        "B's file is not offered as A's"
+    );
+    let _ = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
+    assert!(is_real_file_with(&theirs, &weights("z")));
+    let places = crate::apply::boundary::Places::read(&w.store).unwrap();
+    assert!(
+        !places.in_an_install(&a.root.join("models").join("loras").join("input").join("z.safetensors")),
+        "and the checks before an apply do not take it for A's folder"
+    );
+}
+
+#[test]
+fn an_extra_model_folder_inside_another_installs_custom_nodes_moves_nothing_there() {
+    let w = TestWorld::new();
+    let a = w.add_install("A");
+    let b = w.add_install("B");
+    let c = w.add_install("C");
+    let bundled = w.write_model(&b, "custom_nodes/node/w.safetensors", &weights("w"));
+    w.write_model(&c, "models/loras/w.safetensors", &weights("w"));
+    let a = w.add_extra_model_path(&a, "loras", &b.root.join("custom_nodes/node"));
+
+    // The scan itself counts the file as bundled weights, never as movable.
+    let found = w.scan(&[a.clone()]);
+    let seen = found
+        .entries
+        .iter()
+        .find(|e| crate::paths::same_path_lexically(&crate::paths::canonicalize_clean(&e.abs_path).unwrap(), &crate::paths::canonicalize_clean(&bundled).unwrap()))
+        .expect("the scan reaches the file");
+    assert_eq!(seen.classification, crate::store::Classification::CustomNodes);
+
+    let plan = w.plan(&[a, c]);
+    let paths = planned_paths(&plan);
+    let _ = applier(&w).apply("ap-1", &plan, &request(&plan), &CancelToken::new(), &NullSink);
+    assert!(is_real_file_with(&bundled, &weights("w")), "planned: {paths:#?}");
+}

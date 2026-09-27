@@ -509,24 +509,27 @@ impl<'a> Scanner<'a> {
         // And each category folder, such as `models\loras`, where it really
         // is. One that is a junction to another drive is still the folder
         // ComfyUI reads for that category.
+        let registered = self.store.installs().unwrap_or_default();
         allowed.extend(
             install
                 .category_folders(
                     self.settings.follow_extra_model_paths,
                     self.settings.scan_output_model_dirs,
-                    self.store.vault_root(),
+                    &Install::fences(&registered, self.store.vault_root()),
                 )
                 .into_iter()
                 .map(|(_, real)| real),
         );
 
-        // Anything under custom_nodes is counted, never moved, even when an
-        // extra model path points straight into it.
+        // Anything under any install's custom_nodes is counted, never moved,
+        // even when an extra model path or a linked folder reaches straight
+        // into it.
         let custom_nodes = install.custom_nodes_dir();
-        let excluded: Vec<PathBuf> = match crate::paths::canonicalize_clean(&custom_nodes) {
+        let mut excluded: Vec<PathBuf> = match crate::paths::canonicalize_clean(&custom_nodes) {
             Ok(real) if real != custom_nodes => vec![custom_nodes.clone(), real],
             _ => vec![custom_nodes.clone()],
         };
+        excluded.extend(Install::all_custom_nodes(&registered));
 
         for root in roots {
             if cancel.is_cancelled() {

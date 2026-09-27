@@ -41,6 +41,9 @@ pub struct Places {
     /// Every folder the scan walks, per proved install, with that install's
     /// `custom_nodes`, which is never touched.
     install_roots: Vec<(PathBuf, PathBuf)>,
+    /// Every registered install's `custom_nodes`, which no run touches,
+    /// whichever install's folders reach it.
+    custom_nodes: Vec<PathBuf>,
 }
 
 impl Places {
@@ -48,7 +51,9 @@ impl Places {
     /// install. An install that is not is left out, so a path inside it fails.
     pub fn read(store: &Store) -> Result<Self> {
         let mut install_roots = Vec::new();
-        for stored in store.installs()? {
+        let registered = store.installs()?;
+        let fences = Install::fences(&registered, store.vault_root());
+        for stored in &registered {
             let Ok(install) = stored.proved() else { continue };
             install_roots.extend(roots_of(&install));
             // A category folder that is a junction elsewhere is still where
@@ -56,7 +61,7 @@ impl Places {
             let custom_nodes = install.custom_nodes_dir();
             install_roots.extend(
                 install
-                    .category_folders(true, true, store.vault_root())
+                    .category_folders(true, true, &fences)
                     .into_iter()
                     .map(|(path, _)| (path, custom_nodes.clone())),
             );
@@ -65,6 +70,7 @@ impl Places {
             vault_root: store.vault_root().to_path_buf(),
             internal: store.internal_dir(),
             install_roots,
+            custom_nodes: Install::all_custom_nodes(&registered),
         })
     }
 
@@ -82,13 +88,14 @@ impl Places {
     }
 
     /// Is `path` inside a folder the scan walks for a proved install, and not
-    /// inside that install's `custom_nodes`?
+    /// inside any registered install's `custom_nodes`?
     ///
     /// Never inside the vault, even when an install's extra model folders
     /// reach into it: a place in an install is one a vault file's copy came
     /// from, and a vault file is not a copy of itself.
     pub fn in_an_install(&self, path: &Path) -> bool {
         crate::paths::resolve_new_path_within(&self.vault_root, path).is_err()
+            && self.custom_nodes.iter().all(|c| crate::paths::resolve_new_path_within(c, path).is_err())
             && self.install_roots.iter().any(|(root, custom_nodes)| {
                 crate::paths::resolve_new_path_within(root, path).is_ok()
                     && crate::paths::resolve_new_path_within(custom_nodes, path).is_err()

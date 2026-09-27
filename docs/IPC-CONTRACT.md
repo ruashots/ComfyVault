@@ -815,8 +815,10 @@ type Classification =
 through a linked folder that really lives outside every folder the install
 declares. A category folder directly inside `models`, such as `models\loras`,
 counts as declared wherever it really is, so a category folder that is a
-junction to another drive holds `'movable'` files. One that leads to the
-install itself, its `custom_nodes` or the vault does not count.
+junction to another drive holds `'movable'` files. One that leads to, holds,
+or sits inside any registered install's folder or `custom_nodes`, or the vault,
+does not count. A file inside any registered install's `custom_nodes` is
+`'customNodes'`, whichever install's folders reached it.
 
 `mtimeNanos` is text, not a number. It is the file's modification time in
 nanoseconds. A number that large loses its last digits when JavaScript reads
