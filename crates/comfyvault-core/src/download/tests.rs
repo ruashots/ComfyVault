@@ -956,6 +956,42 @@ fn a_download_id_that_names_a_path_never_reaches_a_file() {
     assert!(victim.exists());
 }
 
+#[test]
+fn a_journal_that_says_the_file_went_outside_the_vault_is_not_believed() {
+    // A crafted journal names somebody's file as where the download went.
+    let bytes = content("outside", 3_000);
+    let w = world(bytes.clone(), true);
+    *w.site.stall_first.lock().unwrap() = Some(10);
+    let a = w.install("A");
+    let mut d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
+    let theirs = w.root.join("theirs.safetensors");
+    std::fs::write(&theirs, &bytes).unwrap();
+    let _ = std::fs::remove_file(part_path(&w.ctx, &d.download_id));
+    w.ctx
+        .store
+        .append_journal(&JournalEntry {
+            apply_id: d.journal_id(),
+            seq: 0,
+            group_id: d.download_id.clone(),
+            step: JournalStep::MoveToVault { from: part_path(&w.ctx, &d.download_id), to: theirs.clone(), copied: false, sha256: sha(&bytes), size_bytes: 3_000 },
+            state: JournalState::Done,
+            started_at: Timestamp::now(),
+            finished_at: None,
+            error: None,
+        })
+        .unwrap();
+    d.state = DownloadState::CutOff;
+    w.ctx.store.put_download(&d).unwrap();
+
+    w.dl.resume(&w.ctx, &d.download_id).unwrap();
+    let d = w.settle(&d.download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    let rec = w.ctx.store.vault_file(&sha(&bytes)).unwrap().unwrap();
+    assert!(w.vault(&rec.vault_rel_path().to_string_lossy()).is_file(), "the model is a file in the vault");
+    assert!(!rec.vault_rel_path().as_os_str().is_empty());
+    assert_eq!(std::fs::read(&theirs).unwrap(), bytes, "their file is untouched");
+}
+
 /// Against the real sites. They run only when asked (`--ignored`), and each
 /// one reads the address first and stops if the file is bigger than a few
 /// megabytes, so a wrong address can never fill a disk.

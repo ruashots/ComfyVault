@@ -1130,7 +1130,10 @@ impl<'a> Journal<'a> {
 fn moved_to(ctx: &Context, d: &DownloadRecord) -> Result<Option<PathBuf>> {
     for e in ctx.store.journal(&d.journal_id())?.into_iter().rev() {
         if let JournalStep::MoveToVault { to, .. } = e.step {
-            if matches!(e.state, JournalState::Done | JournalState::Pending) && to.is_file() {
+            // The journal is read from the vault's database, so where it says
+            // the file went is held to the vault before the file is read.
+            let inside = crate::paths::is_within(ctx.store.vault_root(), &to) && !ctx.store.is_internal(&to);
+            if matches!(e.state, JournalState::Done | JournalState::Pending) && inside && to.is_file() {
                 return Ok(Some(to));
             }
         }
