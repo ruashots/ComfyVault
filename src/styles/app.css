@@ -832,6 +832,19 @@ input{font:inherit;color:inherit;background:none;border:none;outline:none}
 .banner{border:1px solid var(--accent-line);border-radius:var(--r2);background:rgba(245,144,30,.045);padding:11px 12px;margin-bottom:14px}
 .banner h3{font-size:10px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;color:var(--amber);margin-bottom:4px}
 .banner p{font-size:10.5px;line-height:1.55;color:var(--t-body)}
+/* the folder a new link goes in: a path that can be clicked, and its chooser */
+.khint{display:block;margin-top:4px;font-size:9px;line-height:1.45;color:var(--t-off)}
+.dl-inst .pickp{cursor:pointer;text-align:left;align-items:center;gap:0;border-bottom:1px dashed var(--div2);padding-bottom:1px}
+.pickp svg{margin-left:6px;color:var(--t-faint);flex:none}
+.pickp:hover,.pickp:focus-visible{border-bottom-color:var(--amber-text)}
+.pickp:hover .pd,.pickp:hover .pf,.pickp:hover svg,.pickp:focus-visible .pd,.pickp:focus-visible .pf,.pickp:focus-visible svg{color:var(--amber-soft)}
+.modal .mnote{font-size:10.5px;line-height:1.55;color:var(--t-body);margin-bottom:9px}
+.modal .mf .res{flex:1;min-width:0;font-size:9.5px;color:var(--t-cream);overflow-wrap:anywhere;line-height:1.45}
+.newf{display:flex;gap:7px;align-items:center}
+.newf .field{height:25px;flex:1}
+.newf .field input{flex:1;min-width:0;width:auto}
+.tnode .hint{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
 /* Settings: the tokens */
 .tok{padding:9px 0 10px;border-bottom:1px solid var(--div)}
 .tok:last-child{border-bottom:none}

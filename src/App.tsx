@@ -4,6 +4,7 @@ import { Icon } from "~/components/Icon";
 import { Boundary } from "~/components/Boundary";
 import { NAV, Rail, Titlebar, Toaster } from "~/components/Shell";
 import { ConfirmModalView } from "~/modals/confirm";
+import { LinkFolderView } from "~/modals/linkfolder";
 import { PickerModalView } from "~/modals/picker";
 import { CleanupScreen } from "~/screens/Cleanup";
 import { ConsolidateScreen } from "~/screens/Consolidate";
@@ -78,6 +79,7 @@ export function App() {
       </div>
       <PickerModalView />
       <ConfirmModalView />
+      <LinkFolderView />
       <Toaster />
     </div>
   );

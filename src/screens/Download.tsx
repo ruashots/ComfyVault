@@ -20,6 +20,7 @@ import { fmt, joinPath, shortHash } from "~/domain/format";
 import { installName } from "~/domain/installname";
 import { fileNameOf, folderOf } from "~/domain/view";
 import { openConfirm } from "~/modals/confirm";
+import { openLinkFolderChooser } from "~/modals/linkfolder";
 import { messageOf, useApp } from "~/state/store";
 import type { AddressPlan, AddressRefusal, Download, DownloadHost } from "~/ipc/contract";
 
@@ -305,9 +306,9 @@ function CardHead(props: { plan: AddressPlan }) {
 }
 
 /** The path a link will have, the folder cut first. */
-function LinkPath(props: { path: string }) {
+function LinkPath(props: { path: string; full?: string }) {
   return (
-    <span class="pp" title={props.path}>
+    <span class="pp" title={props.full ?? props.path}>
       <span class="pd">{folderOf(props.path)}</span>
       <span class="pf">{fileNameOf(props.path)}</span>
     </span>
@@ -327,9 +328,18 @@ function InstallLines(props: { plan: AddressPlan }) {
         const install = () => app.installs().find((i) => i.id === line.installId);
         const name = () => (install() ? installName(install()!, app.installs()) : line.installId);
         const on = () => card.ticked.includes(line.installId);
+        // The folder the person chose, else the engine's default for this install.
+        const chosenDir = () => card.dirs[line.installId] ?? line.defaultDir;
         // Without a folder the path is not known yet, so the folder shows as "…".
         const path = () =>
-          line.linkPath ?? `${install()?.modelsDir ?? ""}\\…\\${props.plan.fileName}`;
+          chosenDir()
+            ? joinPath(chosenDir()!, props.plan.fileName)
+            : (line.linkPath ?? `${install()?.modelsDir ?? ""}\\…\\${props.plan.fileName}`);
+        // Inside the install the path starts at the install folder, which the row names.
+        const shown = (p: string) =>
+          install() && p.toLowerCase().startsWith(`${install()!.root.toLowerCase()}\\`)
+            ? p.slice(install()!.root.length + 1)
+            : p;
         return (
           <Switch>
             <Match when={line.state === "hasLink"}>
@@ -377,7 +387,29 @@ function InstallLines(props: { plan: AddressPlan }) {
                 <span class="nm" title={install()?.root}>
                   {name()}
                 </span>
-                <LinkPath path={path()} />
+                <Show
+                  when={on() && props.plan.category && line.defaultDir}
+                  fallback={<LinkPath path={shown(path())} full={path()} />}
+                >
+                  <button
+                    class="pp pickp"
+                    title={`${path()}. Click to choose another folder.`}
+                    aria-label={`Choose the folder the link goes in, in ${name()}`}
+                    onClick={() =>
+                      openLinkFolderChooser(app, {
+                        installId: line.installId,
+                        category: props.plan.category!,
+                        fileName: props.plan.fileName,
+                        current: chosenDir(),
+                        onUse: (dir) => app.dl.setCard("dirs", line.installId, dir),
+                      })
+                    }
+                  >
+                    <span class="pd">{folderOf(shown(path()))}</span>
+                    <span class="pf">{fileNameOf(path())}</span>
+                    <Icon name="folder" size={11} />
+                  </button>
+                </Show>
               </div>
             </Match>
           </Switch>
@@ -461,7 +493,10 @@ function Ready(props: { plan: AddressPlan }) {
           </span>
         </div>
         <div class="kv">
-          <span class="k">Will be linked in</span>
+          <span class="k">
+            Will be linked in
+            <span class="khint">Click a path to choose the folder the link goes in.</span>
+          </span>
           <span class="v">
             <InstallLines plan={p()} />
             <Show when={ticked().length === 0}>
@@ -574,6 +609,14 @@ async function start(app: ReturnType<typeof useApp>, plan: AddressPlan, installI
       ...(fileIdOf(plan) !== undefined ? { fileId: fileIdOf(plan)! } : {}),
       category: plan.category,
       installIds,
+      // Each link in the folder chosen for it, or the engine's default.
+      links: installIds.map((id) => ({
+        installId: id,
+        dir:
+          card.dirs[id] ??
+          plan.installs.find((i) => i.installId === id)?.defaultDir ??
+          "",
+      })).filter((l) => l.dir !== ""),
     });
     app.dl.cancel();
     app.dl.setCard("address", "");
@@ -606,7 +649,10 @@ function Already(props: { plan: AddressPlan; vaultRelPath: string }) {
       </div>
       <div class="plan">
         <div class="kv">
-          <span class="k">Will be linked in</span>
+          <span class="k">
+            Will be linked in
+            <span class="khint">Click a path to choose the folder the link goes in.</span>
+          </span>
           <span class="v">
             <InstallLines plan={p()} />
           </span>

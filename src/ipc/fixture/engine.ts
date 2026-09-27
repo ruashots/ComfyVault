@@ -1408,15 +1408,27 @@ export class FixtureEngine implements Engine {
   async createLink(args: {
     installId: string;
     sha256: string;
-    relativeDir: string;
+    relativeDir?: string;
+    dir?: string;
     linkName?: string;
   }): Promise<LinkRecord> {
     const install = this.world.installs.find((i) => i.id === args.installId);
     if (!install) throw error("notFound", "That install is not registered.");
     const entry = this.world.vault.get(args.sha256);
     if (!entry) throw error("notFound", "The vault does not hold that file.");
+    if ((args.dir === undefined) === (args.relativeDir === undefined)) {
+      throw error("invalidArgument", "Give the folder as relativeDir or as dir, not both.");
+    }
     const linkName = args.linkName ?? entry.canonicalName;
-    const absPath = `${install.root}\\${args.relativeDir}\\${linkName}`;
+    let folder = `${install.root}\\${args.relativeDir}`;
+    if (args.dir !== undefined) {
+      // A full folder must be one ComfyUI reads for the model's kind, and is remembered.
+      const category = this.world.contents.find((c) => c.sha256 === args.sha256)?.category ?? "";
+      this.downloads.checkInside(install, category, args.dir);
+      this.downloads.remember(install.id, category, args.dir);
+      folder = args.dir;
+    }
+    const absPath = `${folder}\\${linkName}`;
     if (this.world.links.some((l) => l.absPath === absPath)) {
       throw error("conflict", "Something already sits at that name.");
     }
@@ -1424,7 +1436,9 @@ export class FixtureEngine implements Engine {
       id: `link-${this.world.links.length + 1}`,
       installId: args.installId,
       absPath,
-      relPath: `${args.relativeDir}\\${linkName}`,
+      relPath: absPath.toLowerCase().startsWith(`${install.root}\\`.toLowerCase())
+        ? absPath.slice(install.root.length + 1)
+        : absPath,
       linkName,
       sha256: args.sha256,
       vaultRelPath: entry.canonicalName,
@@ -1950,6 +1964,10 @@ export class FixtureEngine implements Engine {
   }
   discardDownload(downloadId: string) {
     return this.downloads.discardDownload(downloadId);
+  }
+  listLinkFolders(args: { installId: string; category: string; dir?: string }) {
+    this.requireVault();
+    return this.downloads.listLinkFolders(args);
   }
   removeDownload(downloadId: string) {
     return this.downloads.removeDownload(downloadId);

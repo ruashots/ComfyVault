@@ -937,6 +937,28 @@ export interface InstallTarget {
   state: "free" | "hasLink" | "nameTaken" | "unavailable";
   /** Ticked on a new card: the installs ticked last time, or every free one. */
   ticked: boolean;
+  /** Every folder ComfyUI reads for this category in this install, in its order. */
+  roots: LinkRoot[];
+  /** The folder remembered for this install and category, or where ComfyUI saves it. */
+  defaultDir: string | null;
+}
+
+export type LinkRootOrigin = "modelsDir" | "extraPath" | "outputDir";
+
+/** A folder ComfyUI reads for a category, as a full path. */
+export interface LinkRoot {
+  path: string;
+  origin: LinkRootOrigin;
+}
+
+/** One folder a new link can go in, for the chooser's tree. */
+export interface LinkFolder {
+  path: string;
+  name: string;
+  origin: LinkRootOrigin;
+  /** False for a root not made yet. It is made when the link is. */
+  exists: boolean;
+  hasSubfolders: boolean;
 }
 
 export interface AddressPlan {
@@ -1136,13 +1158,17 @@ export interface Engine {
   onRevertError(fn: (e: VaultError) => void): Unsubscribe;
 
   // links
+  /** Exactly one of `relativeDir` (from the install folder) and `dir` (a full path). */
   createLink(args: {
     installId: string;
     sha256: string;
-    relativeDir: string;
+    relativeDir?: string;
+    dir?: string;
     linkName?: string;
     createDir?: boolean;
   }): Promise<LinkRecord>;
+  /** The folders ComfyUI reads for a category in an install, or one folder's subfolders. */
+  listLinkFolders(args: { installId: string; category: string; dir?: string }): Promise<LinkFolder[]>;
   removeLink(linkId: string): Promise<{ removed: true }>;
   createModelFolder(
     installId: string,
@@ -1201,12 +1227,14 @@ export interface Engine {
     fileId?: number;
     category?: string;
   }): Promise<AddressReading>;
+  /** With `links`, each install's link goes in its chosen folder, made if missing. */
   startDownload(args: {
     address: string;
     versionId?: number;
     fileId?: number;
     category: string;
     installIds: string[];
+    links?: { installId: string; dir: string }[];
   }): Promise<Download>;
   stopDownload(downloadId: string): Promise<Download>;
   continueDownload(downloadId: string): Promise<Download>;

@@ -6,7 +6,6 @@ import { FixtureEngine } from "~/ipc/fixture/engine";
 import {
   PickerModalView,
   openInstallPicker,
-  openLinkPicker,
   openVaultPicker,
 } from "~/modals/picker";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
@@ -183,55 +182,6 @@ describe("a vault folder that already holds files", () => {
     await userEvent.click(node("Downloads"));
     await waitFor(() => document.querySelector('.verdict.no[role="alert"]') === null);
     expect(button("New folder").classList.contains("pri")).toBe(false);
-  });
-});
-
-describe("placing a link", () => {
-  it("refuses a folder outside every install", async () => {
-    const h = await mountPicker(async (x) => {
-      await openLinkPicker(x.app, x.app.orphans()[0]!.sha256);
-    });
-    await userEvent.click(expander("C:\\"));
-    await waitFor(() => screen.queryAllByRole("button", { name: /Open Users/ }).length > 0);
-    await userEvent.click(node("Users"));
-    await waitFor(() => verdict() !== null);
-    expect(verdict()!.textContent).toContain("Outside every install");
-    expect(button("Put the link here")).toBeDisabled();
-    expect(h.app.orphans().length).toBeGreaterThan(0);
-  });
-
-  it("refuses a folder ComfyUI never looks in", async () => {
-    await mountPicker(async (x) => {
-      await openLinkPicker(x.app, x.app.orphans()[0]!.sha256);
-    });
-    await userEvent.click(expander("C:\\"));
-    await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Studio/ }).length > 0,
-    );
-    await userEvent.click(expander("ComfyUI-Studio"));
-    await waitFor(() => screen.queryAllByRole("button", { name: /custom_nodes/ }).length > 0);
-    await userEvent.click(node("custom_nodes"));
-    await waitFor(() => verdict() !== null);
-    expect(verdict()!.textContent).toContain("ComfyUI does not look here");
-    expect(button("Put the link here")).toBeDisabled();
-  });
-
-  it("accepts a model folder inside an install", async () => {
-    await mountPicker(async (x) => {
-      await openLinkPicker(x.app, x.app.orphans()[0]!.sha256);
-    });
-    await userEvent.click(expander("C:\\"));
-    await waitFor(
-      () => screen.queryAllByRole("button", { name: /Open ComfyUI-Studio/ }).length > 0,
-    );
-    await userEvent.click(expander("ComfyUI-Studio"));
-    await waitFor(() => screen.queryAllByRole("button", { name: /Open models/ }).length > 0);
-    await userEvent.click(expander("models"));
-    await waitFor(() => screen.queryAllByRole("button", { name: /^loras/ }).length > 0);
-    await userEvent.click(node("loras"));
-    await waitFor(() => verdict()?.classList.contains("ok") === true);
-    expect(verdict()!.textContent).toContain("Folder accepted");
-    expect(button("Put the link here")).toBeEnabled();
   });
 });
 

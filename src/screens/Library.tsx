@@ -19,7 +19,7 @@ import { dayMonth, fmt, fmtExactMB, mid, shortHash } from "~/domain/format";
 import { placesOf } from "~/domain/view";
 import { ThumbnailNoteForModel } from "~/components/ThumbnailNote";
 import { openConfirm } from "~/modals/confirm";
-import { openLinkPicker } from "~/modals/picker";
+import { openLibraryLinkChooser } from "~/modals/linkfolder";
 import { messageOf, useApp, type LibrarySort } from "~/state/store";
 import { nothingWasSearched } from "~/ipc/contract";
 import type { ContentRow, UsageResult } from "~/ipc/contract";
@@ -492,9 +492,18 @@ function DrawerBody(props: { row: ContentRow }) {
     <>
       <div class="det-acts">
         <Show when={row().inVault}>
-          <button class="btn sm" onClick={() => void openLinkPicker(app, row().sha256)}>
+          <button
+            class="btn sm"
+            onClick={() =>
+              openLibraryLinkChooser(app, {
+                sha256: row().sha256,
+                category: row().category,
+                fileName: row().name,
+              })
+            }
+          >
             <Icon name="plus" size={11} />
-            Link into an instance
+            Link into an install
           </button>
         </Show>
         <Show when={row().inVault && row().occurrenceCount === 0}>

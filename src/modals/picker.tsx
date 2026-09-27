@@ -25,7 +25,7 @@ import { isVaultError, type DirectoryEntry, type InstallCandidate } from "~/ipc/
 async function openPicker(
   app: AppStore,
   purpose: PickerPurpose,
-  extra: { sha256?: string; replacing?: string } = {},
+  extra: { replacing?: string } = {},
 ): Promise<void> {
   const roots = await app.engine.listDirectory(null);
   app.setModal({
@@ -38,7 +38,6 @@ async function openPicker(
     candidate: null,
     checking: false,
     newFolder: null,
-    sha256: extra.sha256 ?? null,
     replacing: extra.replacing ?? null,
     error: null,
     folderHasFiles: false,
@@ -49,8 +48,6 @@ async function openPicker(
 
 export const openInstallPicker = (app: AppStore) => openPicker(app, "install");
 export const openVaultPicker = (app: AppStore) => openPicker(app, "vault");
-export const openLinkPicker = (app: AppStore, sha256: string) =>
-  openPicker(app, "link", { sha256 });
 
 const DRIVE_ROOT = /^[A-Za-z]:\\$/;
 
@@ -79,8 +76,6 @@ export function PickerModalView() {
     switch (modal()?.purpose) {
       case "vault":
         return "Choose the vault folder";
-      case "link":
-        return "Choose where the link goes";
       default:
         return "Choose a ComfyUI install folder";
     }
@@ -89,8 +84,6 @@ export function PickerModalView() {
     switch (modal()?.purpose) {
       case "vault":
         return "Use this folder";
-      case "link":
-        return "Put the link here";
       default:
         return "Add this install";
     }
@@ -339,20 +332,6 @@ export function PickerModalView() {
             ? `Vault folder set to ${path}`
             : `Vault folder set to ${path} · now register a ComfyUI install`,
         );
-      } else if (current.sha256) {
-        const install = app
-          .installs()
-          .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
-        if (!install) throw new Error("That folder is not inside a registered install.");
-        await app.engine.createLink({
-          installId: install.id,
-          sha256: current.sha256,
-          relativeDir: path.slice(install.root.length + 1).replace(/\\/g, "/"),
-          createDir: false,
-        });
-        app.setModal(null);
-        await app.actions.refresh();
-        app.actions.showToast(`Link created at ${path}`);
       }
     } catch (failure) {
       const message = messageOf(failure);
@@ -464,15 +443,7 @@ export function PickerModalView() {
                 when={current().purpose === "install" && current().lastAdded}
                 fallback={
                   <div class="note" style={{ "margin-bottom": "9px" }}>
-                    <Show
-                      when={current().purpose === "link"}
-                      fallback={
-                        <>Pick a folder. There is nowhere in ComfyVault to type a path.</>
-                      }
-                    >
-                      Pick the folder inside an install where the link should appear.
-                      ComfyUI will find the model at that path.
-                    </Show>
+                    Pick a folder. There is nowhere in ComfyVault to type a path.
                   </div>
                 }
               >
@@ -789,52 +760,6 @@ export function verdictFor(
   path: string,
   candidate: InstallCandidate | null,
 ): VerdictCopy {
-  if (purpose === "link") {
-    const install = app
-      .installs()
-      .find((i) => path.toLowerCase().startsWith(i.root.toLowerCase() + "\\"));
-    if (!install) {
-      return {
-        ok: false,
-        title: "Outside every install",
-        body: (
-          <p>
-            ComfyUI only looks inside its own folders. Pick a folder inside one of
-            the installs you registered, so ComfyUI finds the model there.
-          </p>
-        ),
-      };
-    }
-    const inModels =
-      path.toLowerCase().startsWith(install.modelsDir.toLowerCase()) ||
-      install.extraPaths.some((extra) =>
-        path.toLowerCase().startsWith(extra.path.toLowerCase()),
-      );
-    if (!inModels) {
-      return {
-        ok: false,
-        title: "ComfyUI does not look here",
-        body: (
-          <p>
-            {installName(install, app.installs())} only reads models from{" "}
-            <span class="emph">{install.modelsDir}</span> and the folders its
-            extra_model_paths.yaml adds. A link anywhere else would never be found.
-          </p>
-        ),
-      };
-    }
-    return {
-      ok: true,
-      title: "Folder accepted",
-      body: (
-        <p>
-          The link will appear at <span class="emph">{path}</span>, inside{" "}
-          {install.label}. The file itself stays in the vault.
-        </p>
-      ),
-    };
-  }
-
   if (purpose === "vault") {
     const drive = driveFor(path, app.drives());
     if (drive && !isReadable(drive)) {

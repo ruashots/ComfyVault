@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
 import { ConfirmModalView } from "~/modals/confirm";
+import { LinkFolderView } from "~/modals/linkfolder";
 import { DownloadScreen } from "~/screens/Download";
 import { FixtureEngine } from "~/ipc/fixture/engine";
 import { renderWithApp, waitFor, type Harness } from "~/test/render";
@@ -29,6 +30,7 @@ async function mount(prepare?: (engine: FixtureEngine) => Promise<void> | void) 
       <>
         <DownloadScreen />
         <ConfirmModalView />
+        <LinkFolderView />
       </>
     ),
     { engine },
@@ -524,5 +526,105 @@ describe("a download ComfyVault closed on", () => {
     await waitFor(() => harness!.app.dl.downloads().length === 2);
     const nav = screen.getAllByRole("button").find((b) => /^Download/.test(b.textContent ?? ""))!;
     expect(nav.textContent).toBe("Download2");
+  });
+});
+
+describe("choosing the folder a new link goes in", () => {
+  const LORA = "https://civitai.com/models/58390";
+  const chooser = () => document.querySelector('[aria-label="Where the link goes"]');
+  const nodeNamed = (label: string) =>
+    [...document.querySelectorAll(".tnode")].find(
+      (n) => n.querySelector("span")?.textContent === label,
+    ) as HTMLButtonElement;
+
+  it("shows a ticked row's path from the install folder on, as a button, and an unticked one as text", async () => {
+    await mount();
+    await read(LORA);
+    const studio = button("Choose the folder the link goes in, in ComfyUI-Studio");
+    expect(studio.textContent).toBe("models\\loras\\add_detail.safetensors");
+    expect(studio.getAttribute("title")).toBe(
+      "C:\\ComfyUI-Studio\\models\\loras\\add_detail.safetensors. Click to choose another folder.",
+    );
+    expect(text()).toContain("Click a path to choose the folder the link goes in.");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Link it in ComfyUI-Sandbox" }));
+    expect(screen.queryByRole("button", { name: "Choose the folder the link goes in, in ComfyUI-Sandbox" })).toBeNull();
+  });
+
+  it("offers only the folders ComfyUI reads for the kind, and puts the link where the person chose", async () => {
+    const { app, engine } = await mount();
+    await read(LORA);
+    await userEvent.click(button("Choose the folder the link goes in, in ComfyUI-Studio"));
+    await waitFor(() => chooser() !== null && document.querySelectorAll(".tnode").length > 1);
+    expect(chooser()!.querySelector("h2")!.textContent).toBe("Where the link goes in ComfyUI-Studio");
+    expect(chooser()!.textContent).toContain(
+      "ComfyUI finds loras in these folders and in every folder inside them. Pick the folder you keep this kind of model in, or make a new one.",
+    );
+    expect(nodeNamed("models\\loras")!.textContent).toContain("the usual place");
+    // Nothing above the folders ComfyUI reads is offered.
+    expect(nodeNamed("models")).toBeUndefined();
+
+    await userEvent.click(nodeNamed("flux"));
+    expect(chooser()!.querySelector(".res")!.textContent).toBe(
+      "The link will be C:\\ComfyUI-Studio\\models\\loras\\flux\\add_detail.safetensors",
+    );
+    await userEvent.click(button("Use this folder"));
+    await waitFor(() => chooser() === null);
+    expect(button("Choose the folder the link goes in, in ComfyUI-Studio").textContent).toBe(
+      "models\\loras\\flux\\add_detail.safetensors",
+    );
+
+    await userEvent.click(button("Download 37 MB"));
+    await waitFor(() => app.dl.downloads().length === 1);
+    engine.downloads.devFinishDownloads();
+    await waitFor(() => app.dl.downloads()[0]!.state === "done");
+    const links = await engine.listLinks();
+    expect(links.some((l) => l.absPath === "C:\\ComfyUI-Studio\\models\\loras\\flux\\add_detail.safetensors")).toBe(true);
+
+    // The choice is remembered for the next model of that kind.
+    await read("https://civitai.com/models/4384");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Folder" }), "loras");
+    await waitFor(() => app.dl.card.plan?.category === "loras");
+    expect(button("Choose the folder the link goes in, in ComfyUI-Studio").textContent).toBe(
+      "models\\loras\\flux\\dreamshaper_8.safetensors",
+    );
+  });
+
+  it("makes a new folder only when the link is made, and refuses a bad name", async () => {
+    const { app, engine } = await mount();
+    await read(LORA);
+    await userEvent.click(button("Choose the folder the link goes in, in ComfyUI-Studio"));
+    await waitFor(() => document.querySelectorAll(".tnode").length > 1);
+    await userEvent.click(button(/^New folder in loras$/));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name of the new folder" }), "a:b");
+    await userEvent.click(button("Make it"));
+    expect(document.querySelector(".tnew-err")!.textContent).toBe('A folder name cannot contain \\ / : * ? " < > |');
+    await userEvent.clear(screen.getByRole("textbox", { name: "Name of the new folder" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name of the new folder" }), "portraits{Enter}");
+    expect(nodeNamed("portraits")!.textContent).toContain("new");
+    expect(nodeNamed("portraits")!.classList.contains("on")).toBe(true);
+    // Nothing is made on disk by the chooser.
+    const before = await engine.listLinkFolders({ installId: "studio", category: "loras", dir: "C:\\ComfyUI-Studio\\models\\loras" });
+    expect(before.some((f) => f.name === "portraits")).toBe(false);
+    await userEvent.click(button("Use this folder"));
+    await userEvent.click(button("Download 37 MB"));
+    await waitFor(() => app.dl.downloads().length === 1);
+    engine.downloads.devFinishDownloads();
+    await waitFor(() => app.dl.downloads()[0]!.state === "done");
+    expect(
+      (await engine.listLinks()).some(
+        (l) => l.absPath === "C:\\ComfyUI-Studio\\models\\loras\\portraits\\add_detail.safetensors",
+      ),
+    ).toBe(true);
+  });
+
+  it("goes back to each install's own choice when the folder changes", async () => {
+    const { app } = await mount();
+    await read(FLUX_FP8);
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Folder" }), "diffusion_models");
+    await waitFor(() => app.dl.card.plan?.category === "diffusion_models");
+    app.dl.setCard("dirs", "studio", "C:\\ComfyUI-Studio\\models\\diffusion_models\\flux");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Folder" }), "checkpoints");
+    await waitFor(() => app.dl.card.plan?.category === "checkpoints");
+    expect(app.dl.card.dirs).toEqual({});
   });
 });

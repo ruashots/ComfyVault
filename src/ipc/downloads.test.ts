@@ -375,3 +375,37 @@ describe("a vault drive that cannot say what it has free", () => {
     expect(again.error!.kind).toBe("noSpace");
   });
 });
+
+describe("the folder a new link goes in", () => {
+  it("lists the folders ComfyUI reads for a kind, older names included, and nothing above them", async () => {
+    const { e } = engine();
+    const roots = await e.listLinkFolders({ installId: "sandbox", category: "diffusion_models" });
+    expect(roots.map((r) => [r.path, r.origin])).toEqual([
+      ["C:\\ComfyUI-Sandbox\\models\\unet", "modelsDir"],
+      ["C:\\ComfyUI-Sandbox\\models\\diffusion_models", "modelsDir"],
+    ]);
+    const plan = (await e.readModelAddress({ address: DREAM })).plan!;
+    const studio = plan.installs.find((i) => i.installId === "studio")!;
+    expect(studio.defaultDir).toBe("C:\\ComfyUI-Studio\\models\\checkpoints");
+    expect(studio.roots.map((r) => r.path)).toEqual(["C:\\ComfyUI-Studio\\models\\checkpoints"]);
+  });
+
+  it("refuses a folder outside them, and queues nothing", async () => {
+    const { e } = engine();
+    const refused = await refusal(
+      e.startDownload({
+        address: DREAM,
+        category: "checkpoints",
+        installIds: ["studio"],
+        links: [{ installId: "studio", dir: "C:\\ComfyUI-Studio\\models\\loras" }],
+      }),
+    );
+    expect(refused.code).toBe("pathOutsideBoundary");
+    expect(await e.listDownloads()).toEqual([]);
+    const orphan = (await e.listOrphans())[0]!;
+    const linkRefused = await refusal(
+      e.createLink({ installId: "studio", sha256: orphan.sha256, dir: "C:\\Users" }),
+    );
+    expect(linkRefused.code).toBe("pathOutsideBoundary");
+  });
+});

@@ -47,6 +47,7 @@ import type {
   Install,
   InstallCandidate,
   InterruptedApply,
+  LinkFolder,
   LinkRecord,
   NameGroup,
   RevertProgress,
@@ -103,7 +104,7 @@ export interface NewFolderDraft {
   saving: boolean;
 }
 
-export type PickerPurpose = "install" | "vault" | "link";
+export type PickerPurpose = "install" | "vault";
 
 export interface PickerModal {
   kind: "picker";
@@ -116,8 +117,6 @@ export interface PickerModal {
   candidate: InstallCandidate | null;
   checking: boolean;
   newFolder: NewFolderDraft | null;
-  /** Which content a link is being placed for. */
-  sha256: string | null;
   /** Which install is being re-pointed, when the person pressed Edit. */
   replacing: string | null;
   /**
@@ -158,7 +157,30 @@ export interface ConfirmModal {
   errorDetail: readonly string[];
 }
 
-export type Modal = PickerModal | ConfirmModal;
+/** The folder a new link goes in. See modals/linkfolder.tsx. */
+export interface LinkFolderModal {
+  kind: "linkFolder";
+  /** Null while the person still picks the install, from the Library. */
+  installId: string | null;
+  category: string;
+  fileName: string;
+  /** From the Library: the model the chooser links itself. */
+  sha256: string | null;
+  selected: string | null;
+  /** The folders under each folder, "" for the roots. */
+  folders: Record<string, LinkFolder[]>;
+  expanded: string[];
+  loading: string[];
+  /** New folders drawn in the tree. They are made when the link is. */
+  added: string[];
+  naming: { draft: string; error: string | null } | null;
+  error: string | null;
+  working: boolean;
+  /** From Download: what to do with the folder. The card keeps it. */
+  onUse: ((dir: string) => void) | null;
+}
+
+export type Modal = PickerModal | ConfirmModal | LinkFolderModal;
 
 export interface AppStore {
   readonly engine: Engine;

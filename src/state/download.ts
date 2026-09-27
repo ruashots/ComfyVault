@@ -29,6 +29,8 @@ export interface DownloadCard {
   failure: string | null;
   /** The folder the person chose, or null to take the engine's suggestion. */
   category: string | null;
+  /** The folder the person chose for an install's link, by install id. */
+  dirs: Record<string, string>;
   /** The installs ticked on the card. Held ones are never in it. */
   ticked: readonly string[];
   /** Download was pressed and the engine has not answered yet. */
@@ -67,6 +69,7 @@ const EMPTY_CARD: DownloadCard = {
   refusal: null,
   failure: null,
   category: null,
+  dirs: {},
   ticked: [],
   starting: false,
 };
@@ -121,7 +124,7 @@ export function createDownloadState(
       batch(() => {
         setCard({ address, reading: true, failure: null });
         if (!sameCard) {
-          setCard({ plan: null, refusal: null, ticked: [], category: null, starting: false });
+          setCard({ plan: null, refusal: null, ticked: [], category: null, dirs: {}, starting: false });
         }
       });
       try {
@@ -141,7 +144,10 @@ export function createDownloadState(
         } else {
           ticked = defaultTicks(plan);
         }
+        // Another folder resets each link to that install's choice for it.
+        const newFolder = sameCard && card.plan?.category !== plan.category;
         setCard({ plan, refusal: null, reading: false, ticked });
+        if (!sameCard || newFolder) setCard("dirs", reconcile({}));
       } catch (error) {
         if (id !== latestRead) return;
         setCard({ reading: false, plan: null, refusal: null, failure: messageOf(error) });

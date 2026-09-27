@@ -8,6 +8,8 @@
  */
 
 import type {
+  LinkFolder,
+  LinkRoot,
   AddressPlan,
   AddressReading,
   AddressRefusal,
@@ -323,6 +325,8 @@ interface Token {
 }
 
 interface Job extends Download {
+  /** The folder each install's link goes in. */
+  dirs: Record<string, string>;
   /** What the transfer reads again on a continue. Not part of the record. */
   address: string;
   versionId: number | null;
@@ -579,16 +583,108 @@ export class DownloadDesk {
       vaultNameTaken: vaultName !== file.name,
       installs: world.installs.map((install) => {
         const state = this.stateIn(install, category, file);
+        const defaultDir = category ? this.defaultDir(install, category) : null;
         return {
           installId: install.id,
-          linkPath: category ? `${install.modelsDir}\\${category}\\${file.name}` : null,
+          linkPath: defaultDir ? `${defaultDir}\\${file.name}` : null,
           state,
           ticked: state === "free" && (last === null || last.includes(install.id)),
+          roots: category ? this.rootsFor(install, category) : [],
+          defaultDir,
         };
       }),
       vaultFreeBytes: world.driveReadable ? world.freeBytes : null,
       spaceNeededBytes: alreadyInVault ? 0 : file.sizeBytes + SPACE_MARGIN_BYTES,
     };
+  }
+
+  // ── the folder a new link goes in ─────────────────────────────────────────
+
+  private linkDirs = new Map<string, string>();
+
+  /** Every folder ComfyUI reads for a category in an install, in its order. */
+  rootsFor(install: Install, category: string): LinkRoot[] {
+    const roots: LinkRoot[] = (SEARCHED[category] ?? [category]).map((d) => ({
+      path: `${install.modelsDir}\\${d}`,
+      origin: "modelsDir" as const,
+    }));
+    for (const e of install.extraPaths.filter((x) => x.category === category)) {
+      // A YAML folder that holds the whole install is never offered.
+      if (install.root.toLowerCase().startsWith(e.path.toLowerCase())) continue;
+      if (!roots.some((r) => r.path.toLowerCase() === e.path.toLowerCase())) {
+        roots.push({ path: e.path, origin: "extraPath" });
+      }
+    }
+    return roots;
+  }
+
+  /** The folder remembered for this install and category, or ComfyUI's own. */
+  defaultDir(install: Install, category: string): string {
+    return (
+      this.linkDirs.get(`${install.id}|${category}`) ?? `${install.modelsDir}\\${category}`
+    );
+  }
+
+  remember(installId: string, category: string, dir: string): void {
+    this.linkDirs.set(`${installId}|${category}`, dir);
+  }
+
+  /** Refuse a folder outside every folder ComfyUI reads for the category. */
+  checkInside(install: Install, category: string, dir: string): void {
+    const d = dir.toLowerCase().replace(/\\+$/, "");
+    const ok = this.rootsFor(install, category).some((r) => {
+      const root = r.path.toLowerCase();
+      return d === root || d.startsWith(`${root}\\`);
+    });
+    if (!ok) {
+      throw error(
+        "pathOutsideBoundary",
+        "That folder is not one ComfyUI reads for this kind of model in that install.",
+        dir,
+      );
+    }
+  }
+
+  /** The roots, or the subfolders of one folder, as the disk has them. */
+  async listLinkFolders(args: {
+    installId: string;
+    category: string;
+    dir?: string;
+  }): Promise<LinkFolder[]> {
+    const world = this.world();
+    const install = world.installs.find((i) => i.id === args.installId);
+    if (!install) throw error("notFound", "That install is not registered any more.");
+    const roots = this.rootsFor(install, args.category);
+    // The sample disk is the folders its files sit in.
+    const folders = new Set<string>();
+    for (const c of world.contents) {
+      for (const copy of c.copies) {
+        const at = copy.absPath.lastIndexOf("\\");
+        let dir = copy.absPath.slice(0, at);
+        while (dir.includes("\\")) {
+          folders.add(dir.toLowerCase());
+          dir = dir.slice(0, dir.lastIndexOf("\\"));
+        }
+      }
+    }
+    for (const dir of this.linkDirs.values()) folders.add(dir.toLowerCase());
+    const below = (path: string) =>
+      [...folders].filter((f) => f.startsWith(`${path.toLowerCase()}\\`) && !f.slice(path.length + 1).includes("\\"));
+    const originOf = (path: string) =>
+      roots.find((r) => path.toLowerCase().startsWith(r.path.toLowerCase()))?.origin ?? "modelsDir";
+    const entry = (path: string): LinkFolder => ({
+      path,
+      name: path.slice(path.lastIndexOf("\\") + 1),
+      origin: originOf(path),
+      exists: folders.has(path.toLowerCase()),
+      hasSubfolders: below(path).length > 0,
+    });
+    if (args.dir === undefined) return roots.map((r) => entry(r.path));
+    this.checkInside(install, args.category, args.dir);
+    return below(args.dir)
+      .map((f) => `${args.dir}${f.slice(args.dir!.length)}`)
+      .map((p) => entry(p))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private stateIn(
@@ -671,6 +767,7 @@ export class DownloadDesk {
     fileId?: number;
     category: string;
     installIds: string[];
+    links?: { installId: string; dir: string }[];
   }): Promise<Download> {
     if (!CATEGORIES.includes(args.category)) {
       throw error("invalidArgument", "That folder name cannot be used. Choose one from the list.");
@@ -690,12 +787,24 @@ export class DownloadDesk {
       throw error("conflict", said, r.serviceMessage ?? undefined);
     }
     const plan = reading.plan;
-    const unknown = args.installIds.find((id) => !this.world().installs.some((i) => i.id === id));
+    const unknown = (args.links?.map((l) => l.installId) ?? args.installIds).find(
+      (id) => !this.world().installs.some((i) => i.id === id),
+    );
     if (unknown) throw error("notFound", "One of the chosen installs is not registered any more.");
     const world = this.world();
-    const installIds = args.installIds.filter((id) =>
+    const asked = args.links ? args.links.map((l) => l.installId) : args.installIds;
+    const installIds = asked.filter((id) =>
       plan.installs.some((i) => i.installId === id && i.state === "free"),
     );
+    // Each chosen folder must be one ComfyUI reads for this category.
+    const dirs: Record<string, string> = {};
+    for (const id of installIds) {
+      const install = world.installs.find((i) => i.id === id)!;
+      const chosen = args.links?.find((l) => l.installId === id)?.dir;
+      const dir = chosen ?? this.defaultDir(install, plan.category ?? args.category);
+      this.checkInside(install, plan.category ?? args.category, dir);
+      dirs[id] = dir;
+    }
     const job: Job = {
       downloadId: `download-${++this.seq}`,
       host: plan.host,
@@ -720,9 +829,11 @@ export class DownloadDesk {
       startedAt: new Date().toISOString(),
       finishedAt: null,
       expected: plan.sha256,
+      dirs,
     };
-    // The engine remembers the ticks for the next card.
-    this.downloadInstallIds = [...args.installIds];
+    // The engine remembers the ticks, and each folder, for the next card.
+    this.downloadInstallIds = [...asked];
+    for (const [id, dir] of Object.entries(dirs)) this.remember(id, job.category, dir);
     if (plan.alreadyInVault) {
       // Nothing to transfer: the links are made at once.
       job.linkedInstallIds = this.link(job, plan.sha256!);
@@ -934,19 +1045,20 @@ export class DownloadDesk {
     for (const installId of job.installIds) {
       const install = world.installs.find((i) => i.id === installId);
       if (!install) continue;
-      const folder = `models\\${job.category}\\`;
-      const absPath = `${install.root}\\${folder}${job.fileName}`;
+      const dir = job.dirs[installId] ?? this.defaultDir(install, job.category);
+      const absPath = `${dir}\\${job.fileName}`;
+      const folder = relOf(install, dir);
       if (world.links.some((l) => l.absPath === absPath)) continue;
       const link: LinkRecord = {
         id: `link-${world.links.length + 1}-${job.downloadId}`,
         installId,
         absPath,
-        relPath: `${job.category}\\${job.fileName}`,
+        relPath: `${folder}${job.fileName}`,
         linkName: job.fileName,
         sha256: hash,
         vaultRelPath: `${content?.category ?? job.category}\\${entry.canonicalName}`,
         createdAt: new Date().toISOString(),
-        createdBy: "manual",
+        createdBy: "download",
         applyId: null,
       };
       world.links.push(link);
@@ -1061,8 +1173,14 @@ function tagged(name: string, hash: string): string {
   return dot <= 0 ? name + tag : name.slice(0, dot) + tag + name.slice(dot);
 }
 
+/** A folder inside an install, from the install folder on, with a trailing \\. */
+function relOf(install: Install, dir: string): string {
+  const root = `${install.root}\\`;
+  return (dir.toLowerCase().startsWith(root.toLowerCase()) ? dir.slice(root.length) : dir) + "\\";
+}
+
 function publicOf(job: Job): Download {
-  const { expected: _e, address: _a, versionId: _v, fileId: _f, ...record } = job;
+  const { expected: _e, address: _a, versionId: _v, fileId: _f, dirs: _d, ...record } = job;
   return { ...record, installIds: [...record.installIds], linkedInstallIds: [...record.linkedInstallIds] };
 }
 
