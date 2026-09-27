@@ -207,6 +207,14 @@ fn a_link_removed_by_hand_no_longer_counts_as_a_name() {
 }
 
 #[test]
+fn a_link_in_an_install_no_longer_in_the_list_does_not_count() {
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    assert!(w.store.delete_install(&b.id).unwrap());
+    assert!(vault(&w).name_groups().unwrap().is_empty());
+}
+
+#[test]
 fn one_name_in_two_folders_of_one_install_is_counted_once_with_both_links() {
     let w = TestWorld::new();
     let (a, _b) = two_names(&w);

@@ -558,8 +558,9 @@ impl<'a> Vault<'a> {
     /// person, and a link given its own name by hand is one even though the
     /// vault never heard it.
     ///
-    /// Only links that are on the disk and resolve count. On Windows two names
-    /// that differ only in case are one name, as they are to the file system.
+    /// Only links that are on the disk and resolve, in installs still in the
+    /// list, count. On Windows two names that differ only in case are one
+    /// name, as they are to the file system.
     pub fn name_groups(&self) -> Result<Vec<NameGroup>> {
         let links = self.links();
         let mut out = Vec::new();
@@ -570,6 +571,9 @@ impl<'a> Vault<'a> {
                 .into_iter()
                 .filter(|l| links.state_of(l) == LinkState::Ok)
                 .collect();
+            // A link left behind in an install the person removed from the
+            // list is not one the card can name or change.
+            live.retain(|l| self.store.install(&l.install_id).ok().flatten().is_some());
             live.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
 
             // One entry per name, in the order the names are first met.
