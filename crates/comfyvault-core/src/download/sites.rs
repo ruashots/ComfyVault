@@ -17,6 +17,9 @@ use crate::error::{Result, VaultError};
 pub struct Sites {
     pub hugging_face: String,
     pub civitai: String,
+    /// Lets a site on this computer send downloads to storage on this
+    /// computer. Only a test sets it: the real sites never get it.
+    pub trust_local_storage: bool,
 }
 
 impl Default for Sites {
@@ -24,7 +27,15 @@ impl Default for Sites {
         Self {
             hugging_face: "https://huggingface.co".to_string(),
             civitai: "https://civitai.com".to_string(),
+            trust_local_storage: false,
         }
+    }
+}
+
+impl Sites {
+    /// Both sites played by one server on this computer, for tests.
+    pub fn on_this_computer(base: &str) -> Self {
+        Self { hugging_face: base.to_string(), civitai: base.to_string(), trust_local_storage: true }
     }
 }
 
@@ -118,6 +129,9 @@ pub struct RemoteFile {
     pub model_id: Option<u64>,
     /// The site's own download address. Never a signed storage address.
     pub fetch_url: String,
+    /// From [`Sites::trust_local_storage`]. Never set for the real sites.
+    #[serde(skip)]
+    pub trust_local_storage: bool,
 }
 
 /// What reading an address found.
@@ -324,6 +338,7 @@ fn hugging_face(
         page: Some(page),
         model_id: None,
         fetch_url,
+        trust_local_storage: sites.trust_local_storage,
     }))
 }
 
@@ -496,6 +511,7 @@ fn civitai(
         page: None,
         model_id: Some(model_id),
         fetch_url: url,
+        trust_local_storage: sites.trust_local_storage,
     }))
 }
 

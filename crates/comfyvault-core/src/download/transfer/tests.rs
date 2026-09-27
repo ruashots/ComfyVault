@@ -89,6 +89,7 @@ fn file(server: &impl Based) -> RemoteFile {
         page: None,
         model_id: None,
         fetch_url: format!("{}/site/file", server.base()),
+        trust_local_storage: true,
     }
 }
 
@@ -341,13 +342,13 @@ fn a_redirect_goes_only_to_the_sites_own_storage_over_https() {
         "https://cdn-lfs.huggingface.co/x",
         "https://huggingface.co/api/resolve-cache/models/o/r/abc/m.safetensors",
     ] {
-        assert!(may_follow(Host::HuggingFace, hf, ok), "{ok}");
+        assert!(may_follow(Host::HuggingFace, hf, ok, false), "{ok}");
     }
     for ok in [
         "https://b2.civitai.com/file/civitai-modelfiles/x.safetensors?Authorization=1",
         "https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/x",
     ] {
-        assert!(may_follow(Host::Civitai, cv, ok), "{ok}");
+        assert!(may_follow(Host::Civitai, cv, ok, false), "{ok}");
     }
     for bad in [
         "http://us.aws.cdn.hf.co/x",
@@ -363,10 +364,10 @@ fn a_redirect_goes_only_to_the_sites_own_storage_over_https() {
         "https://someone-else.r2.cloudflarestorage.com/x",
         "file:///C:/x",
     ] {
-        assert!(!may_follow(Host::HuggingFace, hf, bad), "{bad}");
-        assert!(!may_follow(Host::Civitai, cv, bad), "{bad}");
+        assert!(!may_follow(Host::HuggingFace, hf, bad, false), "{bad}");
+        assert!(!may_follow(Host::Civitai, cv, bad, false), "{bad}");
     }
-    assert!(!may_follow(Host::Civitai, cv, "https://us.aws.cdn.hf.co/x"), "one site's storage is not the other's");
+    assert!(!may_follow(Host::Civitai, cv, "https://us.aws.cdn.hf.co/x", false), "one site's storage is not the other's");
 }
 
 #[test]
@@ -426,6 +427,7 @@ fn file_of(host: Host) -> RemoteFile {
         page: None,
         model_id: None,
         fetch_url: String::new(),
+        trust_local_storage: false,
     }
 }
 
@@ -459,5 +461,15 @@ fn a_redirect_to_the_sites_own_address_keeps_the_token_and_a_refusal_there_is_a_
     let err = go(&s, &part, None, Some("hf_ok")).unwrap_err();
     assert_eq!(err.kind, FailureKind::Refused, "{err:?}");
     assert_eq!(err.service_message.as_deref(), Some("Access to model o/r is restricted."));
+}
+
+#[test]
+fn a_site_on_this_computer_cannot_send_to_this_computer_unless_a_test_says_so() {
+    use crate::download::transfer::may_follow;
+    let site = "http://127.0.0.1:5000/api/download/models/8";
+    let local = "http://127.0.0.1:8188/api/prompt";
+    assert!(!may_follow(Host::Civitai, site, local, false));
+    assert!(may_follow(Host::Civitai, site, local, true));
+    assert!(!may_follow(Host::Civitai, "https://civitai.com/x", local, true), "only a site on this computer");
 }
 

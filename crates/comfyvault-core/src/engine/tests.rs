@@ -1274,7 +1274,7 @@ fn opening_another_vault_stops_a_download_and_keeps_its_part() {
     let platform = Arc::new(FakePlatform::new());
     let downloads = crate::download::Downloader::new(
         Arc::new(crate::download::http::UreqWeb::new()),
-        crate::download::sites::Sites { hugging_face: s.base.clone(), civitai: s.base.clone() },
+        crate::download::sites::Sites::on_this_computer(&s.base),
         Arc::new(crate::download::tokens::MemoryTokens::default()),
     );
     let e = Engine::with_parts(dir.path().join("config.json"), platform, downloads);

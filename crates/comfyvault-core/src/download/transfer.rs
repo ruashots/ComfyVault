@@ -121,7 +121,7 @@ pub fn run(
             .map(|l| absolute(&file.fetch_url, l))
             .filter(|l| l.starts_with("https://") || l.starts_with("http://"))
             .ok_or_else(|| Failure::new(FailureKind::Connection, format!("{host} sent the download somewhere ComfyVault cannot follow.")))?;
-        if !may_follow(file.host, &file.fetch_url, &to) {
+        if !may_follow(file.host, &file.fetch_url, &to, file.trust_local_storage) {
             return Err(Failure::new(
                 FailureKind::Connection,
                 format!("{host} sent the download to an address ComfyVault does not trust, so nothing was downloaded."),
@@ -360,12 +360,12 @@ pub(crate) fn origin(url: &str) -> Option<Origin> {
 /// `*.hf.co`, Civitai to `b2.civitai.com` and to its own buckets on
 /// `*.r2.cloudflarestorage.com`). Anything else is refused rather than asked.
 ///
-/// A site on this computer, which only a test sets up, may send to this
-/// computer too.
-pub(crate) fn may_follow(host: Host, site: &str, to: &str) -> bool {
+/// `trust_local` lets a site on this computer send to this computer. Only a
+/// test sets it; the real sites never get it.
+pub(crate) fn may_follow(host: Host, site: &str, to: &str, trust_local: bool) -> bool {
     let (Some(site), Some(to)) = (origin(site), origin(to)) else { return false };
-    if site.host == "127.0.0.1" {
-        return to.host == "127.0.0.1";
+    if trust_local && site.host == "127.0.0.1" && to.host == "127.0.0.1" {
+        return true;
     }
     if to.scheme != "https" {
         return false;

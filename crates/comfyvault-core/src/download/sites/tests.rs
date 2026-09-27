@@ -13,7 +13,7 @@ fn is_model(name: &str) -> bool {
 }
 
 fn read_at(server: &Server, address: &str, token: Option<&str>) -> Reading {
-    let sites = Sites { hugging_face: server.base.clone(), civitai: server.base.clone() };
+    let sites = Sites::on_this_computer(&server.base);
     let addr = parse(address).unwrap();
     read(&UreqWeb::new(), &sites, &addr, None, None, token, &[], &is_model).unwrap()
 }
@@ -72,7 +72,7 @@ fn a_civitai_model_page_chooses_the_newest_version_and_its_primary_file() {
 #[test]
 fn a_civitai_version_and_file_can_be_chosen() {
     let s = civitai_server(|_| Canned::new(307).with_header("location", "https://storage.example/x"));
-    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let sites = Sites::on_this_computer(&s.base);
     let addr = parse("https://civitai.com/models/4384").unwrap();
     let Reading::File(f) = read(&UreqWeb::new(), &sites, &addr, Some(128713), Some(3), None, &[], &is_model).unwrap()
     else {
@@ -125,7 +125,7 @@ fn a_download_address_elsewhere_in_civitais_answer_is_never_used() {
         ),
         _ => Canned::new(500),
     });
-    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let sites = Sites::on_this_computer(&s.base);
     let addr = parse("https://civitai.com/models/4384").unwrap();
     let err = read(&UreqWeb::new(), &sites, &addr, None, None, None, &[], &is_model).unwrap_err();
     assert!(err.message.contains("somewhere else"), "{}", err.message);
@@ -225,7 +225,7 @@ fn a_token_goes_only_to_the_site_and_never_into_an_address() {
 #[test]
 fn a_file_that_is_not_a_model_is_refused_before_any_request() {
     let s = hf_server(true, 302, vec![]);
-    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let sites = Sites::on_this_computer(&s.base);
     let addr = parse("https://huggingface.co/o/r/blob/main/run.bat").unwrap();
     let err = read(&UreqWeb::new(), &sites, &addr, None, None, None, &[], &is_model).unwrap_err();
     assert_eq!(err.code, crate::ErrorCode::InvalidArgument);
@@ -241,7 +241,7 @@ fn a_token_is_checked_with_the_site_and_the_account_is_named() {
         ("/api/v1/me", _) => Canned::json(401, r#"{"error":"Unauthorized"}"#),
         _ => Canned::new(404),
     });
-    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let sites = Sites::on_this_computer(&s.base);
     let web = UreqWeb::new();
     assert_eq!(check_token(&web, &sites, Host::HuggingFace, "good").unwrap(), Ok(Some("sam".into())));
     assert_eq!(
@@ -264,7 +264,7 @@ fn a_civitai_file_with_no_size_or_a_size_below_nothing_is_not_offered() {
         ),
         _ => Canned::new(404),
     });
-    let sites = Sites { hugging_face: s.base.clone(), civitai: s.base.clone() };
+    let sites = Sites::on_this_computer(&s.base);
     let addr = parse("https://civitai.com/models/4384").unwrap();
     let err = read(&UreqWeb::new(), &sites, &addr, None, None, None, &[], &is_model).unwrap_err();
     assert!(err.message.contains("no model file"), "{}", err.message);

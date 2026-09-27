@@ -132,7 +132,7 @@ fn world(bytes: Vec<u8>, lfs: bool) -> World {
     *base.lock().unwrap() = server.base.clone();
 
     let tokens = Arc::new(MemoryTokens::default());
-    let sites = Sites { hugging_face: server.base.clone(), civitai: server.base.clone() };
+    let sites = Sites::on_this_computer(&server.base);
     let dl = Arc::new(Downloader::new(Arc::new(UreqWeb::with_idle(Duration::from_secs(1))), sites, tokens.clone()));
     let seen = Arc::new(Mutex::new(Vec::new()));
     dl.set_sink(Arc::new(Seen(seen.clone())));
@@ -751,7 +751,7 @@ fn a_token_is_saved_only_when_the_site_accepts_it() {
     let tokens = Arc::new(MemoryTokens::default());
     let dl = Downloader::new(
         Arc::new(UreqWeb::new()),
-        Sites { hugging_face: s.base.clone(), civitai: s.base.clone() },
+        Sites::on_this_computer(&s.base),
         tokens.clone(),
     );
     let e = dl.set_token(Host::HuggingFace, "bad").unwrap_err();
