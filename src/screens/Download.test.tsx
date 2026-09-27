@@ -90,6 +90,16 @@ describe("pasting an address", () => {
     );
   });
 
+  it("says a key pasted in an address belongs in Settings, and never shows it on a card", async () => {
+    await mount();
+    await read("https://civitai.com/api/download/models/654321?token=abc123secret");
+    expect(text()).toContain(
+      "This address holds your key. ComfyVault does not keep it with the address. Save the key in Settings instead",
+    );
+    expect(document.querySelector(".plan-card")!.textContent).not.toContain("abc123secret");
+    expect(document.querySelector(".plan-card")!.innerHTML).not.toContain("abc123secret");
+  });
+
   it("reads at once when an address is pasted, and on Enter", async () => {
     const { app } = await mount();
     field().focus();

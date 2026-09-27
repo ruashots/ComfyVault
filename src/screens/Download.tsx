@@ -4,6 +4,7 @@ import { Checkbox } from "~/screens/Consolidate";
 import { Icon } from "~/components/Icon";
 import { EmptyScreen, Header } from "~/components/Shell";
 import {
+  carriesKey,
   cutOffSentence,
   hasRoom,
   hostName,
@@ -156,6 +157,12 @@ function PasteBox() {
             {r().head} <span>{r().next}</span>
           </div>
         )}
+      </Show>
+      <Show when={carriesKey(card.address)}>
+        <div class="paste-help">
+          This address holds your key. ComfyVault does not keep it with the address.
+          Save the key in <b>Settings</b> instead, so every model that needs it can use it.
+        </div>
       </Show>
       <Show when={card.failure}>
         {(message) => (

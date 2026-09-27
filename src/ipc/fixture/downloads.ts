@@ -478,7 +478,7 @@ export class DownloadDesk {
     if (model.needsLogin) {
       const token = this.tokens.civitai;
       if (!token) {
-        return refused(refuse("tokenMissing", "civitai", CIVITAI_LOGIN, null, model.name, args.address.trim()));
+        return refused(refuse("tokenMissing", "civitai", CIVITAI_LOGIN, null, model.name, `https://civitai.com/models/${model.id}`));
       }
       if (!token.ok) {
         return refused(
@@ -488,7 +488,7 @@ export class DownloadDesk {
             token.message ?? CIVITAI_BAD_TOKEN,
             null,
             model.name,
-            args.address.trim(),
+            `https://civitai.com/models/${model.id}`,
           ),
         );
       }
@@ -499,7 +499,8 @@ export class DownloadDesk {
         {
           host: "civitai",
           title: model.name,
-          subtitle: args.address.trim(),
+          // The model's own page, rebuilt: never the pasted text, which can hold a key.
+          subtitle: `https://civitai.com/models/${model.id}`,
           versions: model.versions.map((v) => ({ id: v.id, name: v.name })),
           versionId: version.id,
           files: version.files.map((f) => ({
@@ -699,7 +700,8 @@ export class DownloadDesk {
       downloadId: `download-${++this.seq}`,
       host: plan.host,
       title: plan.title,
-      address: args.address.trim(),
+      // Kept without any key the pasted text carried, as the engine keeps it.
+      address: args.address.trim().replace(/([?&])token=[^&#]*&?/i, "$1").replace(/[?&]$/, ""),
       versionId: plan.versionId,
       fileId: plan.fileId,
       fileName: plan.fileName,

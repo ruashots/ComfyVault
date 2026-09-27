@@ -42,8 +42,9 @@ export function refusedHead(
   address: string,
 ): { title: string; subtitle: string | null } {
   if (refusal.title) return { title: refusal.title, subtitle: refusal.subtitle };
+  // Never the query: a Civitai address can carry the person's key there.
+  const path = address.trim().split(/[?#]/)[0]!;
   if (refusal.page) {
-    const path = address.trim().split(/[?#]/)[0]!;
     const last = path.split("/").filter(Boolean).pop() ?? path;
     let title = last;
     try {
@@ -53,7 +54,12 @@ export function refusedHead(
     }
     return { title, subtitle: `${refusal.page.owner}/${refusal.page.repo}` };
   }
-  return { title: address.trim(), subtitle: null };
+  return { title: path, subtitle: null };
+}
+
+/** The pasted text carries a key, which belongs in Settings, not in an address. */
+export function carriesKey(address: string): boolean {
+  return /[?&#]token=/i.test(address);
 }
 
 /** "ComfyUI-Easy-Install and ComfyUI-Flux", by the name each install is shown under. */
@@ -155,7 +161,9 @@ export function rowView(
     case "failed": {
       const error = r.error;
       const actions: RowAction[] = ["continue", "discard"];
-      if (!error || error.kind === "connection") {
+      // A dropped line is said with where it got to. Any other connection
+      // trouble, a compressed file or an untrusted address, in the engine's words.
+      if (!error || (error.kind === "connection" && /^The connection to .+ dropped\./.test(error.message))) {
         return {
           parts: [
             { text: `The connection to ${host} dropped at ${at}.`, tone: "bad" },
@@ -193,6 +201,14 @@ export function rowView(
       };
     }
     case "mismatch":
+      // A file of the wrong size is said in the engine's own sentence.
+      if (r.error && !r.error.message.startsWith("The downloaded file did not match")) {
+        return {
+          parts: [{ text: r.error.message, tone: "bad" }],
+          bar: null,
+          actions: ["again", "remove"],
+        };
+      }
       return {
         parts: [
           {

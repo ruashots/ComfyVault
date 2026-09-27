@@ -9,6 +9,7 @@ import {
   linkHint,
   listCount,
   listOrder,
+  carriesKey,
   refusedHead,
   rowView,
   speedOf,
@@ -103,7 +104,12 @@ describe("what a row of the Downloads list says", () => {
     expect(say(record({ state: "stopped" }))).toBe(
       "Stopped at 6.2 GB of 16 GB. The part already downloaded is kept, so it can continue from there.",
     );
-    const dropped = record({ state: "failed", error: { kind: "connection", message: "The connection dropped.", serviceMessage: null, detail: null } });
+    const dropped = record({ state: "failed", error: {
+        kind: "connection",
+        message: "The connection to Hugging Face dropped. The part already downloaded is kept.",
+        serviceMessage: null,
+        detail: null,
+      } });
     expect(say(dropped)).toBe(
       "The connection to Hugging Face dropped at 6.2 GB of 16 GB. The part already downloaded is kept.",
     );
@@ -140,6 +146,44 @@ describe("what a row of the Downloads list says", () => {
     });
     expect(say(r)).toBe(
       "Drive C: ran out of space at 6.2 GB of 16 GB. The part already downloaded is kept. Free some space, then continue.",
+    );
+  });
+
+  it("says a file of the wrong size, and a compressed or untrusted answer, in the engine's words", () => {
+    const larger = record({
+      state: "mismatch",
+      host: "civitai",
+      error: {
+        kind: "mismatch",
+        message:
+          "The download was larger than the size Civitai gave, so it was stopped and deleted. Nothing went into the vault and nothing was linked.",
+        serviceMessage: null,
+        detail: null,
+      },
+    });
+    expect(say(larger)).toBe(larger.error!.message);
+    const compressed = record({
+      state: "failed",
+      error: {
+        kind: "connection",
+        message: "Hugging Face sent the file compressed, which ComfyVault does not accept. Nothing was written.",
+        serviceMessage: null,
+        detail: null,
+      },
+    });
+    expect(say(compressed)).toBe(compressed.error!.message);
+    // The plain drop still says where it got to.
+    const dropped = record({
+      state: "failed",
+      error: {
+        kind: "connection",
+        message: "The connection to Hugging Face dropped. The part already downloaded is kept.",
+        serviceMessage: null,
+        detail: null,
+      },
+    });
+    expect(say(dropped)).toBe(
+      "The connection to Hugging Face dropped at 6.2 GB of 16 GB. The part already downloaded is kept.",
     );
   });
 
@@ -232,6 +276,18 @@ describe("the head of a refused card", () => {
     expect(
       refusedHead({ ...refusal, title: "Studio Portrait XL", subtitle: "https://civitai.com/models/123456" }, "x"),
     ).toEqual({ title: "Studio Portrait XL", subtitle: "https://civitai.com/models/123456" });
+  });
+
+  it("never shows the query of an address, where a key can sit", () => {
+    const civitai = { ...refusal, host: "civitai" as const, page: null };
+    const pasted = "https://civitai.com/api/download/models/128713?token=abc123secret";
+    expect(refusedHead(civitai, pasted)).toEqual({
+      title: "https://civitai.com/api/download/models/128713",
+      subtitle: null,
+    });
+    expect(JSON.stringify(refusedHead(civitai, pasted))).not.toContain("abc123secret");
+    expect(carriesKey(pasted)).toBe(true);
+    expect(carriesKey("https://civitai.com/models/4384?modelVersionId=128713")).toBe(false);
   });
 
   it("falls back to the address when the site said nothing", () => {
