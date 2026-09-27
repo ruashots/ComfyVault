@@ -126,12 +126,12 @@ describe("a run that cannot be undone any more", () => {
     await finish(h);
     expect(app.lastApply()!.revertible).toBe(true);
 
-    // The person renamed a file this run put in the vault.
+    // The person gave a file this run put in the vault another of its names.
     const moved = app.lastApply()!;
     const renamed = (
       await engine.listVaultFiles({ offset: 0, limit: 400 })
-    ).files.find((f) => f.addedAt >= moved.startedAt)!;
-    await engine.setCanonicalName(renamed.sha256, "renamed-by-hand.safetensors");
+    ).files.find((f) => f.addedAt >= moved.startedAt && f.aliases.length > 0)!;
+    await engine.setCanonicalName(renamed.sha256, renamed.aliases[0]!);
 
     await userEvent.click(screen.getByRole("button", { name: /Undo this run/ }));
 
@@ -144,7 +144,7 @@ describe("a run that cannot be undone any more", () => {
     // The paths, so the person knows what to undo first.
     const paths = dialog.querySelectorAll(".paths li");
     expect(paths.length).toBeGreaterThan(0);
-    expect(paths[0]!.textContent).toContain("renamed-by-hand.safetensors");
+    expect(paths[0]!.textContent).toContain(renamed.aliases[0]!);
     // And the run is still there to undo once they have.
     expect(app.lastApply()!.revertible).toBe(true);
     expect(app.lastApply()!.state).not.toBe("reverted");

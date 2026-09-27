@@ -1563,7 +1563,12 @@ export class FixtureEngine implements Engine {
       this.renamedSinceApply.add(sha256);
     }
     const names = [entry.canonicalName, ...entry.aliases];
-    if (!names.includes(name)) names.push(name);
+    if (!names.includes(name)) {
+      throw error(
+        "invalidArgument",
+        "That name does not belong to this model. Choose one of the names it already has.",
+      );
+    }
     entry.canonicalName = name;
     entry.aliases = names.filter((n) => n !== name);
     const file = vaultFilesOf(this.world, this.metadataCache).find((f) => f.sha256 === sha256);
