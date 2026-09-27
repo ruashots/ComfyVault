@@ -305,6 +305,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_download_trusts_the_certificates_the_system_trusts() {
+        let w = UreqWeb::new();
+        let roots = w.agent.config().tls_config().root_certs();
+        assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier), "{roots:?}");
+    }
+
+    #[test]
     fn a_request_never_prints_its_token_or_a_signature() {
         let r = Request::get("https://cas.example/x?X-Amz-Signature=abc").bearer(Some("hf_secret"));
         let shown = format!("{r:?}");

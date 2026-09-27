@@ -61,6 +61,10 @@ impl UreqTransport {
             .tls_config(
                 ureq::tls::TlsConfig::builder()
                     .provider(ureq::tls::TlsProvider::NativeTls)
+                    // Without this, ureq checks against its own copy of
+                    // Mozilla's list even with the system's TLS, and the
+                    // certificate store Windows trusts is never read.
+                    .root_certs(ureq::tls::RootCerts::PlatformVerifier)
                     .build(),
             )
             .timeout_global(Some(TIMEOUT))
@@ -120,6 +124,33 @@ impl HttpTransport for UreqTransport {
             }),
             Err(e) => Err(offline(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod trust {
+    #[test]
+    fn the_lookup_trusts_the_certificates_the_system_trusts() {
+        // A company proxy, or a certificate authority a person installed,
+        // is in the system's store and nowhere else.
+        let t = super::UreqTransport::new();
+        let roots = t.agent.config().tls_config().root_certs();
+        assert!(matches!(roots, ureq::tls::RootCerts::PlatformVerifier), "{roots:?}");
+    }
+
+    /// A real lookup of a small public model, so it runs only when asked:
+    /// `--ignored`.
+    #[test]
+    #[ignore]
+    fn a_real_lookup_finds_a_public_model() {
+        use crate::metadata::MetadataSource;
+        let t = super::UreqTransport::new();
+        let m = crate::metadata::civitai::CivitaiClient::new(&t)
+            .fetch_one("C74B4E810B030F6B75FDE959E2DB678C268D07115B85356D3C0138BA5EB42340")
+            .expect("Civitai answered");
+        println!("{:?} {:?}", m.model_name, m.version_name);
+        assert!(m.found);
+        assert_eq!(m.model_name.as_deref(), Some("EasyNegative"));
     }
 }
 
