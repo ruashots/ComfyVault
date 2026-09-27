@@ -157,7 +157,7 @@ describe("reviewing the name change", () => {
     await engine.createLink({ installId: "studio", sha256: group.sha256, relativeDir: "models\\clip", linkName: ENC });
     // And in Sandbox, some other file already has the picked name.
     const plan = await engine.planUnifyName(group.sha256, SCALED);
-    const sandbox = plan.steps.find((s) => s.installId === "sandbox")!;
+    const sandbox = plan.links.find((s) => s.installId === "sandbox")!;
     engine.devTakePath(sandbox.newAbsPath!);
     await harness!.app.actions.refresh();
 

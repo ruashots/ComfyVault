@@ -10,7 +10,7 @@ import {
   unifyViewOf,
   usedByLine,
 } from "~/domain/names";
-import type { NameGroup, UnifyPlan, UnifyStep, UsageResult } from "~/ipc/contract";
+import type { NameGroup, UnifyPlan, UnifyLink, UsageResult } from "~/ipc/contract";
 
 const CONV = "example_upscaler_v1_fp16.safetensors";
 const FP16 = "example_upscaler_fp16.safetensors";
@@ -75,7 +75,7 @@ describe("which models get a card", () => {
   });
 });
 
-const step = (installId: string, linkName: string, action: UnifyStep["action"]): UnifyStep => ({
+const step = (installId: string, linkName: string, action: UnifyLink["action"]): UnifyLink => ({
   installId,
   absPath: `C:\\${installId}\\models\\${linkName}`,
   linkName,
@@ -97,8 +97,8 @@ const usage = (name: string, matches: [string, string][], searched = true): Usag
   method: searched ? "Searched the saved workflows." : "There were no saved workflow files to search.",
 });
 
-function plan(steps: UnifyStep[], workflows: UsageResult[], running: string[] = []): UnifyPlan {
-  return { sha256: SHA, name: CONV, steps, running, workflows };
+function plan(links: UnifyLink[], workflows: UsageResult[], running: string[] = []): UnifyPlan {
+  return { sha256: SHA, name: CONV, links, running, workflows };
 }
 
 describe("what the dialog says", () => {
@@ -170,11 +170,17 @@ describe("what the dialog says", () => {
 });
 
 describe("Cleanup's line once the name changed", () => {
-  const renamed = step("normal", FP16, "rename");
+  const renamed = { installId: "normal", from: `C:\\normal\\${FP16}`, to: `C:\\normal\\${CONV}` };
   it("says both installs when both changed", () => {
     expect(
       unifyResultLine(
-        { renamed: [renamed], removed: [step("prod", FP16, "remove")], skipped: [], stopped: null },
+        {
+          unifyId: "u1",
+          renamed: [renamed],
+          removed: [{ installId: "prod", path: `C:\\prod\\${FP16}` }],
+          skipped: [],
+          stopped: null,
+        },
         installs,
       ),
     ).toBe("Name changed in both installs.");
@@ -184,9 +190,10 @@ describe("Cleanup's line once the name changed", () => {
     expect(
       unifyResultLine(
         {
+          unifyId: "u1",
           renamed: [renamed],
           removed: [],
-          skipped: [{ step: step("prod", FP16, "blockedTaken"), reason: "taken" }],
+          skipped: [{ installId: "prod", path: `C:\\prod\\${FP16}`, reason: "taken" }],
           stopped: null,
         },
         installs,

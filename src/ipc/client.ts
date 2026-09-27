@@ -54,10 +54,10 @@ export async function createEngine(): Promise<Engine> {
       if (!group) return;
       const [picked, other] = group.names;
       const plan = await engine.planUnifyName(group.sha256, picked!.name);
-      const moving = plan.steps.find((s) => s.action === "rename");
+      const moving = plan.links.find((s) => s.action === "rename");
       if (!moving) return;
       await engine.createLink({
-        installId: plan.steps.find((s) => s.action === "keep")!.installId,
+        installId: plan.links.find((s) => s.action === "keep")!.installId,
         sha256: group.sha256,
         relativeDir: "models\\clip",
         linkName: other!.name,

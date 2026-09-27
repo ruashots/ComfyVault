@@ -160,8 +160,8 @@ export function createTauriEngine(): Engine {
     listNameGroups: () => callNoArgs<NameGroup[]>("list_name_groups"),
     planUnifyName: (sha256, name) => call<UnifyPlan>("plan_unify_name", { sha256, name }),
     unifyName: (sha256, name) => call<UnifyResult>("unify_name", { sha256, name }),
-    listHiddenNameCards: () => callNoArgs<HiddenNameCard[]>("list_hidden_name_cards"),
-    setHiddenNameCards: (cards) => call<void>("set_hidden_name_cards", { cards }),
+    getHiddenNameCards: () => callNoArgs<HiddenNameCard[]>("get_hidden_name_cards"),
+    setHiddenNameCards: (cards) => call<HiddenNameCard[]>("set_hidden_name_cards", { cards }),
     listOrphans: () => callNoArgs<VaultFile[]>("list_orphans"),
     deleteVaultFile: (sha256, confirm, removeLinks) =>
       call<Deleted>(

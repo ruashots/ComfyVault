@@ -49,7 +49,7 @@ import type {
   VaultError,
   UnifyPlan,
   UnifyResult,
-  UnifyStep,
+  UnifyLink,
   VaultFile,
   VaultFilePage,
   VaultHealth,
@@ -274,6 +274,7 @@ export class FixtureEngine implements Engine {
   private takenPaths = new Set<string>();
   /** The name cards the person kept as they are. Kept in the app config. */
   private hiddenNameCards: HiddenNameCard[] = [];
+  private unifyCount = 0;
   /** Paths of models this run put in the vault that Cleanup deleted since. */
   private deletedSinceApply: string[] = [];
   /** Links a delete removed before it was cut off, by the model's SHA-256. */
@@ -1565,13 +1566,13 @@ export class FixtureEngine implements Engine {
 
   async planUnifyName(sha256: string, name: string): Promise<UnifyPlan> {
     this.requireVault();
-    const steps = this.unifySteps(sha256, name);
-    const affected = [...new Set(steps.map((s) => s.installId))];
-    const goingAway = [...new Set(steps.map((s) => s.linkName).filter((n) => !sameName(n, name)))];
+    const links = this.unifySteps(sha256, name);
+    const affected = [...new Set(links.map((s) => s.installId))];
+    const goingAway = [...new Set(links.map((s) => s.linkName).filter((n) => !sameName(n, name)))];
     return {
       sha256,
       name,
-      steps,
+      links,
       running: affected.filter((id) => this.world.running.includes(id)),
       workflows: await this.checkModelUsage(goingAway),
     };
@@ -1589,19 +1590,29 @@ export class FixtureEngine implements Engine {
         `Close ${running.map((id) => this.world.installs.find((i) => i.id === id)?.label ?? id).join(" and ")} first`,
       );
     }
-    const result: UnifyResult = { renamed: [], removed: [], skipped: [], stopped: null };
+    const result: UnifyResult = {
+      unifyId: `unify-${++this.unifyCount}`,
+      renamed: [],
+      removed: [],
+      skipped: [],
+      stopped: null,
+    };
     for (const step of steps) {
       const link = this.world.links.find((l) => l.absPath === step.absPath)!;
       if (step.action === "rename") {
         link.absPath = step.newAbsPath!;
         link.relPath = `${link.relPath.slice(0, link.relPath.lastIndexOf("\\") + 1)}${name}`;
         link.linkName = name;
-        result.renamed.push(step);
+        result.renamed.push({ installId: step.installId, from: step.absPath, to: step.newAbsPath! });
       } else if (step.action === "remove") {
         this.world.links = this.world.links.filter((l) => l !== link);
-        result.removed.push(step);
+        result.removed.push({ installId: step.installId, path: step.absPath });
       } else if (step.action === "blockedTaken") {
-        result.skipped.push({ step, reason: `${step.takenBy} already has that name.` });
+        result.skipped.push({
+          installId: step.installId,
+          path: step.absPath,
+          reason: `${step.takenBy} already has that name.`,
+        });
       }
     }
     const entry = this.world.vault.get(sha256)!;
@@ -1618,7 +1629,7 @@ export class FixtureEngine implements Engine {
   }
 
   /** What giving the model this name does to each of its links, as the engine plans it. */
-  private unifySteps(sha256: string, name: string): UnifyStep[] {
+  private unifySteps(sha256: string, name: string): UnifyLink[] {
     if (!this.world.vault.has(sha256)) {
       throw error("notFound", "The vault does not hold that file.");
     }
@@ -1643,12 +1654,13 @@ export class FixtureEngine implements Engine {
     });
   }
 
-  async listHiddenNameCards(): Promise<HiddenNameCard[]> {
+  async getHiddenNameCards(): Promise<HiddenNameCard[]> {
     return this.hiddenNameCards.map((c) => ({ ...c, names: [...c.names] }));
   }
 
-  async setHiddenNameCards(cards: HiddenNameCard[]): Promise<void> {
-    this.hiddenNameCards = cards.map((c) => ({ sha256: c.sha256, names: [...c.names].sort() }));
+  async setHiddenNameCards(cards: HiddenNameCard[]): Promise<HiddenNameCard[]> {
+    this.hiddenNameCards = cards.map((c) => ({ sha256: c.sha256, names: [...new Set(c.names)].sort() }));
+    return this.getHiddenNameCards();
   }
 
   async listOrphans(): Promise<VaultFile[]> {

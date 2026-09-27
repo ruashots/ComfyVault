@@ -771,7 +771,7 @@ export type UnifyAction =
   /** Something else already has the name at that place, so the link stays. */
   | "blockedTaken";
 
-export interface UnifyStep {
+export interface UnifyLink {
   installId: string;
   absPath: string;
   linkName: string;
@@ -785,7 +785,7 @@ export interface UnifyStep {
 export interface UnifyPlan {
   sha256: string;
   name: string;
-  steps: UnifyStep[];
+  links: UnifyLink[];
   /** Installs on the list whose ComfyUI is running. */
   running: string[];
   /** The usage search for each name that goes away. */
@@ -793,9 +793,11 @@ export interface UnifyPlan {
 }
 
 export interface UnifyResult {
-  renamed: UnifyStep[];
-  removed: UnifyStep[];
-  skipped: { step: UnifyStep; reason: string }[];
+  /** The journal entry, for an undo. */
+  unifyId: string;
+  renamed: { installId: string; from: string; to: string }[];
+  removed: { installId: string; path: string }[];
+  skipped: { installId: string; path: string; reason: string }[];
   /** Windows would not let a link go, so the job stopped there. */
   stopped: { installId: string; path: string; message: string } | null;
 }
@@ -1259,9 +1261,9 @@ export interface Engine {
   planUnifyName(sha256: string, name: string): Promise<UnifyPlan>;
   /** Gives the model this name in every install and in the vault. */
   unifyName(sha256: string, name: string): Promise<UnifyResult>;
-  listHiddenNameCards(): Promise<HiddenNameCard[]>;
-  /** Replaces the whole list. */
-  setHiddenNameCards(cards: HiddenNameCard[]): Promise<void>;
+  getHiddenNameCards(): Promise<HiddenNameCard[]>;
+  /** Replaces the whole list, and returns it as stored. */
+  setHiddenNameCards(cards: HiddenNameCard[]): Promise<HiddenNameCard[]>;
   listOrphans(): Promise<VaultFile[]>;
   /**
    * With `removeLinks`, every link to the file in every install goes too, all

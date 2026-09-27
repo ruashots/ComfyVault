@@ -752,7 +752,7 @@ export function createAppStore(engine: Engine): AppStore {
           { total: 0, offset: 0, rows: [] as ContentRow[], scanId: null },
         ),
         orNotYet(engine.listDownloads(), [] as Download[]),
-        orNotYet(engine.listHiddenNameCards(), [] as HiddenNameCard[]),
+        orNotYet(engine.getHiddenNameCards(), [] as HiddenNameCard[]),
       ]);
 
       batch(() => {

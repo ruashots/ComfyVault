@@ -138,15 +138,15 @@ export function unifyViewOf(plan: UnifyPlan, installs: readonly Nameable[]): Uni
     };
   }
 
-  const all = distinct(plan.steps.map((s) => s.installId));
+  const all = distinct(plan.links.map((s) => s.installId));
   const changingIds = distinct(
-    plan.steps.filter((s) => s.action === "rename" || s.action === "remove").map((s) => s.installId),
+    plan.links.filter((s) => s.action === "rename" || s.action === "remove").map((s) => s.installId),
   );
   const takenIds = distinct(
-    plan.steps.filter((s) => s.action === "blockedTaken").map((s) => s.installId),
+    plan.links.filter((s) => s.action === "blockedTaken").map((s) => s.installId),
   );
   const goingAway = distinct(
-    plan.steps.filter((s) => s.linkName !== plan.name).map((s) => s.linkName),
+    plan.links.filter((s) => s.linkName !== plan.name).map((s) => s.linkName),
   );
 
   const results = plan.workflows.filter((w) => goingAway.includes(w.name));
@@ -213,7 +213,7 @@ export function takenLines(taken: readonly string[]): [string, string] {
 export function unifyResultLine(result: UnifyResult, installs: readonly Nameable[]): string {
   const nameOf = (id: string) => installNameOf(id, installs);
   const changed = distinct([...result.renamed, ...result.removed].map((s) => s.installId));
-  const kept = distinct(result.skipped.map((s) => s.step.installId)).filter(
+  const kept = distinct(result.skipped.map((s) => s.installId)).filter(
     (id) => !changed.includes(id),
   );
   if (kept.length > 0) {
