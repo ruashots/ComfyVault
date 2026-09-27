@@ -128,6 +128,45 @@ describe("the Cleanup sections, after a run", () => {
     expect(file.canonicalName).toBe(other.name);
   });
 
+  it("keeps each name's words true after another name is chosen", async () => {
+    const { app } = await afterARun();
+    await waitFor(() => app.nameGroups().length > 0);
+    const group = app.nameGroups()[0]!;
+    const before = group.canonicalName;
+    const other = group.names.find((n) => !n.isCanonical)!.name;
+    const card = () =>
+      [...document.querySelectorAll(".cgrp")].find((c) => c.textContent!.includes(before))!;
+    const rowOf = (name: string) =>
+      [...card().querySelectorAll(".optrow")].find(
+        (r) => r.querySelector(".nm")!.getAttribute("title") === name,
+      )!;
+    const words = (name: string) => rowOf(name).querySelector(".rs")!.textContent!;
+    const usedBy = (name: string) => words(name).replace(/^The vault [^.]+\. /, "");
+    const suggested = () =>
+      [...card().querySelectorAll(".optrow")]
+        .filter((r) => r.querySelector(".tag") !== null)
+        .map((r) => r.querySelector(".nm")!.getAttribute("title"));
+    const reasons = () => [...card().querySelectorAll(".why")].map((w) => w.textContent);
+    const usersBefore = { [before]: usedBy(before), [other]: usedBy(other) };
+    const suggestedBefore = suggested();
+    const reasonsBefore = reasons();
+
+    await userEvent.click(rowOf(other).querySelector('[role="radio"]')!);
+    await waitFor(() =>
+      expect(app.nameGroups().find((g) => g.sha256 === group.sha256)!.canonicalName).toBe(other),
+    );
+
+    expect(words(other)).toBe(`The vault file has this name now. ${usersBefore[other]}`);
+    expect(words(before)).toBe(
+      `The vault keeps this name as a link beside the file. ${usersBefore[before]}`,
+    );
+    // Choosing moves the vault's name, not the installs' links, so the
+    // suggestion and the reason for it stay as they were.
+    expect(suggested()).toEqual(suggestedBefore);
+    expect(reasons()).toEqual(reasonsBefore);
+    expect(card().textContent).not.toContain("a name you typed");
+  });
+
   it("says a vault file nothing links to will be freed, not that it comes back", async () => {
     const { app } = await afterARun();
     await waitFor(() => app.orphans().length > 0);
