@@ -32,9 +32,11 @@ could not settle by itself:
 
 - **One model under more than one name.** The same file came in as, for
   example, `style.safetensors` in one install and `style_v2.safetensors` in
-  another. Pick the name to keep. The other names stay as links, so saved
-  workflows still open, and ComfyUI's model list shows one entry for the model
-  instead of two.
+  another. The run already stored it in the vault under one of those names:
+  the name of the copy it moved in. Your installs are not renamed: each one
+  keeps its own file name, as a link to that vault file. Cleanup shows both
+  names side by side, and you pick the name the vault keeps. The other name
+  stays as a link, so saved workflows still open.
 - **Vault files that nothing links to.** Delete these to free their space.
 - **Links that point at a missing file.** Remove them.
 
@@ -140,7 +142,9 @@ the check that tells you the build is good, are in
    anything you want left alone.
 
 5. **Apply.** ComfyVault moves the files, makes the links, and deletes the
-   duplicate copies. You can press **Stop now** at any time. Each model is done
+   duplicate copies. A model that sits under different names in different
+   installs goes into the vault under the name of the copy it moves in. Every
+   install keeps its own name for it, as a link. You can press **Stop now** at any time. Each model is done
    completely or not at all, and each path always holds its own file or a
    working link, so every model keeps loading in ComfyUI during the run.
 
@@ -253,9 +257,10 @@ can also link the model into an install, in the folder you pick.
 with its undo.
 
 **Cleanup** handles what goes wrong later. Links that point at a missing file
-come first, and you can remove them. A file that arrived under two names can
-keep the name you pick, and the other name stays as a link so saved workflows
-still open. Vault files that nothing points at come next. Last, you can
+come first, and you can remove them. A file that arrived under two names is
+already in the vault under one of them, the name of the copy the run moved in.
+Cleanup shows both names, and you pick the one the vault keeps. The other name
+stays as a link so saved workflows still open. Vault files that nothing points at come next. Last, you can
 delete a model the installs still use: the same delete removes every link to
 it, in every install, and it cannot be undone.
 
