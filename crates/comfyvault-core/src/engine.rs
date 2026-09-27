@@ -335,6 +335,20 @@ impl Engine {
         self.downloads.list(&self.open_context()?)
     }
 
+    /// The lock for a command that makes or removes a link or a vault name,
+    /// refused straight away while a consolidation or an undo runs.
+    ///
+    /// Those move model files and make and remove links, and a link made in
+    /// between can be left pointing at a file they are taking away. They hold
+    /// the lock too, so a command that got past this check before one of them
+    /// started finishes first, and the long operation then sees its link.
+    fn link_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        if let Some(op) = self.busy().filter(|op| matches!(op.kind, BusyKind::Apply | BusyKind::Revert)) {
+            return Err(VaultError::busy(op.kind.word()));
+        }
+        self.write_lock()
+    }
+
     /// Waits for any other command that changes links or vault names.
     fn write_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
         self.vault_writes
@@ -924,8 +938,13 @@ impl Engine {
         std::thread::Builder::new()
             .name("comfyvault-apply".into())
             .spawn(move || {
-                let result = Applier::new(&store, engine.platform.as_ref())
-                    .apply(&id, &plan, &req, &cancel, sink.as_ref());
+                // Held for the whole run, as an undo holds it. A link command
+                // that got in first finishes before any file moves.
+                let result = match engine.vault_writes.lock() {
+                    Ok(_writes) => Applier::new(&store, engine.platform.as_ref())
+                        .apply(&id, &plan, &req, &cancel, sink.as_ref()),
+                    Err(_) => Err(poisoned()),
+                };
                 engine.clear_slot();
                 on_done(result);
             })
@@ -1005,8 +1024,10 @@ impl Engine {
         std::thread::Builder::new()
             .name("comfyvault-resume".into())
             .spawn(move || {
-                let result = Applier::new(&store, engine.platform.as_ref())
-                    .resume(&id, &cancel, sink.as_ref());
+                let result = match engine.vault_writes.lock() {
+                    Ok(_writes) => Applier::new(&store, engine.platform.as_ref()).resume(&id, &cancel, sink.as_ref()),
+                    Err(_) => Err(poisoned()),
+                };
                 engine.clear_slot();
                 on_done(result);
             })
@@ -1037,13 +1058,13 @@ impl Engine {
 
     pub fn create_link(&self, req: &CreateLinkRequest) -> Result<LinkRecord> {
         let store = self.store()?;
-        let _writes = self.write_lock()?;
+        let _writes = self.link_lock()?;
         Links::new(&store, self.platform.as_ref()).create(req)
     }
 
     pub fn remove_link(&self, link_id: &str) -> Result<()> {
         let store = self.store()?;
-        let _writes = self.write_lock()?;
+        let _writes = self.link_lock()?;
         Links::new(&store, self.platform.as_ref()).remove(link_id)
     }
 
@@ -1061,7 +1082,7 @@ impl Engine {
     /// Makes one folder the chooser named, inside a root for `category`.
     pub fn make_link_folder(&self, install_id: &str, category: &str, dir: &Path) -> Result<(PathBuf, bool)> {
         let store = self.store()?;
-        let _writes = self.write_lock()?;
+        let _writes = self.link_lock()?;
         Links::new(&store, self.platform.as_ref()).make_link_folder(install_id, category, dir)
     }
 
@@ -1158,7 +1179,7 @@ impl Engine {
 
     pub fn delete_vault_file(&self, sha256: &str, confirm: &str) -> Result<u64> {
         let store = self.store()?;
-        let _writes = self.write_lock()?;
+        let _writes = self.link_lock()?;
         Vault::new(&store, self.platform.as_ref()).delete_file(sha256, confirm)
     }
 
@@ -1195,7 +1216,7 @@ impl Engine {
 
     pub fn remove_dangling_links(&self) -> Result<u64> {
         let store = self.store()?;
-        let _writes = self.write_lock()?;
+        let _writes = self.link_lock()?;
         Vault::new(&store, self.platform.as_ref()).remove_dangling_links()
     }
 

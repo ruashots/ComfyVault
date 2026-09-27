@@ -1548,7 +1548,9 @@ impl ProgressSink<crate::apply::RevertProgress> for HoldingSink {
 }
 
 #[test]
-fn a_library_link_waits_for_an_undo_in_progress() {
+fn a_library_link_is_refused_while_an_undo_runs_and_none_is_left_dead() {
+    // The review's u5, through the front door: a Library link made while an
+    // undo takes the model back out of the vault would point at nothing.
     let f = Fixture::new();
     let (a, _b) = consolidated_under_two_names(&f);
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -1563,28 +1565,47 @@ fn a_library_link_waits_for_an_undo_in_progress() {
         .unwrap();
     started_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the undo started");
 
-    // A link made by hand while the undo is part way.
-    let (linked_tx, linked_rx) = std::sync::mpsc::channel();
+    let req = CreateLinkRequest {
+        install_id: a.id.clone(),
+        sha256: weights_hash("same"),
+        relative_dir: "models/loras/extra".into(),
+        dir: None,
+        link_name: None,
+        create_dir: true,
+    };
+    let (answer_tx, answer_rx) = std::sync::mpsc::channel();
     let engine = Arc::clone(&f.engine);
-    let install = a.id.clone();
     std::thread::spawn(move || {
-        let r = engine.create_link(&CreateLinkRequest {
-            install_id: install,
-            sha256: weights_hash("same"),
-            relative_dir: "models/loras/extra".into(),
-            dir: None,
-            link_name: None,
-            create_dir: true,
-        });
-        linked_tx.send(r.is_ok()).unwrap();
+        let codes = [
+            engine.create_link(&req).err().map(|e| e.code),
+            engine.remove_link("none").err().map(|e| e.code),
+            engine.remove_dangling_links().err().map(|e| e.code),
+        ];
+        let _ = answer_tx.send(codes);
     });
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(linked_rx.try_recv().is_err(), "the link went ahead while the undo held the lock");
+    let codes = answer_rx
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .expect("the link commands were left waiting for the undo instead of being refused");
+    assert_eq!(codes, [Some(ErrorCode::VaultBusy); 3]);
 
     release_tx.send(()).unwrap();
     assert!(done_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(), "the undo finished");
-    // Once the undo is done the model is out of the vault, so the link is
-    // refused cleanly rather than made to a file the undo removed.
-    let linked = linked_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the link call finished");
-    assert!(!linked, "no link to a model the undo took out of the vault");
+    assert!(!a.root.join("models/loras/extra").exists(), "nothing was made in the install");
+}
+
+#[test]
+fn a_link_command_that_started_first_finishes_before_an_undo_moves_anything() {
+    // The other order: the command holds the lock when the undo starts. The
+    // undo waits for it, and then sees its link.
+    let f = Fixture::new();
+    consolidated_under_two_names(&f);
+    let held = f.engine.write_lock().unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    f.engine
+        .start_revert("ap-1".into(), Arc::new(NullSink), Arc::new(move |r| done_tx.send(r.map(|r| r.state)).unwrap()))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(done_rx.try_recv().is_err(), "the undo went ahead while a link command held the lock");
+    drop(held);
+    done_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the undo finished").unwrap();
 }
