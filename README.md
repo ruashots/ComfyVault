@@ -257,10 +257,12 @@ can also link the model into an install, in the folder you pick.
 with its undo.
 
 **Cleanup** handles what goes wrong later. Links that point at a missing file
-come first, and you can remove them. A file that arrived under two names is
-already in the vault under one of them, the name of the copy the run moved in.
-Cleanup shows both names, and you pick the one the vault keeps. The other name
-stays as a link so saved workflows still open. Vault files that nothing points at come next. Last, you can
+come first, and you can remove them. A model your installs call by two names
+gets a card: pick the name to use, and every install's link takes it. Cleanup
+first lists the saved workflows that use the other name, because they show a
+missing model until you pick the new name in them. The change can be undone,
+and a card you hide stays hidden until a new name appears. Vault files that
+nothing points at come next. Last, you can
 delete a model the installs still use: the same delete removes every link to
 it, in every install, and it cannot be undone.
 

@@ -1807,8 +1807,8 @@ names the vault keeps (`aliases`):
   links all carry one name is not in the list, even with `aliases`.
 - A link given its own name, for example with `create_link` and `linkName`,
   adds its name, even though the vault never kept it.
-- Only links that are on the disk and lead somewhere count. A link removed by
-  hand drops out on the next call.
+- Only links that are on the disk and lead somewhere count, in installs still
+  in the list. A link removed by hand drops out on the next call.
 - On Windows, two names that differ only in case are one name. `name` is the
   spelling of the first link, in path order.
 
@@ -2038,6 +2038,172 @@ is open (section 1.5). The list survives a restart and opening another vault.
 `sha256`, and compare `names` with the group's names sorted the same way. When
 a scan or a new link adds a name, the names differ, the card no longer matches,
 and the card shows again. The engine never removes a card from the list.
+
+### 8.11 `plan_unify_name`
+
+What giving a model one name in every install would do. Cleanup's confirm
+dialog reads it. It changes nothing.
+
+Arguments: `{ sha256: string, name: string }`. `name` must be one of the names
+in the model's `NameGroup`. On Windows the case does not matter.
+
+Returns:
+
+```ts
+type UnifyPlan = {
+  sha256: string
+  name: string               // the chosen name, spelled as the links spell it
+  links: UnifyLink[]         // every link of the model, in path order
+  running: string[]          // install ids: links change there and ComfyUI runs
+  workflows: UsageResult[]   // the search for each name that goes away (9.1)
+}
+
+type UnifyLink = {
+  installId: string
+  absPath: string
+  linkName: string
+  action: 'keep' | 'rename' | 'remove' | 'blockedTaken'
+  newAbsPath: string | null  // for 'rename': where the link goes
+  takenBy: string | null     // for 'blockedTaken': what already has the name
+}
+```
+
+- `'keep'`: the link already has the name.
+- `'rename'`: the place for the name, in the same folder, is free.
+- `'remove'`: the same folder already has this model's link under the name, or
+  gets it from an earlier `'rename'` in the list. This link goes.
+- `'blockedTaken'`: something else has the name in that folder: a real file, a
+  link to other content, a folder, or a link to this model that the vault has
+  no record of. The link keeps its name, and nothing is overwritten.
+
+`running` lists only installs whose links change (`'rename'` or `'remove'`).
+While it is not empty, `unify_name` refuses. Show "Close {install} first".
+
+`workflows` holds one `UsageResult` for each name that goes away, which is each
+name carried by a `'rename'` or `'remove'` link. Each match carries its
+`installId`. Drop the matches in installs whose links do not change. The
+search is the same plain-text search as `check_model_usage`, so show `method`
+and read `searched` the same way. The installs searched are the ones with a
+link to the model.
+
+Rejects with `invalidArgument` when `sha256` is not a hash, or when no link of
+the model carries `name`. Rejects with `notFound` when the vault does not hold
+the model. Rejects with `pathOutsideBoundary` when a link record names a place
+outside every install's model folders. That can only come from a vault
+database written somewhere else, and nothing is touched.
+
+### 8.12 `unify_name`
+
+Gives the model the name in every install where that is possible, then in the
+vault. The job is quick: it only makes and removes links.
+
+Arguments: `{ sha256: string, name: string }`, as in 8.11.
+
+Returns:
+
+```ts
+type UnifyResult = {
+  unifyId: string            // what undo_unify_name takes
+  name: string
+  renamed: RenamedLink[]
+  removed: RemovedLink[]
+  skipped: SkippedLink[]     // links that kept their name, and why
+  stopped: UnifyStop | null
+  vaultName: string          // the name the vault keeps the file under now
+}
+
+type RenamedLink = {
+  installId: string
+  from: string
+  to: string
+}
+
+type RemovedLink = {
+  installId: string
+  path: string
+}
+
+type SkippedLink = {
+  installId: string
+  path: string
+  reason: string             // a sentence to show
+}
+
+type UnifyStop = {
+  installId: string | null   // null: it stopped in the vault, after the links
+  path: string
+  message: string            // the engine's sentence, to show as it is
+}
+```
+
+It rejects with `conflict` and the message "Close {install} first" (two
+installs are joined with "and") when ComfyUI runs for an install whose links
+would change. Nothing changes. It rejects with `vaultBusy` while a scan, a
+consolidation or an undo runs. Its other refusals are the ones in 8.11.
+
+**What the job guarantees.**
+
+- **The install never loses the model.** For each rename, the new link is made
+  before the old one is removed. At every instant the install has a link that
+  loads the model.
+- **Nothing is overwritten.** Each place is looked at again just before the
+  job uses it. A place that something took since the plan was read is left
+  alone, and that link is in `skipped`. The other links still change.
+- **If Windows refuses to remove an old link,** for example because a program
+  holds it, the job stops there. The new link stays, so the model loads under
+  both names, and `stopped` names the install and the path. Nothing after that
+  link changes, and the vault keeps its names. Call `unify_name` again to
+  finish, and the plan then shows `'remove'` for the old link. Or call
+  `undo_unify_name`.
+- **The vault last.** When every link is done, the vault file takes the name
+  and each second name that no link uses any more is removed. If another model
+  or another file already has that name in the vault, the vault keeps its name.
+  That is not a failure, and `vaultName` says which name it kept. If renaming
+  the vault file fails, `stopped` has `installId: null`, and the links keep
+  their new names.
+- **Crash safe.** Every step is journaled before it touches the disk. After a
+  crash, the next `select_vault` finishes the steps that reached the disk: a
+  new link gets its record, and an old link that is gone loses its record. A
+  step that never reached the disk is marked failed, which leaves the model
+  loading under both names.
+
+Every link made by the job has `createdBy: 'manual'` and `applyId` set to the
+`unifyId`.
+
+**The card after the job.** When every link carries the name, the model leaves
+`list_name_groups`. When a link was skipped or the job stopped, the model stays
+in the list with the names still in use.
+
+### 8.13 `undo_unify_name`
+
+Puts back every old name a `unify_name` job removed, and removes the links it
+made.
+
+Arguments: `{ unifyId: string }`. Returns `{ undone: true }`.
+
+```ts
+type UnifyUndone = {
+  undone: boolean
+}
+```
+
+- It works on a finished job and on a stopped one, also after a restart. A
+  second undo of the same job does nothing and answers `{ undone: true }`.
+- Each old link comes back with its own record, as it was before the job, and
+  points at the file under the name the vault keeps now. **The vault keeps its
+  new name**, and the second names removed from the vault stay removed. Every
+  old link loads the model, so nothing needs them.
+- A link the job made is removed only while it is still the job's own link to
+  the model. A file or a link someone put in its place stays.
+- Everything is checked before anything changes. It rejects with `conflict`,
+  and changes nothing, when anything now has an old name's place. `detail`
+  lists the paths. It rejects with `conflict` when the vault no longer holds
+  the model, because a link put back would lead nowhere.
+- It rejects with `notFound` for an id the vault has no record of, and with
+  `vaultBusy` while a long operation runs.
+
+Undoing the consolidation that made the links waits for the name change: undo
+the name change first. `revert_apply` refuses with `conflict` until then.
 
 ## 9. Is a model used
 
@@ -2418,6 +2584,9 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `check_vault_health` | 8.9 |
 | `get_hidden_name_cards` | 8.10 |
 | `set_hidden_name_cards` | 8.10 |
+| `plan_unify_name` | 8.11 |
+| `unify_name` | 8.12 |
+| `undo_unify_name` | 8.13 |
 | `check_model_usage` | 9.1 |
 | `get_metadata` | 10.1 |
 | `fetch_metadata_batch` | 10.2 |

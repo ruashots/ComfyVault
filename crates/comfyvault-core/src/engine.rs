@@ -438,6 +438,7 @@ impl Engine {
         }
         self.downloads.on_open(&self.context(&store))?;
         Links::new(&store, self.platform.as_ref()).finish_interrupted()?;
+        crate::unify::Unify::new(&store, self.platform.as_ref()).finish_interrupted()?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
         self.change_config(|c| c.vault_root = Some(PathBuf::from(&info.root)))?;
@@ -1112,6 +1113,45 @@ impl Engine {
         let store = self.store()?;
         let _writes = self.write_lock()?;
         Vault::new(&store, self.platform.as_ref()).remove_alias(sha256, name)
+    }
+
+    /// What giving a model one name in every install would do. Reads only.
+    pub fn plan_unify_name(&self, sha256: &str, name: &str) -> Result<crate::unify::UnifyPlan> {
+        let store = self.store()?;
+        crate::unify::Unify::new(&store, self.platform.as_ref()).plan(sha256, name)
+    }
+
+    /// Gives a model one name in every install.
+    ///
+    /// Holds the long-operation slot and the lock on link changes for the
+    /// whole job, as a delete does: an apply or a link made in between could
+    /// land on a place the job has just checked. The job only makes and
+    /// removes links, so the wait is short.
+    pub fn unify_name(&self, sha256: &str, name: &str) -> Result<crate::unify::UnifyResult> {
+        let store = self.store()?;
+        let slot = self.busy.lock().map_err(|_| poisoned())?;
+        if let Some((op, _)) = slot.as_ref() {
+            return Err(VaultError::busy(op.kind.word()));
+        }
+        let writes = self.write_lock()?;
+        let out = crate::unify::Unify::new(&store, self.platform.as_ref()).unify(sha256, name);
+        drop(writes);
+        drop(slot);
+        out
+    }
+
+    /// Puts back the old names a `unify_name` job removed.
+    pub fn undo_unify_name(&self, unify_id: &str) -> Result<crate::unify::UnifyUndone> {
+        let store = self.store()?;
+        let slot = self.busy.lock().map_err(|_| poisoned())?;
+        if let Some((op, _)) = slot.as_ref() {
+            return Err(VaultError::busy(op.kind.word()));
+        }
+        let writes = self.write_lock()?;
+        let out = crate::unify::Unify::new(&store, self.platform.as_ref()).undo(unify_id);
+        drop(writes);
+        drop(slot);
+        out
     }
 
     pub fn orphans(&self) -> Result<Vec<VaultFile>> {

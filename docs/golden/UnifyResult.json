@@ -1,0 +1,30 @@
+{
+  "name": "detail-tweaker.safetensors",
+  "removed": [
+    {
+      "installId": "inst-1",
+      "path": "C:\\ComfyUI-Main\\models\\loras\\old\\detail_tweaker_xl.safetensors"
+    }
+  ],
+  "renamed": [
+    {
+      "from": "C:\\ComfyUI-Test\\models\\loras\\detail_tweaker_xl.safetensors",
+      "installId": "inst-2",
+      "to": "C:\\ComfyUI-Test\\models\\loras\\detail-tweaker.safetensors"
+    }
+  ],
+  "skipped": [
+    {
+      "installId": "inst-2",
+      "path": "C:\\ComfyUI-Test\\models\\loras\\sdxl\\detail_tweaker_xl.safetensors",
+      "reason": "Another file already has that name in this folder, so this link kept its name."
+    }
+  ],
+  "stopped": {
+    "installId": "inst-3",
+    "message": "Another program has this file open, so removing the link was stopped. ComfyUI keeps a model open while it is loaded. Close it and try again.",
+    "path": "C:\\ComfyUI-Old\\models\\loras\\detail_tweaker_xl.safetensors"
+  },
+  "unifyId": "unify-5b1f0c2e9d7a4c33a1e0f6b2c8d94e17",
+  "vaultName": "detail-tweaker.safetensors"
+}

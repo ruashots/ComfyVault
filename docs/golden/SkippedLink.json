@@ -1,0 +1,5 @@
+{
+  "installId": "inst-2",
+  "path": "C:\\ComfyUI-Test\\models\\loras\\sdxl\\detail_tweaker_xl.safetensors",
+  "reason": "Another file already has that name in this folder, so this link kept its name."
+}

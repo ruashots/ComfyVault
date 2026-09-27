@@ -1,0 +1,5 @@
+{
+  "installId": "inst-3",
+  "message": "Another program has this file open, so removing the link was stopped. ComfyUI keeps a model open while it is loaded. Close it and try again.",
+  "path": "C:\\ComfyUI-Old\\models\\loras\\detail_tweaker_xl.safetensors"
+}

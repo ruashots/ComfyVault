@@ -1,0 +1,49 @@
+{
+  "links": [
+    {
+      "absPath": "C:\\ComfyUI-Main\\models\\loras\\detail-tweaker.safetensors",
+      "action": "keep",
+      "installId": "inst-1",
+      "linkName": "detail-tweaker.safetensors",
+      "newAbsPath": null,
+      "takenBy": null
+    },
+    {
+      "absPath": "C:\\ComfyUI-Test\\models\\loras\\detail_tweaker_xl.safetensors",
+      "action": "rename",
+      "installId": "inst-2",
+      "linkName": "detail_tweaker_xl.safetensors",
+      "newAbsPath": "C:\\ComfyUI-Test\\models\\loras\\detail-tweaker.safetensors",
+      "takenBy": null
+    },
+    {
+      "absPath": "C:\\ComfyUI-Test\\models\\loras\\sdxl\\detail_tweaker_xl.safetensors",
+      "action": "blockedTaken",
+      "installId": "inst-2",
+      "linkName": "detail_tweaker_xl.safetensors",
+      "newAbsPath": null,
+      "takenBy": "C:\\ComfyUI-Test\\models\\loras\\sdxl\\detail-tweaker.safetensors"
+    }
+  ],
+  "name": "detail-tweaker.safetensors",
+  "running": [
+    "inst-2"
+  ],
+  "sha256": "42FAF3AB7B24C00F5AFB64D01ACCAE00CE372F7510FB185DB835523A09A50032",
+  "workflows": [
+    {
+      "matches": [
+        {
+          "installId": "inst-2",
+          "installLabel": "ComfyUI Test",
+          "workflowName": "upscale_3d_scene",
+          "workflowPath": "C:\\ComfyUI-Test\\user\\default\\workflows\\upscale_3d_scene.json"
+        }
+      ],
+      "method": "The file name was searched for as plain text inside saved workflow files.",
+      "name": "detail_tweaker_xl.safetensors",
+      "searched": true,
+      "used": true
+    }
+  ]
+}

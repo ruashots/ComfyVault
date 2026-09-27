@@ -747,6 +747,11 @@ impl FakePlatform {
         self
     }
 
+    pub fn clear_remove_symlink_failure(&self, path: &Path) -> &Self {
+        self.state.lock().unwrap().unlink_failures.remove(path);
+        self
+    }
+
     pub fn set_processes(&self, procs: Vec<ProcessInfo>) -> &Self {
         self.state.lock().unwrap().processes = Some(procs);
         self

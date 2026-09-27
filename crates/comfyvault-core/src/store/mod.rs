@@ -771,6 +771,16 @@ impl Store {
         self.put_meta("lastDownloadInstalls", &ids)
     }
 
+    /// What a "use one name everywhere" job was asked to do, and the link
+    /// records it replaced, which its undo puts back.
+    pub fn put_unify_job(&self, job: &crate::unify::UnifyJob) -> Result<()> {
+        self.put_meta(&format!("unify:{}", job.unify_id), job)
+    }
+
+    pub fn unify_job(&self, unify_id: &str) -> Result<Option<crate::unify::UnifyJob>> {
+        self.get(META, &format!("unify:{unify_id}"))
+    }
+
     /// The folder the person last chose for a new link of this category in
     /// this install.
     pub fn link_dir(&self, install_id: &str, category: &str) -> Result<Option<PathBuf>> {

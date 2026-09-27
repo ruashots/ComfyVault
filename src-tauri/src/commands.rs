@@ -26,6 +26,7 @@ use comfyvault_core::platform::{DriveInfo, LockState, PlatformReport, RunningCom
 use comfyvault_core::scan::ScanProgress;
 use comfyvault_core::settings::{Settings, SettingsPatch};
 use comfyvault_core::store::{ApplyRecord, LinkRecord, LinkState, ScanRecord};
+use comfyvault_core::unify::{UnifyPlan, UnifyResult, UnifyUndone};
 use comfyvault_core::usage::UsageResult;
 use comfyvault_core::vault::{
     ContentPage, NameGroup, VaultFile, VaultFilter, VaultHealth, VaultPage, VaultSort,
@@ -645,6 +646,40 @@ pub async fn set_canonical_name(
 ) -> Reply<VaultFile> {
     let e = engine(&state);
     blocking(move || e.set_canonical_name(&args.sha256, &args.name)).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifyArgs {
+    pub sha256: String,
+    pub name: String,
+}
+
+/// What giving a model one name in every install would do. Changes nothing.
+#[tauri::command]
+pub async fn plan_unify_name(state: State<'_, AppEngine>, args: UnifyArgs) -> Reply<UnifyPlan> {
+    let e = engine(&state);
+    blocking(move || e.plan_unify_name(&args.sha256, &args.name)).await
+}
+
+/// Gives a model one name in every install where that is possible.
+#[tauri::command]
+pub async fn unify_name(state: State<'_, AppEngine>, args: UnifyArgs) -> Reply<UnifyResult> {
+    let e = engine(&state);
+    blocking(move || e.unify_name(&args.sha256, &args.name)).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoUnifyArgs {
+    pub unify_id: String,
+}
+
+/// Puts back the old names a `unify_name` job removed.
+#[tauri::command]
+pub async fn undo_unify_name(state: State<'_, AppEngine>, args: UndoUnifyArgs) -> Reply<UnifyUndone> {
+    let e = engine(&state);
+    blocking(move || e.undo_unify_name(&args.unify_id)).await
 }
 
 /// The "one model, two names" cards the person hid. Kept in the app's

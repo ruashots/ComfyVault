@@ -71,6 +71,9 @@ use crate::store::{
     LinkRecord, ScanEntryRecord, ScanError, ScanRecord, ScanTotals,
 };
 use crate::time_util::Timestamp;
+use crate::unify::{
+    RemovedLink, RenamedLink, SkippedLink, UnifyAction, UnifyLink, UnifyPlan, UnifyResult, UnifyStop, UnifyUndone,
+};
 use crate::usage::{UsageMatch, UsageResult};
 use crate::vault::{ContentPage, ContentRow, NameGroup, VaultFile, VaultHealth, VaultName, VaultPage};
 
@@ -335,6 +338,48 @@ fn vault_name() -> VaultName {
         vault_rel_path: PathBuf::from(r"loras\detail-tweaker.safetensors"),
         used_by_links: 2,
         seen_in_installs: vec!["inst-1".into()],
+    }
+}
+
+fn unify_link() -> UnifyLink {
+    UnifyLink {
+        install_id: "inst-2".into(),
+        abs_path: PathBuf::from(r"C:\ComfyUI-Test\models\loras\detail_tweaker_xl.safetensors"),
+        link_name: "detail_tweaker_xl.safetensors".into(),
+        action: UnifyAction::Rename,
+        new_abs_path: Some(PathBuf::from(r"C:\ComfyUI-Test\models\loras\detail-tweaker.safetensors")),
+        taken_by: None,
+    }
+}
+
+fn renamed_link() -> RenamedLink {
+    RenamedLink {
+        install_id: "inst-2".into(),
+        from: PathBuf::from(r"C:\ComfyUI-Test\models\loras\detail_tweaker_xl.safetensors"),
+        to: PathBuf::from(r"C:\ComfyUI-Test\models\loras\detail-tweaker.safetensors"),
+    }
+}
+
+fn removed_link() -> RemovedLink {
+    RemovedLink {
+        install_id: "inst-1".into(),
+        path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\old\detail_tweaker_xl.safetensors"),
+    }
+}
+
+fn skipped_link() -> SkippedLink {
+    SkippedLink {
+        install_id: "inst-2".into(),
+        path: PathBuf::from(r"C:\ComfyUI-Test\models\loras\sdxl\detail_tweaker_xl.safetensors"),
+        reason: "Another file already has that name in this folder, so this link kept its name.".into(),
+    }
+}
+
+fn unify_stop() -> UnifyStop {
+    UnifyStop {
+        install_id: Some("inst-3".into()),
+        path: PathBuf::from(r"C:\ComfyUI-Old\models\loras\detail_tweaker_xl.safetensors"),
+        message: "Another program has this file open, so removing the link was stopped. ComfyUI keeps a model open while it is loaded. Close it and try again.".into(),
     }
 }
 
@@ -691,6 +736,63 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             },
         ),
         s("VaultFile", vault_file()),
+        s("UnifyLink", unify_link()),
+        s(
+            "UnifyPlan",
+            UnifyPlan {
+                sha256: hash_a(),
+                name: "detail-tweaker.safetensors".into(),
+                links: vec![
+                    UnifyLink {
+                        install_id: "inst-1".into(),
+                        abs_path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\detail-tweaker.safetensors"),
+                        link_name: "detail-tweaker.safetensors".into(),
+                        action: UnifyAction::Keep,
+                        new_abs_path: None,
+                        taken_by: None,
+                    },
+                    unify_link(),
+                    UnifyLink {
+                        install_id: "inst-2".into(),
+                        abs_path: PathBuf::from(r"C:\ComfyUI-Test\models\loras\sdxl\detail_tweaker_xl.safetensors"),
+                        link_name: "detail_tweaker_xl.safetensors".into(),
+                        action: UnifyAction::BlockedTaken,
+                        new_abs_path: None,
+                        taken_by: Some(r"C:\ComfyUI-Test\models\loras\sdxl\detail-tweaker.safetensors".into()),
+                    },
+                ],
+                running: vec!["inst-2".into()],
+                workflows: vec![UsageResult {
+                    name: "detail_tweaker_xl.safetensors".into(),
+                    used: true,
+                    matches: vec![UsageMatch {
+                        install_id: "inst-2".into(),
+                        install_label: "ComfyUI Test".into(),
+                        workflow_path: r"C:\ComfyUI-Test\user\default\workflows\upscale_3d_scene.json".into(),
+                        workflow_name: "upscale_3d_scene".into(),
+                    }],
+                    method: crate::usage::METHOD.into(),
+                    searched: true,
+                }],
+            },
+        ),
+        s("RenamedLink", renamed_link()),
+        s("RemovedLink", removed_link()),
+        s("SkippedLink", skipped_link()),
+        s("UnifyStop", unify_stop()),
+        s(
+            "UnifyResult",
+            UnifyResult {
+                unify_id: "unify-5b1f0c2e9d7a4c33a1e0f6b2c8d94e17".into(),
+                name: "detail-tweaker.safetensors".into(),
+                renamed: vec![renamed_link()],
+                removed: vec![removed_link()],
+                skipped: vec![skipped_link()],
+                stopped: Some(unify_stop()),
+                vault_name: "detail-tweaker.safetensors".into(),
+            },
+        ),
+        s("UnifyUndone", UnifyUndone { undone: true }),
         s(
             "HiddenNameCard",
             crate::engine::HiddenNameCard {
@@ -1469,6 +1571,16 @@ fn every_enum_value() -> Vec<(&'static str, String, &'static str)> {
         out.push(("InstallTargetState", wire(&t), expected));
     }
 
+    for u in [UnifyAction::Keep, UnifyAction::Rename, UnifyAction::Remove, UnifyAction::BlockedTaken] {
+        let expected = match u {
+            UnifyAction::Keep => "keep",
+            UnifyAction::Rename => "rename",
+            UnifyAction::Remove => "remove",
+            UnifyAction::BlockedTaken => "blockedTaken",
+        };
+        out.push(("UnifyAction", wire(&u), expected));
+    }
+
     for o in [O::Apply, O::Manual, O::Download] {
         let expected = match o {
             O::Apply => "apply",
@@ -1553,6 +1665,7 @@ fn the_contract_lists_the_same_enum_values_the_engine_sends() {
         "DownloadErrorKind",
         "RefusalKind",
         "InstallTargetState",
+        "UnifyAction",
     ] {
         let engine: Vec<&str> = values
             .iter()

@@ -1,0 +1,8 @@
+{
+  "absPath": "C:\\ComfyUI-Test\\models\\loras\\detail_tweaker_xl.safetensors",
+  "action": "rename",
+  "installId": "inst-2",
+  "linkName": "detail_tweaker_xl.safetensors",
+  "newAbsPath": "C:\\ComfyUI-Test\\models\\loras\\detail-tweaker.safetensors",
+  "takenBy": null
+}

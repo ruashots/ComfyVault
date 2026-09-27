@@ -1429,3 +1429,102 @@ fn a_settings_file_from_an_older_build_reads_as_no_hidden_cards() {
     std::fs::write(&path, r#"{"vaultRoot": null}"#).unwrap();
     assert!(f.engine.hidden_name_cards().is_empty());
 }
+
+// --- one name everywhere ---------------------------------------------------
+
+/// Two installs holding one model under two names, consolidated through the
+/// engine.
+fn consolidated_under_two_names(f: &Fixture) -> (Install, Install) {
+    f.open_vault();
+    let a = f.add_install("A");
+    let b = f.add_install("B");
+    f.write_model(&a, "models/loras/lora1.safetensors", &weights("same"));
+    f.write_model(&b, "models/loras/other.safetensors", &weights("same"));
+    let scan = f.scan();
+    let plan = f.engine.build_plan(&scan.scan_id).unwrap();
+    let store = f.engine.store().unwrap();
+    Applier::new(&store, f.platform.as_ref())
+        .apply(
+            "ap-1",
+            &plan,
+            &ApplyRequest {
+                plan_id: plan.plan_id.clone(),
+                group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                verify: crate::apply::VerifyModeArg::SizeAndMtime,
+                stop_on_error: false,
+            },
+            &CancelToken::new(),
+            &NullSink,
+        )
+        .unwrap();
+    (a, b)
+}
+
+#[test]
+fn the_engine_gives_a_model_one_name_and_undoes_it() {
+    // Through the front door, which holds the lock on link changes while the
+    // job renames the vault file under that same lock's rules.
+    let f = Fixture::new();
+    let (_a, b) = consolidated_under_two_names(&f);
+    let sha = weights_hash("same");
+    assert_eq!(f.engine.name_groups().unwrap().len(), 1);
+
+    let plan = f.engine.plan_unify_name(&sha, "lora1.safetensors").unwrap();
+    assert_eq!(plan.links.len(), 2);
+    let done = f.engine.unify_name(&sha, "lora1.safetensors").unwrap();
+    assert_eq!(done.renamed.len(), 1);
+    assert!(f.engine.name_groups().unwrap().is_empty());
+
+    f.engine.undo_unify_name(&done.unify_id).unwrap();
+    assert!(b.root.join("models/loras/other.safetensors").exists());
+    assert_eq!(f.engine.name_groups().unwrap().len(), 1);
+}
+
+#[test]
+fn a_name_change_cut_off_by_a_crash_is_finished_when_the_vault_opens() {
+    let f = Fixture::new();
+    let (_a, b) = consolidated_under_two_names(&f);
+    let sha = weights_hash("same");
+    let store = f.engine.store().unwrap();
+    let new = b.root.join("models/loras/lora1.safetensors");
+    let target = store.vault_root().join("loras/lora1.safetensors");
+    store
+        .put_unify_job(&crate::unify::UnifyJob {
+            unify_id: "unify-abc".into(),
+            sha256: sha.clone(),
+            name: "lora1.safetensors".into(),
+            started_at: crate::time_util::Timestamp::now(),
+            replaced: Vec::new(),
+        })
+        .unwrap();
+    store
+        .append_journal(&crate::store::JournalEntry {
+            apply_id: "unify-abc".into(),
+            seq: 0,
+            group_id: b.id.clone(),
+            step: crate::store::JournalStep::CreateLink { link: new.clone(), target: target.clone() },
+            state: crate::store::JournalState::Pending,
+            started_at: crate::time_util::Timestamp::now(),
+            finished_at: None,
+            error: None,
+        })
+        .unwrap();
+    f.platform.create_file_symlink(&new, &target).unwrap();
+    drop(store);
+
+    let first = f.dir.path().join("ComfyVault");
+    f.engine.select_vault(&f.dir.path().join("Other"), true).unwrap();
+    f.engine.select_vault(&first, false).unwrap();
+    let rec = f.engine.store().unwrap().link_at_path(&new).unwrap();
+    assert!(rec.is_some(), "the cut-off link has its record again");
+}
+
+#[test]
+fn a_name_change_waits_for_a_running_consolidation() {
+    let f = Fixture::new();
+    consolidated_under_two_names(&f);
+    let _slot = f.engine.take_slot(BusyKind::Apply, "ap-2").unwrap();
+    let err = f.engine.unify_name(&weights_hash("same"), "lora1.safetensors").unwrap_err();
+    assert_eq!(err.code, ErrorCode::VaultBusy);
+    assert_eq!(f.engine.undo_unify_name("unify-x").unwrap_err().code, ErrorCode::VaultBusy);
+}

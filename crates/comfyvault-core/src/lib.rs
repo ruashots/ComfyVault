@@ -48,6 +48,7 @@ pub mod scan;
 pub mod settings;
 pub mod store;
 pub mod time_util;
+pub mod unify;
 pub mod usage;
 pub mod vault;
 

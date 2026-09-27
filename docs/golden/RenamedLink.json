@@ -1,0 +1,5 @@
+{
+  "from": "C:\\ComfyUI-Test\\models\\loras\\detail_tweaker_xl.safetensors",
+  "installId": "inst-2",
+  "to": "C:\\ComfyUI-Test\\models\\loras\\detail-tweaker.safetensors"
+}

@@ -407,10 +407,33 @@ twice from different places. The vault keeps one of them as the real file, and
 the other as a link beside it. So every name a model was ever known by still
 works, and a saved workflow that names the old one still opens.
 
-The Cleanup screen shows these, and lets you pick which name the vault keeps.
-Doing that frees no disk space. What it gives you is one entry per model in
-ComfyUI's dropdown instead of two. Removing a name is a separate action, and it
-is refused while any install link still resolves through it.
+A saved workflow asks for a model by the name its install gives it. So when two
+installs link one model under two names, the two names are two models to the
+person, and a workflow copied from one install to the other shows a missing
+model.
+
+Cleanup shows a card for each model that the installs call by more than one
+name. The card counts the names the links in the installs carry, not the names
+the vault keeps. You pick one name, and ComfyVault gives every link that name.
+Before that, it lists the saved workflows that ask for a name that goes away,
+because each of them shows a missing model until you pick the new name in it.
+
+For each link, the new link is made first and the old one is removed after, so
+the install never loses the model. A place that already holds something else
+is never overwritten: that link keeps its name, and the result says so. If
+Windows refuses to remove an old link, the job stops there, with the model
+loading under both names. Running it again finishes it. The job is journaled
+like a run, so a crash is finished when the vault next opens, and the change
+can be undone. The undo puts back every old name and removes the new ones.
+
+When every link carries the name, the vault file takes it too, and each
+second name in the vault that no link uses any more is removed. The undo leaves
+the vault's name as it is. The old links it puts back all point at the file
+under its new name, so they load the model.
+
+You can also hide a card. It stays hidden until a new name for the model
+appears. Doing either frees no disk space. What it gives you is one entry per
+model in ComfyUI's dropdown instead of two.
 
 ### The record
 
