@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 
 import { Icon } from "~/components/Icon";
+import { UNDO_WAIT } from "~/components/UndoWait";
 import { Wrap } from "~/components/Wrap";
 import {
   hiddenKeyOf,
@@ -291,10 +292,10 @@ export function UnifyModalView() {
                       {(cta) => (
                         <button
                           class="btn pri"
-                          disabled={current().working}
+                          disabled={current().working || app.undoRunning()}
                           onClick={() => void use(current())}
                         >
-                          {cta()}
+                          {app.undoRunning() ? UNDO_WAIT : cta()}
                         </button>
                       )}
                     </Show>

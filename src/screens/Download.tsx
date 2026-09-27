@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createMemo } from "solid-js";
 
 import { Checkbox } from "~/screens/Consolidate";
 import { Icon } from "~/components/Icon";
+import { UNDO_WAIT } from "~/components/UndoWait";
 import { EmptyScreen, Header } from "~/components/Shell";
 import {
   carriesKey,
@@ -668,6 +669,12 @@ function Already(props: { plan: AddressPlan; vaultRelPath: string }) {
           <Match when={ticked().length === 0}>
             <button class="btn" disabled>
               Tick an install to link it
+            </button>
+          </Match>
+          {/* The links are made at once, and links wait for an undo in the engine. */}
+          <Match when={app.undoRunning()}>
+            <button class="btn" disabled>
+              {UNDO_WAIT}
             </button>
           </Match>
           <Match when={true}>

@@ -290,6 +290,11 @@ export interface AppStore {
   readonly applyProgress: Accessor<ApplyProgress | null>;
   /** An undo while it runs, which reports in its own shape. */
   readonly revertProgress: Accessor<RevertProgress | null>;
+  /**
+   * A consolidation is being undone. Link and name changes wait for it in the
+   * engine, which can take minutes, so their buttons wait here instead.
+   */
+  readonly undoRunning: Accessor<boolean>;
   readonly ready: Accessor<boolean>;
   readonly failure: Accessor<string | null>;
 
@@ -522,6 +527,9 @@ export function createAppStore(engine: Engine): AppStore {
   const [scanProgress, setScanProgress] = createSignal<ScanProgress | null>(null);
   const [applyProgress, setApplyProgress] = createSignal<ApplyProgress | null>(null);
   const [revertProgress, setRevertProgress] = createSignal<RevertProgress | null>(null);
+  const undoRunning = createMemo(
+    () => revertProgress() !== null || appState()?.busy?.kind === "revert",
+  );
   const [ready, setReady] = createSignal(false);
   const [failure, setFailure] = createSignal<string | null>(null);
 
@@ -1028,6 +1036,7 @@ export function createAppStore(engine: Engine): AppStore {
     scanProgress,
     applyProgress,
     revertProgress,
+    undoRunning,
     ready,
     failure,
     planView,

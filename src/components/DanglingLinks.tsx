@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 
 import { Icon } from "~/components/Icon";
+import { UndoWait } from "~/components/UndoWait";
 import { countOf } from "~/domain/format";
 import { openConfirm } from "~/modals/confirm";
 import { useApp } from "~/state/store";
@@ -69,9 +70,10 @@ export function DanglingLinks() {
               put the file inside the vault. Removing the link costs nothing: it
               points at nothing.
             </div>
+            <UndoWait />
           </div>
           <div class="ba">
-            <button class="btn sm dng" onClick={removeAll}>
+            <button class="btn sm dng" disabled={app.undoRunning()} onClick={removeAll}>
               <Icon name="trash" size={11} />
               Remove {links().length === 1 ? "it" : "them all"}
             </button>
@@ -85,7 +87,7 @@ export function DanglingLinks() {
                 <div class="bd">{link.absPath}</div>
               </div>
               <div class="ba">
-                <button class="btn sm" onClick={() => removeOne(link)}>
+                <button class="btn sm" disabled={app.undoRunning()} onClick={() => removeOne(link)}>
                   Remove this one
                 </button>
               </div>

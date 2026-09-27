@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { DanglingLinks, ReplacedLinks } from "~/components/DanglingLinks";
 import { EmptyScreen, Header } from "~/components/Shell";
+import { UndoWait } from "~/components/UndoWait";
 import { dayMonth, fmt, joinPath } from "~/domain/format";
 import { nameCardsSummary } from "~/domain/names";
 import { usageOfModel, type ModelUsage } from "~/domain/view";
@@ -90,7 +91,7 @@ function CleanupBody() {
           >
             <div class="note" style={{ margin: "-4px 0 8px" }}>
               Vault files no install links to. Deleting one does free disk space,
-              and it cannot be undone.
+              and it cannot be undone. <UndoWait />
             </div>
             <For each={app.orphans()}>{(file) => <OrphanRow file={file} />}</For>
           </Show>
@@ -160,7 +161,7 @@ function OrphanRow(props: { file: VaultFile }) {
         </span>
         <span class="grp-n">{props.file.canonicalName}</span>
         <span class="grp-s">{fmt(props.file.sizeBytes)}</span>
-        <button class="btn sm dng" onClick={remove}>
+        <button class="btn sm dng" disabled={app.undoRunning()} onClick={remove}>
           <Icon name="trash" size={11} />
           Delete
         </button>
@@ -218,7 +219,7 @@ function DeleteModels() {
       >
         <div class="note lead">
           Deleting a model frees its space and removes every link to it, in every
-          install.
+          install. <UndoWait />
         </div>
         <Show when={checked()}>
           <div class="vtools">
@@ -368,6 +369,7 @@ function ModelRow(props: { file: VaultFile; usage: ModelUsage }) {
       <span class="grp-s">{fmt(props.file.sizeBytes)}</span>
       <button
         class="drop"
+        disabled={app.undoRunning()}
         title="Delete this model"
         aria-label={`Delete ${props.file.canonicalName}`}
         onClick={remove}
@@ -458,6 +460,7 @@ function StoppedDeletes() {
               no longer load it. The model is still in the vault and still takes its
               space. Finishing the delete removes it and the links it still has.
             </div>
+            <UndoWait />
           </div>
         </div>
         <For each={files()}>
@@ -470,7 +473,7 @@ function StoppedDeletes() {
                 </div>
               </div>
               <div class="ba">
-                <button class="btn sm dng" onClick={() => void finish(file)}>
+                <button class="btn sm dng" disabled={app.undoRunning()} onClick={() => void finish(file)}>
                   <Icon name="trash" size={11} />
                   Finish the delete
                 </button>

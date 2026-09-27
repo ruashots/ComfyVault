@@ -1580,6 +1580,7 @@ export class FixtureEngine implements Engine {
 
   async unifyName(sha256: string, name: string): Promise<UnifyResult> {
     this.requireVault();
+    if (this.busy) throw error("vaultBusy", "Something is already running.");
     const steps = this.unifySteps(sha256, name);
     const running = [...new Set(steps.map((s) => s.installId))].filter((id) =>
       this.world.running.includes(id),
