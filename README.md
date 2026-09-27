@@ -243,10 +243,10 @@ The full detail is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 then your installs. After a scan, it shows how many installs, how many unique
 models, how much is on disk, and how much can come back.
 
-**Library** has one row per unique model, whether it is already in the vault or
-still in four installs. Search it, sort it by how many places hold a file, and
-see every name a model has. Open a model to see what Civitai knows about it:
-its name, base model, trigger words, and a link to its Civitai page.
+**Library** lists the models in the vault, one row each. Before the first run
+it is empty. Search it, sort it by how many installs link to a model, and see
+every name a model has. Open a model to see what Civitai knows about it: its
+name, base model, trigger words, and a link to its Civitai page.
 
 **Consolidate** shows the dry run and the Apply button, then the finished run
 with its undo.
