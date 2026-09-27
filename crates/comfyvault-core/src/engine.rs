@@ -1413,3 +1413,6 @@ fn hidden_by_windows(_e: &std::fs::DirEntry) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod scenario;
