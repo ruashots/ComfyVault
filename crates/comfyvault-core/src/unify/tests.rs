@@ -729,6 +729,27 @@ fn a_crash_between_the_new_link_and_its_record_is_finished_when_the_vault_opens(
 }
 
 #[test]
+fn a_cut_off_step_on_a_drive_that_is_away_waits_for_the_drive() {
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    let old = loras(&b).join(OLD);
+    let record = w.store.link_at_path(&old).unwrap().unwrap();
+    w.store.put_unify_job(&UnifyJob { unify_id: "unify-away".into(), sha256: sha(), ..Default::default() }).unwrap();
+    let mut j = Journal { store: &w.store, id: "unify-away".into(), next: 0 };
+    j.pending(&b.id, JournalStep::RemoveLink { link: old.clone(), target: w.vault_root.join("loras").join(KEPT) }).unwrap();
+    // The power went before the link was removed, and B's drive is away when
+    // the vault opens.
+    let away = b.root.with_extension("away");
+    std::fs::rename(&b.root, &away).unwrap();
+    unify(&w).finish_interrupted().unwrap();
+    std::fs::rename(&away, &b.root).unwrap();
+
+    assert_eq!(w.store.link_at_path(&old).unwrap().map(|r| r.id), Some(record.id), "the record is kept");
+    assert_eq!(w.store.journal("unify-away").unwrap()[0].state, JournalState::Pending, "and the step waits");
+    assert_eq!(w.read(&old), weights("same"));
+}
+
+#[test]
 fn a_crash_after_the_old_link_went_forgets_its_record_when_the_vault_opens() {
     let w = TestWorld::new();
     let (_a, b) = two_names(&w);

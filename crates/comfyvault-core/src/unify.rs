@@ -559,6 +559,9 @@ impl<'a> Unify<'a> {
                         }
                         JournalState::Done
                     }
+                    // Only where the folder can be seen: one on a drive that
+                    // is unplugged stays pending for the next open.
+                    (JournalStep::RemoveLink { link, .. }, _) if !crate::links::folder_present(link) => continue,
                     (JournalStep::RemoveLink { link, .. }, _) if std::fs::symlink_metadata(link).is_err() => {
                         if let Some(r) = self.store.link_at_path(link)? {
                             self.store.delete_link(&r.id)?;

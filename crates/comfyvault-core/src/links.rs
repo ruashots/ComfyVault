@@ -66,6 +66,11 @@ pub struct CreateLinkRequest {
     pub create_dir: bool,
 }
 
+/// The folder that holds `path` is there to look in.
+pub(crate) fn folder_present(path: &Path) -> bool {
+    path.parent().is_some_and(Path::is_dir)
+}
+
 /// The refusal when a different file already has the link's name in the
 /// folder. The interface shows it as it is, so it is used for nothing else.
 pub const TAKEN_BY_ANOTHER_FILE: &str = "A different file with this name is already here. Choose another folder.";
@@ -467,6 +472,12 @@ impl<'a> Links<'a> {
             }
             for mut e in self.store.journal(&id)? {
                 if e.state != JournalState::Pending {
+                    continue;
+                }
+                // A folder that cannot be seen, such as one on a drive that
+                // is unplugged, says nothing about the link in it. The step
+                // stays pending for an open that can see it.
+                if matches!(&e.step, JournalStep::RemoveLink { link, .. } if !folder_present(link)) {
                     continue;
                 }
                 let state = match &e.step {
@@ -1844,6 +1855,63 @@ pub(crate) mod tests {
         assert_eq!(taken.code, ErrorCode::Conflict);
         assert_eq!(taken.message, TAKEN_BY_ANOTHER_FILE);
         assert_eq!(std::fs::read(other.join("lora1.safetensors")).unwrap(), b"someone else's model");
+    }
+
+    // U1. The unlink writes its step, and the power goes before the link is
+    // removed. When the vault next opens, the install's drive is unplugged, so
+    // the link cannot be seen. Recovery reads "not there" as "the unlink
+    // happened" and forgets the record of a link that is still on the drive.
+    #[test]
+    fn u1_an_unlink_cut_off_before_the_removal_keeps_the_record_of_a_link_on_an_unplugged_drive() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let pa = w.write_model(&a, "models/loras/m.safetensors", &weights("m"));
+        w.write_model(&b, "models/loras/m.safetensors", &weights("m"));
+        let plan = w.plan(&[a.clone(), b.clone()]);
+        crate::apply::Applier::new(&w.store, &w.platform)
+            .apply(
+                "ap-1",
+                &plan,
+                &crate::apply::ApplyRequest {
+                    plan_id: plan.plan_id.clone(),
+                    group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                    verify: crate::apply::VerifyModeArg::SizeAndMtime,
+                    stop_on_error: false,
+                },
+                &crate::progress::CancelToken::new(),
+                &crate::progress::NullSink,
+            )
+            .unwrap();
+        let sha = weights_hash("m");
+        let rec = w.store.link_at_path(&pa).unwrap().expect("A's link is recorded");
+
+        // Unlink in B first, so A's link is the model's only link.
+        let b_rec = w.store.links_for_hash(&sha).unwrap().into_iter().find(|l| l.install_id == b.id).unwrap();
+        Links::new(&w.store, &w.platform).remove(&b_rec.id).unwrap();
+
+        // The unlink of A's link writes its step; the power goes before removal.
+        let mut j = LinkJournal::new(&w.store, &rec.install_id);
+        j.pending(JournalStep::RemoveLink { link: rec.abs_path.clone(), target: w.vault_root.join(&rec.vault_rel_path) })
+            .unwrap();
+
+        // A's drive is unplugged when the vault opens again.
+        let away = a.root.with_extension("unplugged");
+        std::fs::rename(&a.root, &away).unwrap();
+        Links::new(&w.store, &w.platform).finish_interrupted().unwrap();
+        std::fs::rename(&away, &a.root).unwrap();
+
+        let record_kept = w.store.link(&rec.id).unwrap().is_some();
+        let orphan = crate::vault::Vault::new(&w.store, &w.platform).orphans().unwrap().len();
+        // Cleanup now calls the model unused. Deleting it there is allowed...
+        let deleted = crate::vault::Vault::new(&w.store, &w.platform).delete_file(&sha, &sha);
+        let a_loads = std::fs::read(&pa).map(|x| x == weights("m")).unwrap_or(false);
+        assert!(
+            record_kept && a_loads,
+            "A's link is still on its drive, but its record was forgotten (kept: {record_kept}); \
+             Cleanup listed {orphan} unused model(s); delete: {:?}; A's link loads the model: {a_loads}",
+            deleted.map_err(|e| e.message)
+        );
     }
 }
 
