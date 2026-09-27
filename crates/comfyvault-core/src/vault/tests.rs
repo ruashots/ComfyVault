@@ -1734,12 +1734,18 @@ fn a_link_windows_will_not_repoint_keeps_loading_the_model_through_the_old_name(
     let (a, _b) = two_names(&w);
     let sha = weights_hash("same");
     let a_link = a.root.join("models/loras/lora1.safetensors");
-    w.platform.fail_remove_symlink_at(a_link.clone(), std::io::ErrorKind::PermissionDenied);
+    let id = Vault::new_rename_id();
+    // Windows refuses the replacement link made beside it.
+    w.platform.fail_symlink_at(super::temp_link(&a_link, &id), VaultError::new(ErrorCode::PermissionDenied, "no"));
 
-    vault(&w).set_canonical_name(&sha, "my-favourite.safetensors").unwrap();
-    assert_eq!(w.read(&a_link), weights("same"));
+    let renamed = vault(&w).rename_file(&sha, "my-favourite.safetensors", &id).unwrap();
+    assert_eq!(renamed.not_repointed.len(), 1);
+    assert_eq!(renamed.not_repointed[0].install_id, a.id, "the install is named");
+    assert_eq!(renamed.not_repointed[0].path, a_link);
+    assert_eq!(w.read(&a_link), weights("same"), "the link was never removed");
     let rec = w.store.link_at_path(&a_link).unwrap().unwrap();
     assert_eq!(rec.vault_rel_path, PathBuf::from("loras").join("lora1.safetensors"), "the record says where it points");
+    assert!(w.is_link(&w.vault_root.join("loras/lora1.safetensors")), "and the name it goes through stays");
 }
 
 #[test]
@@ -1748,8 +1754,8 @@ fn a_vault_rename_can_be_put_back_and_the_second_time_does_nothing() {
     let (a, b) = two_names(&w);
     let sha = weights_hash("same");
     let before: Vec<LinkRecord> = w.store.links_for_hash(&sha).unwrap();
-    let (_, id) = vault(&w).rename_file(&sha, "my-favourite.safetensors").unwrap();
-    let id = id.expect("a rename writes a journal");
+    let id = Vault::new_rename_id();
+    vault(&w).rename_file(&sha, "my-favourite.safetensors", &id).unwrap();
 
     vault(&w).undo_rename(&id).unwrap();
     let f = vault(&w).file(&sha).unwrap().unwrap();
@@ -1779,13 +1785,41 @@ fn a_vault_rename_is_not_put_back_over_a_file_that_took_the_old_name() {
     let w = TestWorld::new();
     two_names(&w);
     let sha = weights_hash("same");
-    let (_, id) = vault(&w).rename_file(&sha, "my-favourite.safetensors").unwrap();
+    let id = Vault::new_rename_id();
+    vault(&w).rename_file(&sha, "my-favourite.safetensors", &id).unwrap();
     let old = w.vault_root.join("loras/lora1.safetensors");
     w.platform.remove_symlink(&old).unwrap();
     std::fs::write(&old, b"someone's file").unwrap();
 
-    let err = vault(&w).undo_rename(&id.unwrap()).unwrap_err();
+    let err = vault(&w).undo_rename(&id).unwrap_err();
     assert_eq!(err.code, ErrorCode::Conflict);
     assert_eq!(std::fs::read(&old).unwrap(), b"someone's file");
     assert_eq!(vault(&w).file(&sha).unwrap().unwrap().canonical_name, "my-favourite.safetensors");
+}
+
+#[test]
+fn an_undo_of_a_rename_cut_off_by_a_crash_is_finished_when_the_vault_opens() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    let sha = weights_hash("same");
+    let id = Vault::new_rename_id();
+    vault(&w).rename_file(&sha, "my-favourite.safetensors", &id).unwrap();
+
+    // The undo had started: its mark is written, the old name's link is
+    // gone and the file is back under it, and then the power went.
+    w.store.put_meta_flag(&format!("renameUndo:{id}"), true).unwrap();
+    let old = w.vault_root.join("loras/lora1.safetensors");
+    let new = w.vault_root.join("loras/my-favourite.safetensors");
+    w.platform.remove_symlink(&old).unwrap();
+    std::fs::rename(&new, &old).unwrap();
+
+    vault(&w).finish_interrupted_renames().unwrap();
+    let f = vault(&w).file(&sha).unwrap().unwrap();
+    assert_eq!(f.canonical_name, "lora1.safetensors");
+    assert_eq!(f.aliases, vec!["my-favourite.safetensors"]);
+    assert!(w.is_link(&new));
+    for (i, name) in [(&a, "lora1.safetensors"), (&b, "my-favourite.safetensors")] {
+        assert_eq!(w.read(&i.root.join("models/loras").join(name)), weights("same"), "{name} loads the model");
+    }
+    assert!(!w.store.meta_flag(&format!("renameUndo:{id}")).unwrap(), "the mark is cleared");
 }

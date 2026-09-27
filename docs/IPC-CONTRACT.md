@@ -2170,13 +2170,20 @@ consolidation or an undo runs. Its other refusals are the ones in 8.11.
   and each second name that no link uses any more is removed. If another model
   or another file already has that name in the vault, the vault keeps its name.
   That is not a failure, and `vaultName` says which name it kept. If renaming
-  the vault file fails, `stopped` has `installId: null`, and the links keep
-  their new names.
+  the vault file fails, it is put back, `stopped` has `installId: null`, and
+  the links keep their new names. Renaming the vault file points each install
+  link that names the old place at the new one, never removing a link before
+  its replacement exists. A link Windows will not point there is in `skipped`,
+  with its install, and still loads the model through the old name, which the
+  vault keeps.
 - **Crash safe.** Every step is journaled before it touches the disk. After a
   crash, the next `select_vault` finishes the steps that reached the disk: a
   new link gets its record, and an old link that is gone loses its record. A
   step that never reached the disk is marked failed, which leaves the model
-  loading under both names.
+  loading under both names. A vault rename a crash cut off is finished too:
+  the file, its record, its other name as a link beside it, and the install
+  links all end up under one of the two names, with every link loading the
+  model.
 
 Every link made by the job has `createdBy: 'manual'` and `applyId` set to the
 `unifyId`.

@@ -344,7 +344,7 @@ impl<'a> Unify<'a> {
         }
 
         if out.stopped.is_none() {
-            match self.name_the_vault_file(&t, &mut job) {
+            match self.name_the_vault_file(&t, &mut job, &mut out) {
                 Ok(name) => out.vault_name = name,
                 Err(e) => {
                     out.stopped = Some(UnifyStop {
@@ -358,16 +358,10 @@ impl<'a> Unify<'a> {
         Ok(out)
     }
 
-    /// Puts back every old name a job removed, and removes the names it made.
-    ///
-    /// The vault keeps the name the job gave it: every link put back points at
-    /// the file under that name, so each one loads the model.
-    ///
-    /// Everything is checked before anything changes. A place for an old name
-    /// that now holds anything else refuses the whole undo, because putting a
-    /// name back must never overwrite. A new link is removed only while it is
-    /// still this job's own link to the model.
-    pub fn undo(&self, unify_id: &str) -> Result<UnifyUndone> {
+    /// Everything [`Unify::undo`] checks before it changes anything, with
+    /// nothing changed. An undo of a consolidation runs it for every name
+    /// change it will put back, before it puts back any of them.
+    pub fn check_undo(&self, unify_id: &str) -> Result<()> {
         let job = self
             .store
             .unify_job(unify_id)?
@@ -410,6 +404,33 @@ impl<'a> Unify<'a> {
             )
             .with_detail(taken.join(", ")));
         }
+        if let Some(rename) = &job.vault_rename {
+            Vault::new(self.store, self.platform).check_undo_rename(rename)?;
+        }
+        Ok(())
+    }
+
+    /// Puts back every old name a job removed, and removes the names it made.
+    ///
+    /// The vault keeps the name the job gave it: every link put back points at
+    /// the file under that name, so each one loads the model.
+    ///
+    /// Everything is checked before anything changes. A place for an old name
+    /// that now holds anything else refuses the whole undo, because putting a
+    /// name back must never overwrite. A new link is removed only while it is
+    /// still this job's own link to the model.
+    pub fn undo(&self, unify_id: &str) -> Result<UnifyUndone> {
+        self.check_undo(unify_id)?;
+        let job = self
+            .store
+            .unify_job(unify_id)?
+            .ok_or_else(|| VaultError::not_found("That name change is not in this vault's history."))?;
+        let done: Vec<JournalEntry> = self
+            .store
+            .journal(unify_id)?
+            .into_iter()
+            .filter(|e| e.state == JournalState::Done)
+            .collect();
 
         // The vault's name first, so every old link put back points straight
         // at the file under the name it had before the job.
@@ -421,6 +442,7 @@ impl<'a> Unify<'a> {
             VaultError::conflict("That model is no longer in the vault, so its old names cannot come back.")
         })?;
         let vault_path = self.vault_path(&record)?;
+
 
         for mut e in done.into_iter().rev() {
             match &e.step {
@@ -492,7 +514,8 @@ impl<'a> Unify<'a> {
     /// failed, which leaves the model loading under both names, as a stopped
     /// job does.
     pub fn finish_interrupted(&self) -> Result<u64> {
-        let mut finished = 0;
+        // A job's last step renames the vault file, which has its own journal.
+        let mut finished = Vault::new(self.store, self.platform).finish_interrupted_renames()?;
         for id in self.store.journal_ids()? {
             if !id.starts_with(UNIFY_JOURNAL_PREFIX) {
                 continue;
@@ -760,7 +783,7 @@ impl<'a> Unify<'a> {
     /// has the chosen one there. That is not a failure: every install already
     /// uses the chosen name, and the vault's name is only what the Library
     /// shows.
-    fn name_the_vault_file(&self, t: &Target, job: &mut UnifyJob) -> Result<String> {
+    fn name_the_vault_file(&self, t: &Target, job: &mut UnifyJob, out: &mut UnifyResult) -> Result<String> {
         let vault = Vault::new(self.store, self.platform);
         let sha = &t.record.sha256;
         let mut record = self
@@ -792,9 +815,22 @@ impl<'a> Unify<'a> {
                 }
             };
             if let Some(alias) = alias {
-                let (_, rename) = vault.rename_file(sha, &alias)?;
-                job.vault_rename = rename;
+                // Recorded before the rename starts, so the undo finds it
+                // whatever happens part way.
+                let id = Vault::new_rename_id();
+                job.vault_rename = Some(id.clone());
                 self.store.put_unify_job(job)?;
+                let renamed = vault.rename_file(sha, &alias, &id)?;
+                for n in renamed.not_repointed {
+                    out.skipped.push(SkippedLink {
+                        install_id: n.install_id,
+                        path: n.path,
+                        reason: format!(
+                            "{} This link still loads the model, through the vault's old name for it.",
+                            n.message
+                        ),
+                    });
+                }
             }
         }
 

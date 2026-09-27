@@ -820,3 +820,328 @@ fn a_link_windows_really_holds_open_stops_the_job_and_undo_brings_everything_bac
     assert!(std::fs::symlink_metadata(loras(&b).join(KEPT)).is_err());
     assert_eq!(w.read(&old), weights("same"));
 }
+
+
+/// The code review's proof tests, kept as they were written: each one failed
+/// before its fix. They run the job on a platform that can act at a chosen
+/// instant, which stands in for a crash or for another command at that
+/// moment.
+mod review {
+
+    use super::super::*;
+    use crate::apply::{ApplyRequest, Applier, VerifyModeArg};
+    use crate::install::Install;
+    use crate::links::CreateLinkRequest;
+    use crate::platform::{
+        DiskSpace, DriveInfo, FakePlatform, FileIdentity, LockState, Platform, ProcessInfo, RenameError,
+        SymlinkCapability, VolumeId,
+    };
+    use crate::progress::{CancelToken, NullSink};
+    use crate::testkit::{weights, weights_hash, TestWorld};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    const OLD: &str = "my-favourite.safetensors";
+    const KEPT: &str = "lora1.safetensors";
+
+    type Hook<'a> = Box<dyn FnOnce() + Send + 'a>;
+
+    /// FakePlatform plus one action run just before a chosen link is created or
+    /// removed. It stands in for a crash, or another thread, at that instant.
+    struct Hooked<'a> {
+        inner: &'a FakePlatform,
+        before_remove: Mutex<HashMap<PathBuf, Hook<'a>>>,
+        before_create: Mutex<HashMap<PathBuf, Hook<'a>>>,
+    }
+
+    impl<'a> Hooked<'a> {
+        fn new(inner: &'a FakePlatform) -> Self {
+            Self { inner, before_remove: Mutex::new(HashMap::new()), before_create: Mutex::new(HashMap::new()) }
+        }
+        fn before_removing(&self, link: &Path, f: impl FnOnce() + Send + 'a) {
+            self.before_remove.lock().unwrap().insert(link.to_path_buf(), Box::new(f));
+        }
+        fn before_creating(&self, link: &Path, f: impl FnOnce() + Send + 'a) {
+            self.before_create.lock().unwrap().insert(link.to_path_buf(), Box::new(f));
+        }
+    }
+
+    impl<'a> Platform for Hooked<'a> {
+        fn create_file_symlink(&self, link: &Path, target: &Path) -> Result<()> {
+            let hook = self.before_create.lock().unwrap().remove(link);
+            if let Some(f) = hook {
+                f();
+            }
+            self.inner.create_file_symlink(link, target)
+        }
+        fn remove_symlink(&self, link: &Path) -> Result<()> {
+            let hook = {
+                let mut m = self.before_remove.lock().unwrap();
+                m.remove(link).or_else(|| m.remove(Path::new("*")))
+            };
+            if let Some(f) = hook {
+                f();
+            }
+            self.inner.remove_symlink(link)
+        }
+        fn read_symlink(&self, link: &Path) -> Result<PathBuf> {
+            self.inner.read_symlink(link)
+        }
+        fn symlink_capability(&self) -> SymlinkCapability {
+            self.inner.symlink_capability()
+        }
+        fn lock_state(&self, path: &Path) -> LockState {
+            self.inner.lock_state(path)
+        }
+        fn volume_id(&self, path: &Path) -> Result<VolumeId> {
+            self.inner.volume_id(path)
+        }
+        fn file_identity(&self, path: &Path) -> Option<FileIdentity> {
+            self.inner.file_identity(path)
+        }
+        fn disk_space(&self, path: &Path) -> Result<DiskSpace> {
+            self.inner.disk_space(path)
+        }
+        fn list_processes(&self) -> Vec<ProcessInfo> {
+            self.inner.list_processes()
+        }
+        fn listening_ports(&self, pids: &[u32]) -> HashMap<u32, Vec<u16>> {
+            self.inner.listening_ports(pids)
+        }
+        fn processes_holding(&self, pids: &[u32], files: &[PathBuf]) -> HashMap<u32, bool> {
+            self.inner.processes_holding(pids, files)
+        }
+        fn long_paths_enabled(&self) -> Option<bool> {
+            self.inner.long_paths_enabled()
+        }
+        fn drive_roots(&self) -> Vec<PathBuf> {
+            self.inner.drive_roots()
+        }
+        fn drives(&self) -> Vec<DriveInfo> {
+            self.inner.drives()
+        }
+        fn rename(&self, from: &Path, to: &Path) -> std::result::Result<(), RenameError> {
+            let hook = self.before_remove.lock().unwrap().remove(Path::new("*"));
+            if let Some(f) = hook {
+                f();
+            }
+            self.inner.rename(from, to)
+        }
+    }
+
+    fn sha() -> String {
+        weights_hash("same")
+    }
+
+    fn loras(i: &Install) -> PathBuf {
+        i.root.join("models").join("loras")
+    }
+
+    fn consolidate(w: &TestWorld, id: &str, installs: &[Install]) {
+        let plan = w.plan(installs);
+        Applier::new(&w.store, &w.platform)
+            .apply(
+                id,
+                &plan,
+                &ApplyRequest {
+                    plan_id: plan.plan_id.clone(),
+                    group_ids: plan.groups.iter().map(|g| g.group_id.clone()).collect(),
+                    verify: VerifyModeArg::SizeAndMtime,
+                    stop_on_error: false,
+                },
+                &CancelToken::new(),
+                &NullSink,
+            )
+            .unwrap();
+    }
+
+    fn link_by_hand(w: &TestWorld, install: &Install, name: &str) -> LinkRecord {
+        Links::new(&w.store, &w.platform)
+            .create(&CreateLinkRequest {
+                install_id: install.id.clone(),
+                sha256: sha(),
+                relative_dir: "models/loras".into(),
+                dir: None,
+                link_name: Some(name.into()),
+                create_dir: true,
+            })
+            .unwrap()
+    }
+
+    /// Every link or file under the installs and whether it loads the model.
+    fn installs_state(w: &TestWorld, installs: &[&Install]) -> Vec<String> {
+        let mut out = Vec::new();
+        for i in installs {
+            let Ok(rd) = std::fs::read_dir(loras(i)) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                let link = std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                let loads = std::fs::read(&p).map(|b| b == weights("same")).unwrap_or(false);
+                out.push(format!("{} link={link} loads={loads}", p.strip_prefix(w.path()).unwrap().display()));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    fn dead_links(w: &TestWorld, installs: &[&Install]) -> Vec<String> {
+        installs_state(w, installs).into_iter().filter(|s| s.contains("link=true loads=false")).collect()
+    }
+
+    // ---------------------------------------------------------------------------
+    // U1. A crash inside the vault rename that the job starts. rename_file
+    // journals each step AFTER it happens, and nothing recovers a "rename-"
+    // journal when the vault opens. Crash after the file moved and before its old
+    // name became a link: every install link points at the old name.
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn u1_a_crash_in_the_vault_rename_leaves_every_install_loading_the_model() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone()]);
+        let rec = w.store.vault_file(&sha()).unwrap().unwrap();
+        assert_eq!(rec.canonical_name, KEPT, "setup: the vault keeps A's name");
+
+        // Choosing B's name makes the job rename the vault file KEPT -> OLD.
+        let vault_kept = std::fs::canonicalize(&w.vault_root).unwrap().join(&rec.category).join(KEPT);
+        let hooked = Hooked::new(&w.platform);
+        hooked.before_creating(&vault_kept, || panic!("simulated crash: power lost"));
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Unify::new(&w.store, &hooked).unify(&sha(), OLD)
+        }));
+        assert!(crashed.is_err(), "setup: the crash must happen inside the vault rename");
+
+        // The vault opens again.
+        Links::new(&w.store, &w.platform).finish_interrupted().unwrap();
+        Unify::new(&w.store, &w.platform).finish_interrupted().unwrap();
+
+        let dead = dead_links(&w, &[&a, &b]);
+        let health = Vault::new(&w.store, &w.platform).health().unwrap();
+        let job_id = w.store.journal_ids().unwrap().into_iter().find(|i| i.starts_with(UNIFY_JOURNAL_PREFIX)).unwrap();
+        let job = w.store.unify_job(&job_id).unwrap().unwrap();
+        let rerun = Unify::new(&w.store, &w.platform).unify(&sha(), OLD).map(|_| ()).map_err(|e| e.message);
+        let undo = Unify::new(&w.store, &w.platform).undo(&job_id);
+        let after_undo = dead_links(&w, &[&a, &b]);
+        assert!(
+            dead.is_empty(),
+            "after the crash and a reopen, install links load nothing: {dead:#?}\n\
+             record canonical name: {:?}; file on disk at OLD: {}\n\
+             health dangling: {}; job.vault_rename recorded: {:?}\n\
+             running the job again: {rerun:?}\n\
+             undo_unify_name: {:?}; dead after that undo: {after_undo:#?}",
+            w.store.vault_file(&sha()).unwrap().map(|r| r.canonical_name),
+            vault_kept.with_file_name(OLD).is_file(),
+            health.dangling_links.len(),
+            job.vault_rename,
+            undo.map_err(|e| e.message),
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // U2. An install the app cannot see right now (a drive unplugged). The job
+    // skips its link, but still removes the vault name that link points at,
+    // because only links on the disk right now count as "using" a name.
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn u2a_an_unplugged_install_keeps_a_working_link_no_vault_rename() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone()]);
+        let b_target = std::fs::read_link(loras(&b).join(OLD)).unwrap();
+
+        // B's drive is unplugged.
+        let away = b.root.with_extension("unplugged");
+        std::fs::rename(&b.root, &away).unwrap();
+        let r = Unify::new(&w.store, &w.platform).unify(&sha(), KEPT).unwrap();
+        std::fs::rename(&away, &b.root).unwrap();
+
+        let dead = dead_links(&w, &[&a, &b]);
+        assert!(
+            dead.is_empty(),
+            "B was plugged back in and its link loads nothing: {dead:#?}\nB's link points at {b_target:?}\n\
+             the plan never mentioned B; result renamed={} removed={} skipped={}; vault names now {:?}",
+            r.renamed.len(),
+            r.removed.len(),
+            r.skipped.len(),
+            w.store.vault_file(&sha()).unwrap().map(|f| (f.canonical_name, f.aliases)),
+        );
+    }
+
+
+    // ---------------------------------------------------------------------------
+    // U3. A consolidation undo puts back the name changes made after it, newest
+    // first, and stops at the first one it cannot put back. The ones before it
+    // are already put back, so a refused undo still changes the installs.
+    // ---------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------------
+    // U4. PLAUSIBLE trigger, real mechanism. The vault rename repoints every
+    // install link: remove, create at the new target, and if that fails, create
+    // at the old target. If that also fails, the `?` returns with the link gone.
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn u4_a_link_the_vault_rename_cannot_repoint_is_never_lost() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone()]);
+        // C already uses the chosen name, through the vault's own name.
+        let c_rec = link_by_hand(&w, &c, OLD);
+        assert_eq!(c_rec.vault_rel_path.file_name().unwrap(), KEPT, "setup: C's link names the vault file");
+        // Windows refuses to create a link at C's place from now on.
+        w.platform.fail_symlink_at(
+            c_rec.abs_path.clone(),
+            crate::error::VaultError::new(crate::error::ErrorCode::PermissionDenied, "refused"),
+        );
+
+        let r = Unify::new(&w.store, &w.platform).unify(&sha(), OLD);
+        let dead_or_gone: Vec<String> = installs_state(&w, &[&c]).into_iter().filter(|s| !s.contains("loads=true")).collect();
+        assert!(
+            std::fs::read(&c_rec.abs_path).map(|b| b == weights("same")).unwrap_or(false),
+            "install C lost the model: {dead_or_gone:?}; unify said {:?}",
+            r.map(|x| x.stopped).map_err(|e| e.message)
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // C1. Coverage: a link that became a real file after the job read it is never
+    // removed. Passes today. Fails if the `still_ours` check in `unify` is taken
+    // out, which no repo test notices: `remove_symlink` then deletes the file.
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn c1_a_link_replaced_by_a_real_file_during_the_job_is_never_removed() {
+        let w = TestWorld::new();
+        let a = w.add_install("A");
+        let b = w.add_install("B");
+        let c = w.add_install("C");
+        w.write_model(&a, &format!("models/loras/{KEPT}"), &weights("same"));
+        let pb = w.write_model(&b, &format!("models/loras/{OLD}"), &weights("same"));
+        let pc = w.write_model(&c, &format!("models/loras/{OLD}"), &weights("same"));
+        consolidate(&w, "ap-1", &[a.clone(), b.clone(), c.clone()]);
+
+        // While the job works on one of B and C, the other becomes a real file.
+        let hooked = Hooked::new(&w.platform);
+        for (this, other) in [(pb.clone(), pc.clone()), (pc.clone(), pb.clone())] {
+            hooked.before_removing(&this, move || {
+                if std::fs::symlink_metadata(&other).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                    std::fs::remove_file(&other).unwrap();
+                    std::fs::write(&other, b"the person's own file").unwrap();
+                }
+            });
+        }
+        let _ = Unify::new(&w.store, &hooked).unify(&sha(), KEPT);
+        let survived = [&pb, &pc]
+            .into_iter()
+            .any(|p| std::fs::read(p).map(|x| x == b"the person's own file").unwrap_or(false));
+        assert!(survived, "the real file that replaced a link during the job was deleted");
+    }
+}

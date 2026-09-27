@@ -771,6 +771,20 @@ impl Store {
         self.put_meta("lastDownloadInstalls", &ids)
     }
 
+    /// A yes-or-no mark kept beside the journals, such as "this rename's undo
+    /// has started". Missing reads as no.
+    pub fn meta_flag(&self, key: &str) -> Result<bool> {
+        Ok(self.get::<bool>(META, key)?.unwrap_or(false))
+    }
+
+    pub fn put_meta_flag(&self, key: &str, on: bool) -> Result<()> {
+        if on {
+            self.put_meta(key, &true)
+        } else {
+            self.delete(META, key).map(|_| ())
+        }
+    }
+
     /// What a "use one name everywhere" job was asked to do, and the link
     /// records it replaced, which its undo puts back.
     pub fn put_unify_job(&self, job: &crate::unify::UnifyJob) -> Result<()> {
