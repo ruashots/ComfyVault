@@ -286,7 +286,8 @@ impl<'a> Links<'a> {
             .proved()?;
         let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         crate::paths::validate_file_name(&name)?;
-        crate::download::folders::inside_roots(&install, category, dir)?;
+        // Made where it really is: the place just proved, not the text given.
+        let dir = &crate::download::folders::inside_roots(&install, category, dir)?;
         if dir.is_dir() {
             return Ok((dir.to_path_buf(), false));
         }
@@ -1323,7 +1324,10 @@ mod tests {
             w.path().join("elsewhere"),
         ] {
             let err = links(&w).create(&by_dir(&i, &sha, bad.clone(), true)).unwrap_err();
-            assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{bad:?}: {err:?}");
+            assert!(
+                matches!(err.code, ErrorCode::PathOutsideBoundary | ErrorCode::InvalidArgument),
+                "{bad:?}: {err:?}"
+            );
             assert!(!bad.exists(), "{bad:?} was made");
         }
         let both = CreateLinkRequest { relative_dir: "models/loras".into(), ..by_dir(&i, &sha, i.root.join("models/loras"), true) };
@@ -1450,6 +1454,42 @@ mod tests {
         assert_eq!(links(&w).finish_interrupted().unwrap(), 0);
         assert!(w.store.link_at_path(&link).unwrap().is_none());
         assert_eq!(std::fs::read(&link).unwrap(), b"theirs");
+    }
+
+    // --- a planted link followed by `..` -------------------------------------
+
+    /// `models/loras/planted` leads to `outside/deep/leaf`. Read as text,
+    /// `planted/../x` is `models/loras/x`; followed, it is `outside/deep/x`.
+    fn planted_world(w: &TestWorld) -> (Install, PathBuf) {
+        let i = w.add_install("A");
+        let outside = w.path().join("outside/deep/leaf");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(i.root.join("models/loras")).unwrap();
+        let planted = i.root.join("models/loras/planted");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &planted).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside, &planted).unwrap();
+        (i, planted)
+    }
+
+    #[test]
+    fn a_new_folder_through_a_planted_link_and_dot_dot_is_never_made_outside() {
+        let w = TestWorld::new();
+        let (i, planted) = planted_world(&w);
+        let err = links(&w).make_link_folder(&i.id, "loras", &planted.join("..").join("newdir")).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{err:?}");
+        assert!(!w.path().join("outside/deep/newdir").exists(), "a folder was made outside");
+    }
+
+    #[test]
+    fn a_link_through_a_planted_link_and_dot_dot_makes_nothing_outside() {
+        let w = TestWorld::new();
+        let (i, planted) = planted_world(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let err = links(&w).create(&by_dir(&i, &sha, planted.join("..").join("a").join("b"), true)).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{err:?}");
+        assert!(!w.path().join("outside/deep/a").exists(), "a folder was made outside");
     }
 }
 

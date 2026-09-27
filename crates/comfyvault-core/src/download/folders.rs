@@ -159,6 +159,12 @@ pub fn inside_roots(install: &Install, category: &str, dir: &Path) -> crate::Res
     if !dir.is_absolute() {
         return Err(crate::VaultError::invalid("Choose a folder by its full path."));
     }
+    // The chooser never sends `..` or `.`. Read as text, `a\link\..` is `a`;
+    // the system follows the link first and lands somewhere else. So a path
+    // that has them is refused rather than judged one way and used another.
+    if dir.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::CurDir)) {
+        return Err(crate::VaultError::invalid("Choose a folder in the list. A path with `..` in it is not used."));
+    }
     let real = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(dir))?;
     for root in roots(install, category) {
         let Ok(real_root) = crate::paths::canonicalize_existing_prefix(&crate::paths::lexical_normalize(&root.path)) else {

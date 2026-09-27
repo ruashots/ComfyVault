@@ -1112,8 +1112,9 @@ impl Downloader {
             let chosen = d.link_dirs.iter().find(|c| c.install_id == id).map(|c| c.dir.clone());
             let folder = match chosen {
                 // Proved again: the disk may have changed since it was chosen.
+                // Made and linked where it really is, the place just proved.
                 Some(dir) => match folders::inside_roots(&install, &d.category, &dir) {
-                    Ok(_) => dir,
+                    Ok(real) => real,
                     Err(e) => {
                         d.not_linked.push(NotLinked { install_id: id, reason: e.message });
                         continue;

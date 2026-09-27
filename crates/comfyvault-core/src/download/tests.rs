@@ -1125,6 +1125,24 @@ fn a_linked_folder_planted_inside_a_root_cannot_lead_out() {
 }
 
 #[test]
+fn a_chosen_folder_through_a_planted_link_and_dot_dot_makes_nothing_outside() {
+    let w = world(content("dotdot", 1_000), true);
+    let a = w.install("A");
+    let outside = w.root.join("outside/deep/leaf");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::create_dir_all(a.root.join("models/text_encoders")).unwrap();
+    let planted = a.root.join("models/text_encoders/planted");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &planted).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&outside, &planted).unwrap();
+    let err = w.start_in(HF, "text_encoders", vec![(&a, planted.join("..").join("a").join("b"))]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument, "{err:?}");
+    assert!(!w.root.join("outside/deep/a").exists(), "a folder was made outside");
+    assert!(w.ctx.store.downloads().unwrap().is_empty());
+}
+
+#[test]
 fn a_name_taken_in_the_same_subfolder_of_another_root_is_not_linked_over() {
     // ComfyUI names the model `portraits\t5.safetensors` in every root it
     // reads, so the same subfolder path in another root is the same name.
