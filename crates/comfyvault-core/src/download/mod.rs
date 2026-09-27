@@ -1254,7 +1254,14 @@ fn links_record(ctx: &Context, install: &Install, path: &Path, record: &VaultFil
 fn target_state_in(install: &Install, category: &str, dir: &Path, name: &str, vault_file: Option<&Path>, vault: &Path) -> InstallTargetState {
     let under = folders::roots(install, category, vault)
         .into_iter()
-        .find_map(|r| dir.strip_prefix(&r.path).ok().map(Path::to_path_buf))
+        .find_map(|r| {
+            // `dir` can be the real place, beyond a junction.
+            let real = crate::paths::canonicalize_clean(&r.path).ok();
+            dir.strip_prefix(&r.path)
+                .ok()
+                .or_else(|| real.as_deref().and_then(|rr| dir.strip_prefix(rr).ok()))
+                .map(Path::to_path_buf)
+        })
         .unwrap_or_default();
     let mut has_link = false;
     for folder in folders::searched(install, category) {

@@ -1188,6 +1188,30 @@ fn every_folder_in_a_chosen_path_is_held_to_the_name_rules() {
 }
 
 #[test]
+fn a_download_links_into_a_models_folder_that_is_a_junction() {
+    let bytes = content("junction", 1_500);
+    let w = world(bytes.clone(), true);
+    let a = w.install("A");
+    let other_drive = w.root.join("D-drive/text_encoders");
+    std::fs::create_dir_all(&other_drive).unwrap();
+    std::fs::create_dir_all(a.root.join("models")).unwrap();
+    crate::links::tests::junction(&a.root.join("models/text_encoders"), &other_drive);
+
+    let p = w.read(HF, None).plan.unwrap();
+    assert_eq!(p.installs[0].state, InstallTargetState::Free);
+    let d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
+    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
+    assert!(d.not_linked.is_empty(), "{:?}", d.not_linked);
+    assert_eq!(read_link(&other_drive.join("t5.safetensors")), bytes);
+
+    let chosen = a.root.join("models/text_encoders/sub");
+    *w.site.bytes.lock().unwrap() = content("junction two", 1_500);
+    let d = w.settle(&w.start_in(HF, "text_encoders", vec![(&a, chosen)]).unwrap().download_id);
+    assert!(d.not_linked.is_empty(), "{:?}", d.not_linked);
+    assert!(std::fs::symlink_metadata(other_drive.join("sub/t5.safetensors")).is_ok());
+}
+
+#[test]
 fn a_name_taken_in_the_same_subfolder_of_another_root_is_not_linked_over() {
     // ComfyUI names the model `portraits\t5.safetensors` in every root it
     // reads, so the same subfolder path in another root is the same name.

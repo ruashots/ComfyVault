@@ -187,7 +187,10 @@ impl<'a> Links<'a> {
         let Some(dir) = &req.dir else {
             let folder = self.resolve_dir_path(&install, &req.relative_dir)?;
             let made = journal.folder(&folder, req.create_dir)?;
-            let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir);
+            let category = crate::scan::hash::normalize_sha256(&req.sha256)
+                .and_then(|sha| self.store.vault_file(&sha).ok().flatten())
+                .map(|f| f.category);
+            let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir, category.as_deref());
             journal.folder_done(made, target_dir.is_ok())?;
             return self.make(&install, &req.sha256, target_dir?, req.link_name.clone(), LinkOrigin::Manual, None, Some(&mut journal));
         };
@@ -210,7 +213,7 @@ impl<'a> Links<'a> {
             .with_path(dir));
         }
         let made = journal.folder(dir, req.create_dir)?;
-        let target_dir = self.prove_dir(&install, dir.clone(), req.create_dir);
+        let target_dir = self.prove_dir(&install, dir.clone(), req.create_dir, Some(&category));
         journal.folder_done(made, target_dir.is_ok())?;
         let record = self.make(&install, &sha, target_dir?, req.link_name.clone(), LinkOrigin::Manual, None, Some(&mut journal))?;
         self.store.put_link_dir(&install.id, &category, dir)?;
@@ -318,7 +321,8 @@ impl<'a> Links<'a> {
         origin: LinkOrigin,
         apply_id: Option<String>,
     ) -> Result<LinkRecord> {
-        let target_dir = self.prove_dir(install, folder.to_path_buf(), true)?;
+        let category = self.store.vault_file(sha256)?.map(|f| f.category);
+        let target_dir = self.prove_dir(install, folder.to_path_buf(), true, category.as_deref())?;
         // A download journals its own steps.
         self.make(install, sha256, target_dir, Some(name.to_string()), origin, apply_id, None)
     }
@@ -534,7 +538,7 @@ impl<'a> Links<'a> {
             // Its folders come from the disk, not from the database row.
             .proved()?;
         let existed = self.resolve_dir_path(&install, relative_dir)?.is_dir();
-        let path = self.resolve_dir(&install, relative_dir, true)?;
+        let path = self.resolve_dir(&install, relative_dir, true, None)?;
         Ok((path, !existed))
     }
 
@@ -614,20 +618,34 @@ impl<'a> Links<'a> {
 
     /// Resolves a folder and proves it lands inside one of the install's model
     /// roots.
-    fn resolve_dir(&self, install: &Install, relative_dir: &str, create: bool) -> Result<PathBuf> {
+    fn resolve_dir(&self, install: &Install, relative_dir: &str, create: bool, category: Option<&str>) -> Result<PathBuf> {
         let candidate = self.resolve_dir_path(install, relative_dir)?;
-        self.prove_dir(install, candidate, create)
+        self.prove_dir(install, candidate, create, category)
     }
 
     /// Proves a folder lands inside one of the install's model roots, and
     /// creates it if asked.
-    fn prove_dir(&self, install: &Install, candidate: PathBuf, create: bool) -> Result<PathBuf> {
+    ///
+    /// With a category, the folders ComfyUI reads for it count wherever they
+    /// really are. `models\\loras` is often a junction to another drive, and
+    /// ComfyUI reads the other drive through it, so a link there is one it
+    /// finds. Everything else must really be inside the install's model
+    /// folders, as before.
+    fn prove_dir(&self, install: &Install, candidate: PathBuf, create: bool, category: Option<&str>) -> Result<PathBuf> {
         let boundaries = install.link_boundaries();
+        let read_by_comfy: Vec<PathBuf> = category
+            .map(|c| crate::download::folders::roots(install, c, self.store.vault_root()))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| crate::paths::canonicalize_clean(&r.path).ok())
+            .collect();
 
         // Checked before anything is created. A refused request must leave no
         // trace, so the engine does not make a folder and then decide it should
         // not have.
-        if !boundaries.iter().any(|b| candidate.starts_with(b)) {
+        let named_inside = boundaries.iter().any(|b| candidate.starts_with(b))
+            || read_by_comfy.iter().any(|r| crate::download::folders::is_under(r, &candidate));
+        if !named_inside {
             return Err(outside_boundary(&candidate));
         }
 
@@ -654,7 +672,9 @@ impl<'a> Links<'a> {
         let in_vault = crate::paths::canonicalize_clean(self.store.vault_root())
             .map(|v| crate::download::folders::is_under(&v, &resolved))
             .unwrap_or(false);
-        if in_vault || !boundaries.iter().any(|b| crate::paths::is_within(b, &resolved)) {
+        let inside = boundaries.iter().any(|b| crate::paths::is_within(b, &resolved))
+            || read_by_comfy.iter().any(|r| crate::download::folders::is_under(r, &resolved));
+        if in_vault || !inside {
             // Only a folder this call made. One that was there is somebody's.
             if !existed {
                 let _ = crate::apply::fsops::remove_dir_if_empty(&candidate);
@@ -670,9 +690,11 @@ impl<'a> Links<'a> {
         if rel.as_os_str().is_empty() {
             return Err(VaultError::invalid("Choose a folder inside the install."));
         }
-        // Resolves the existing part of the path fully, so a link planted in
-        // the chain cannot reach outside the install.
-        crate::paths::resolve_within(&install.root, &rel)
+        // Joined as text, with `..` already refused. Where it really leads is
+        // proved in `prove_dir`, which follows every link in the chain: a
+        // link planted to lead out is refused there, and a model folder that
+        // is a junction to another drive is accepted there.
+        Ok(install.root.join(rel))
     }
 }
 
@@ -731,7 +753,7 @@ fn build_node(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::testkit::{weights, weights_hash, TestWorld};
 
@@ -1554,6 +1576,75 @@ mod tests {
         let bad = shared.join("look\u{202E}gpj");
         assert_eq!(links(&w).make_link_folder(&i.id, "loras", &bad).unwrap_err().code, ErrorCode::InvalidArgument);
         assert!(!bad.exists());
+    }
+
+    // --- a model folder that is a junction to another drive -------------------
+
+    /// Makes `link` a folder link to `target`: a junction on Windows, as
+    /// people make them, and a symbolic link elsewhere.
+    pub(crate) fn junction(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            // cmd reads `/` as the start of an option, so every separator is
+            // written the Windows way.
+            let win = |p: &Path| p.to_string_lossy().replace('/', "\\");
+            let out = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J", &win(link), &win(target)])
+                .output()
+                .unwrap();
+            assert!(out.status.success() && link.exists(), "mklink /J failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[test]
+    fn a_models_folder_that_is_a_junction_to_another_drive_takes_links() {
+        let w = TestWorld::new();
+        let i = w.add_install("A");
+        let other_drive = w.path().join("D-drive/loras");
+        std::fs::create_dir_all(&other_drive).unwrap();
+        std::fs::create_dir_all(i.root.join("models")).unwrap();
+        junction(&i.root.join("models/loras"), &other_drive);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+
+        // The Library's older form, by a folder under the install.
+        let rel = CreateLinkRequest {
+            install_id: i.id.clone(),
+            sha256: sha.clone(),
+            relative_dir: "models/loras".into(),
+            dir: None,
+            link_name: None,
+            create_dir: false,
+        };
+        links(&w).create(&rel).unwrap();
+        assert_eq!(w.read(&other_drive.join("lora1.safetensors")), weights("lora1"));
+
+        // The chooser's form, into a folder inside it.
+        let named = CreateLinkRequest {
+            link_name: Some("second.safetensors".into()),
+            ..by_dir(&i, &sha, i.root.join("models/loras/portraits"), true)
+        };
+        links(&w).create(&named).unwrap();
+        assert_eq!(w.read(&other_drive.join("portraits/second.safetensors")), weights("lora1"));
+
+        // The guarantee holds for everything else: the same drive is not a
+        // place for a checkpoint.
+        let wrong = CreateLinkRequest {
+            relative_dir: "models/checkpoints".into(),
+            create_dir: true,
+            ..rel
+        };
+        let vault_ckpt = vault_a_file(&w, "ck", "checkpoints", "ck.safetensors");
+        let _ = vault_ckpt;
+        std::fs::create_dir_all(i.root.join("models/checkpoints")).unwrap();
+        assert!(links(&w).create(&wrong).is_ok(), "a real models/checkpoints still works");
+        let escape = CreateLinkRequest {
+            link_name: Some("third.safetensors".into()),
+            ..by_dir(&i, &sha, w.path().join("D-drive/elsewhere"), true)
+        };
+        assert!(links(&w).create(&escape).is_err());
+        assert!(!w.path().join("D-drive/elsewhere").exists());
     }
 }
 

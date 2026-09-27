@@ -2685,6 +2685,11 @@ So:
   `custom_nodes`, where ComfyUI imports code from, or inside the vault, whose
   folders hold the models the links point at. None of these is offered in
   `roots`, and no link or folder is made in one.
+- A folder ComfyUI reads for the category counts wherever it really is. A
+  `models\loras` that is a junction to another drive takes links, in it and
+  in folders inside it, because ComfyUI reads that drive through it. Any
+  other place must really be inside the install's model folders, its YAML
+  folders or its output model folders.
 - **A name is taken when any folder ComfyUI searches for that category, in
   that install, already holds it.** One of the two files would never load,
   wherever the link went. That install's `state` is `nameTaken`, and nothing
