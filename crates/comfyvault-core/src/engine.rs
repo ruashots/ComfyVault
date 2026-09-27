@@ -954,6 +954,8 @@ impl Engine {
     }
 
     /// Undoes a run, on its own thread.
+    ///
+    /// Link and name changes from the Library wait until it ends.
     pub fn start_revert(
         self: &Arc<Self>,
         apply_id: String,
@@ -968,8 +970,15 @@ impl Engine {
         std::thread::Builder::new()
             .name("comfyvault-revert".into())
             .spawn(move || {
-                let result = Applier::new(&store, engine.platform.as_ref())
-                    .revert(&id, &cancel, sink.as_ref());
+                // Held for the whole undo, as every command that changes a
+                // link or a name holds it. An undo puts names back and
+                // removes links, and a Library link made in between could
+                // land on a place it has just checked.
+                let writes = engine.vault_writes.lock();
+                let result = match writes {
+                    Ok(_writes) => Applier::new(&store, engine.platform.as_ref()).revert(&id, &cancel, sink.as_ref()),
+                    Err(_) => Err(poisoned()),
+                };
                 engine.clear_slot();
                 on_done(result);
             })

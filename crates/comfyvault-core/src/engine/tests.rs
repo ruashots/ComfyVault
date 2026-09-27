@@ -1531,3 +1531,60 @@ fn a_name_change_waits_for_a_running_consolidation() {
     assert_eq!(err.code, ErrorCode::VaultBusy);
     assert_eq!(f.engine.undo_unify_name("unify-x").unwrap_err().code, ErrorCode::VaultBusy);
 }
+
+/// Stops the undo at its first progress update until the test lets it go.
+struct HoldingSink {
+    started: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl ProgressSink<crate::apply::RevertProgress> for HoldingSink {
+    fn emit(&self, _update: &crate::apply::RevertProgress) {
+        if let Some(tx) = self.started.lock().unwrap().take() {
+            tx.send(()).unwrap();
+            let _ = self.release.lock().unwrap().recv();
+        }
+    }
+}
+
+#[test]
+fn a_library_link_waits_for_an_undo_in_progress() {
+    let f = Fixture::new();
+    let (a, _b) = consolidated_under_two_names(&f);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let sink = Arc::new(HoldingSink {
+        started: std::sync::Mutex::new(Some(started_tx)),
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    f.engine
+        .start_revert("ap-1".into(), sink, Arc::new(move |r| done_tx.send(r.is_ok()).unwrap()))
+        .unwrap();
+    started_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the undo started");
+
+    // A link made by hand while the undo is part way.
+    let (linked_tx, linked_rx) = std::sync::mpsc::channel();
+    let engine = Arc::clone(&f.engine);
+    let install = a.id.clone();
+    std::thread::spawn(move || {
+        let r = engine.create_link(&CreateLinkRequest {
+            install_id: install,
+            sha256: weights_hash("same"),
+            relative_dir: "models/loras/extra".into(),
+            dir: None,
+            link_name: None,
+            create_dir: true,
+        });
+        linked_tx.send(r.is_ok()).unwrap();
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(linked_rx.try_recv().is_err(), "the link went ahead while the undo held the lock");
+
+    release_tx.send(()).unwrap();
+    assert!(done_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(), "the undo finished");
+    // Once the undo is done the model is out of the vault, so the link is
+    // refused cleanly rather than made to a file the undo removed.
+    let linked = linked_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the link call finished");
+    assert!(!linked, "no link to a model the undo took out of the vault");
+}

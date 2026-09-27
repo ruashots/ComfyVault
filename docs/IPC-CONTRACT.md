@@ -203,6 +203,16 @@ describes. While that delete runs, the commands that change a link or a vault
 name wait for it to finish. It removes links and one file, so the wait is
 short.
 
+While an undo (`revert_apply`) runs, `create_link`, `remove_link`,
+`create_link_folder`, `remove_dangling_links` and `delete_vault_file` without
+`removeLinks` wait for it to finish. `unify_name`, `undo_unify_name` and
+`delete_vault_file` with `removeLinks: true` are rejected with `vaultBusy`, as
+during any long operation. An undo puts names back and
+removes links, and a link made part way through could land on a place it has
+just checked. An undo that copies large files back can take minutes, and the
+call waits that long. Check `get_app_state().busy` first, and say an undo is
+running rather than leave a button spinning.
+
 A download is not a long operation. It runs beside a scan, a consolidation
 and an undo, and section 16.3 says how they meet.
 
