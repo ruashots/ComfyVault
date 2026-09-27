@@ -179,6 +179,16 @@ pub fn inside_roots(install: &Install, category: &str, dir: &Path, vault: &Path)
             continue;
         };
         if is_under(&real_root, &real) {
+            // Every folder below the root is held to the rules a new folder's
+            // name is held to, since each may be made.
+            let below = dir
+                .strip_prefix(&root.path)
+                .map(Path::to_path_buf)
+                .or_else(|_| real.strip_prefix(&real_root).map(Path::to_path_buf))
+                .unwrap_or_default();
+            for part in below.components() {
+                folder_name_ok(&part.as_os_str().to_string_lossy())?;
+            }
             return Ok(real);
         }
     }
@@ -187,6 +197,20 @@ pub fn inside_roots(install: &Install, category: &str, dir: &Path, vault: &Path)
         "That folder is not one ComfyUI reads for this kind of model, so a link there would not show. Choose a folder in the list.",
     )
     .with_path(dir))
+}
+
+/// A folder name the chooser may make: a valid file name, and no character
+/// that changes the direction text is shown in, which can make a name look
+/// like another on screen.
+pub fn folder_name_ok(name: &str) -> crate::Result<()> {
+    crate::paths::validate_file_name(name)?;
+    let turns = |c: char| matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    if name.chars().any(turns) {
+        return Err(crate::VaultError::invalid(
+            "That folder name has a character that changes how text is shown. Choose another name.",
+        ));
+    }
+    Ok(())
 }
 
 /// `path` is `root` or inside it, component by component, ignoring case

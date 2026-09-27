@@ -285,7 +285,7 @@ impl<'a> Links<'a> {
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
             .proved()?;
         let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        crate::paths::validate_file_name(&name)?;
+        crate::download::folders::folder_name_ok(&name)?;
         // Made where it really is: the place just proved, not the text given.
         let dir = &crate::download::folders::inside_roots(&install, category, dir, self.store.vault_root())?;
         if dir.is_dir() {
@@ -1545,6 +1545,15 @@ mod tests {
         assert!(links(&w).create(&named).is_err());
         assert!(!vault_loras.join("new").exists());
         assert!(std::fs::symlink_metadata(vault_loras.join("other.safetensors")).is_err(), "a link was made in the vault");
+    }
+
+    #[test]
+    fn the_chooser_refuses_a_folder_name_that_turns_text_around() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let bad = shared.join("look\u{202E}gpj");
+        assert_eq!(links(&w).make_link_folder(&i.id, "loras", &bad).unwrap_err().code, ErrorCode::InvalidArgument);
+        assert!(!bad.exists());
     }
 }
 

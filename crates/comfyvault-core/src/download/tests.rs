@@ -1167,6 +1167,27 @@ fn a_yaml_default_folder_inside_the_vault_never_gets_a_link() {
 }
 
 #[test]
+fn every_folder_in_a_chosen_path_is_held_to_the_name_rules() {
+    let w = world(content("names", 1_000), true);
+    let a = w.install("A");
+    let root = a.root.join("models/text_encoders");
+    for bad in [
+        root.join("x:y").join("ok"),
+        root.join("ok").join("CON"),
+        root.join("a\tb"),
+        root.join("trailing."),
+        root.join("look\u{202E}gpj"),
+    ] {
+        let err = w.start_in(HF, "text_encoders", vec![(&a, bad.clone())]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{bad:?}: {err:?}");
+    }
+    assert!(w.ctx.store.downloads().unwrap().is_empty());
+    assert!(!root.exists(), "a folder was made");
+    // The control: a plain nested choice is accepted.
+    assert!(w.start_in(HF, "text_encoders", vec![(&a, root.join("portraits").join("v2"))]).is_ok());
+}
+
+#[test]
 fn a_name_taken_in_the_same_subfolder_of_another_root_is_not_linked_over() {
     // ComfyUI names the model `portraits\t5.safetensors` in every root it
     // reads, so the same subfolder path in another root is the same name.

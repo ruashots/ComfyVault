@@ -2707,6 +2707,9 @@ Arguments:
 }
 ```
 
+Each folder in a chosen `dir`, below its root, must be a valid file name
+with no character that changes how text is shown, or the call refuses with
+`invalidArgument`. A `dir` with `..` or `.` in it is refused the same way.
 Each `dir` in `links` is proved as `create_link`'s `dir` is (section 7.1),
 before anything is queued: a folder outside the roots for the category is
 refused with `pathOutsideBoundary`, and nothing is downloaded. It is proved
