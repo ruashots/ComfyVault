@@ -1497,6 +1497,7 @@ fn a_name_change_cut_off_by_a_crash_is_finished_when_the_vault_opens() {
             name: "lora1.safetensors".into(),
             started_at: crate::time_util::Timestamp::now(),
             replaced: Vec::new(),
+            ..Default::default()
         })
         .unwrap();
     store

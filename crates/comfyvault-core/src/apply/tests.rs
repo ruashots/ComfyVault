@@ -1831,11 +1831,11 @@ fn the_default_is_to_check() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn undoing_a_run_after_the_model_was_renamed_in_the_vault_is_refused() {
-    // Contract 6.8 promises this and nothing implemented it. Without it the
-    // undo reported success, left install A holding a live link, and deleted
-    // the database rows for both, so the vault screen showed nothing while an
-    // install was still loading that model through the link.
+fn undoing_a_run_after_the_model_was_renamed_in_the_vault_puts_the_name_back_first() {
+    // Renaming the model in the vault used to refuse this undo for good: the
+    // rename has no undo of its own, so "undo the later change first" pointed
+    // at nothing. Undone anyway, without the name back, it left install A
+    // holding a live link and the vault screen showing nothing.
     let w = TestWorld::new();
     let a = w.add_install("A");
     let b = w.add_install("B");
@@ -1850,19 +1850,17 @@ fn undoing_a_run_after_the_model_was_renamed_in_the_vault_is_refused() {
         .set_canonical_name(&weights_hash("same"), "y.safetensors")
         .unwrap();
 
-    let err = applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
-    assert_eq!(err.code, ErrorCode::Conflict);
-    assert!(
-        err.detail.unwrap().contains("x.safetensors"),
-        "the person has to be told which files are in the way"
-    );
+    applier(&w).preview_revert("ap-1").expect("the preview does not refuse");
+    applier(&w).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
 
-    // And nothing was half undone: both installs still read their model.
+    // Both installs hold their own real file again, and nothing is left.
     for (install, name) in [(&a, "x.safetensors"), (&b, "y.safetensors")] {
         let p = install.root.join(format!("models/loras/{name}"));
-        assert!(w.is_link(&p));
-        assert_eq!(w.read(&p), weights("same"));
+        assert!(!w.is_link(&p), "{} is a real file again", p.display());
+        assert_eq!(std::fs::read(&p).unwrap(), weights("same"));
     }
+    assert!(w.store.links().unwrap().is_empty(), "no link record is left");
+    assert!(w.store.vault_file(&weights_hash("same")).unwrap().is_none());
 }
 
 #[test]

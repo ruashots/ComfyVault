@@ -495,30 +495,63 @@ fn a_running_comfyui_for_an_install_that_changes_stops_the_job_before_anything_c
 // --- undo ------------------------------------------------------------------
 
 #[test]
-fn undo_puts_back_every_old_name_with_its_own_record() {
+fn undo_puts_back_every_old_name_and_the_vault_name_as_they_were() {
     let w = TestWorld::new();
     let (a, b) = two_names(&w);
-    let old_record = w.store.link_at_path(&loras(&b).join(OLD)).unwrap().unwrap();
+    let a_old = loras(&a).join(KEPT);
+    let before_a = w.store.link_at_path(&a_old).unwrap().unwrap();
+    let before_b = w.store.link_at_path(&loras(&b).join(OLD)).unwrap().unwrap();
+    let before_file = w.store.vault_file(&sha()).unwrap().unwrap();
     let done = unify(&w).unify(&sha(), OLD).unwrap();
     assert_eq!(done.renamed.len(), 1, "A was renamed");
-    let a_old = loras(&a).join(KEPT);
+    assert_eq!(done.vault_name, OLD, "and so was the vault file");
 
     let undone = unify(&w).undo(&done.unify_id).unwrap();
     assert!(undone.undone);
     assert_eq!(w.read(&a_old), weights("same"), "A's old name loads the model again");
     assert!(std::fs::symlink_metadata(loras(&a).join(OLD)).is_err(), "A's new name is gone");
-    let back = w.store.link_at_path(&a_old).unwrap().expect("its record is back");
-    assert_eq!(back.apply_id.as_deref(), Some("ap-1"), "as the run that made it recorded it");
-    assert_eq!(back.created_by, LinkOrigin::Apply);
-    // It points at the file under the name the vault keeps now.
-    assert_eq!(back.vault_rel_path, PathBuf::from("loras").join(OLD));
-    assert_eq!(w.store.link_at_path(&loras(&b).join(OLD)).unwrap().unwrap().id, old_record.id, "B was never touched");
+
+    // The vault is as it was: the same real name and the same second name.
+    let file = w.store.vault_file(&sha()).unwrap().unwrap();
+    assert_eq!((file.canonical_name, file.aliases), (before_file.canonical_name, before_file.aliases));
+    let real = w.vault_root.join("loras").join(KEPT);
+    assert!(real.is_file() && !w.is_link(&real));
+    assert!(w.is_link(&w.vault_root.join("loras").join(OLD)), "the second name is a link beside it again");
+
+    // Each link has its own record back, pointing straight at the real file.
+    assert_eq!(w.store.link_at_path(&a_old).unwrap().unwrap(), before_a, "A's record, as the run made it");
+    assert_eq!(w.store.link_at_path(&loras(&b).join(OLD)).unwrap().unwrap(), before_b);
+    for l in [&a_old, &loras(&b).join(OLD)] {
+        assert_eq!(
+            crate::paths::compare_key(&w.platform.read_symlink(l).unwrap()),
+            crate::paths::compare_key(&real),
+            "{} goes straight to the file",
+            l.display()
+        );
+    }
 
     // The card is back.
     assert_eq!(Vault::new(&w.store, &w.platform).name_groups().unwrap().len(), 1);
     // A second undo finds nothing left to do.
     unify(&w).undo(&done.unify_id).unwrap();
     assert_eq!(w.read(&a_old), weights("same"));
+}
+
+#[test]
+fn undo_takes_away_a_name_the_job_gave_the_vault() {
+    let w = TestWorld::new();
+    let (_a, b) = two_names(&w);
+    let third = "third.safetensors";
+    link_by_hand(&w, &b, "models/loras/t", third);
+    let before = w.store.vault_file(&sha()).unwrap().unwrap();
+
+    let done = unify(&w).unify(&sha(), third).unwrap();
+    assert_eq!(done.vault_name, third);
+    unify(&w).undo(&done.unify_id).unwrap();
+
+    let file = w.store.vault_file(&sha()).unwrap().unwrap();
+    assert_eq!((file.canonical_name, file.aliases), (before.canonical_name, before.aliases));
+    assert!(std::fs::symlink_metadata(w.vault_root.join("loras").join(third)).is_err());
 }
 
 #[test]
@@ -563,31 +596,88 @@ fn undo_of_a_model_since_deleted_is_refused() {
     assert_eq!(unify(&w).undo("unify-nothing").unwrap_err().code, ErrorCode::NotFound);
 }
 
-#[test]
-fn undoing_the_consolidation_waits_for_the_name_change_to_be_undone_first() {
-    let w = TestWorld::new();
-    let (_a, _b) = two_names(&w);
-    let done = unify(&w).unify(&sha(), KEPT).unwrap();
+fn revert_ap1(w: &TestWorld) -> Result<crate::store::ApplyRecord> {
+    Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink)
+}
 
-    let err = Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap_err();
-    assert_eq!(err.code, ErrorCode::Conflict, "{err:?}");
-
-    unify(&w).undo(&done.unify_id).unwrap();
-    Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+/// Both installs hold their own real file again, under the names they had.
+fn assert_back_as_before_the_consolidation(w: &TestWorld, a: &Install, b: &Install) {
+    for p in [loras(a).join(KEPT), loras(b).join(OLD)] {
+        assert!(!w.is_link(&p), "{} is a real file again", p.display());
+        assert_eq!(std::fs::read(&p).unwrap(), weights("same"));
+    }
+    for p in [loras(a).join(OLD), loras(b).join(KEPT)] {
+        assert!(std::fs::symlink_metadata(&p).is_err(), "{} is gone", p.display());
+    }
 }
 
 #[test]
-#[ignore = "known gap: renaming the vault file cannot be undone, so the consolidation that brought it in stays refused"]
-fn undoing_the_consolidation_works_after_undoing_a_name_change_that_renamed_the_vault_file() {
-    // Choosing the name the vault does not keep renames the vault file, which
-    // writes a journal no undo reaches. The undo of the name change puts the
-    // links back but leaves the vault's name, so the consolidation's undo
-    // still finds a later change to the file it moved in and refuses.
+fn undoing_the_consolidation_puts_back_a_name_change_nobody_undid() {
+    // The card has no undo button. Undoing the consolidation must still work
+    // after it, or the name change quietly took that undo away.
     let w = TestWorld::new();
-    two_names(&w);
+    let (a, b) = two_names(&w);
+    unify(&w).unify(&sha(), KEPT).unwrap();
+
+    Applier::new(&w.store, &w.platform).preview_revert("ap-1").expect("the preview does not refuse");
+    revert_ap1(&w).unwrap();
+    assert_back_as_before_the_consolidation(&w, &a, &b);
+}
+
+#[test]
+fn undoing_the_consolidation_puts_back_a_name_change_that_renamed_the_vault_file() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    let done = unify(&w).unify(&sha(), OLD).unwrap();
+    assert_eq!(done.vault_name, OLD);
+
+    Applier::new(&w.store, &w.platform).preview_revert("ap-1").expect("the preview does not refuse");
+    revert_ap1(&w).unwrap();
+    assert_back_as_before_the_consolidation(&w, &a, &b);
+}
+
+#[test]
+fn undoing_the_consolidation_works_after_undoing_a_name_change_that_renamed_the_vault_file() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
     let done = unify(&w).unify(&sha(), OLD).unwrap();
     unify(&w).undo(&done.unify_id).unwrap();
-    Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+    revert_ap1(&w).unwrap();
+    assert_back_as_before_the_consolidation(&w, &a, &b);
+}
+
+#[test]
+fn two_name_changes_are_put_back_newest_first() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    // The Library's rename button first, then the card back to the first
+    // name, which renames the vault file a second time.
+    Vault::new(&w.store, &w.platform).set_canonical_name(&sha(), OLD).unwrap();
+    let second = unify(&w).unify(&sha(), KEPT).unwrap();
+    assert_eq!(second.vault_name, KEPT);
+
+    revert_ap1(&w).unwrap();
+    for p in [loras(&a).join(KEPT), loras(&b).join(OLD)] {
+        assert!(!w.is_link(&p), "{} is a real file again", p.display());
+        assert_eq!(std::fs::read(&p).unwrap(), weights("same"));
+    }
+}
+
+#[test]
+fn a_name_change_that_cannot_be_put_back_refuses_the_consolidation_undo_with_nothing_changed() {
+    let w = TestWorld::new();
+    two_names(&w);
+    unify(&w).unify(&sha(), OLD).unwrap();
+    // The vault file's first name is free after the job, and a file of the
+    // person's own now sits there.
+    std::fs::write(w.vault_root.join("loras").join(KEPT), b"dropped in by hand").unwrap();
+    let before = snapshot(&w);
+
+    let err = revert_ap1(&w).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert!(err.message.contains("name changed after it"), "{}", err.message);
+    assert_eq!(snapshot(&w), before, "nothing changed");
+    assert_eq!(w.store.apply("ap-1").unwrap().unwrap().state, crate::store::ApplyState::Completed);
 }
 
 // --- a crash in the middle -------------------------------------------------
@@ -629,6 +719,7 @@ fn a_crash_after_the_old_link_went_forgets_its_record_when_the_vault_opens() {
         name: KEPT.into(),
         started_at: Timestamp::now(),
         replaced: vec![record.clone()],
+        ..Default::default()
     };
     w.store.put_unify_job(&job).unwrap();
     let vault_path = w.vault_root.join("loras").join(KEPT);

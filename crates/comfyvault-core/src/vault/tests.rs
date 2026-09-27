@@ -1700,3 +1700,92 @@ fn a_listing_never_returns_more_rows_than_the_page_limit() {
         .unwrap();
     assert!(page.rows.len() <= MAX_PAGE);
 }
+
+// --- putting a vault name back ---------------------------------------------
+
+#[test]
+fn a_rename_windows_stops_before_the_old_name_is_a_link_is_put_back_whole() {
+    // The file was renamed and then the record still named the old file, so
+    // every later action on the model said the vault no longer held it.
+    let w = TestWorld::new();
+    two_names(&w);
+    let sha = weights_hash("same");
+    let old = w.vault_root.join("loras/lora1.safetensors");
+    w.platform.fail_symlink_at(old.clone(), VaultError::new(ErrorCode::PermissionDenied, "no"));
+
+    let err = vault(&w).set_canonical_name(&sha, "my-favourite.safetensors").unwrap_err();
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+    let f = vault(&w).file(&sha).unwrap().unwrap();
+    assert_eq!(f.canonical_name, "lora1.safetensors");
+    assert_eq!(f.aliases, vec!["my-favourite.safetensors"]);
+    assert!(old.is_file() && !w.is_link(&old), "the file has its name back");
+    let alias = w.vault_root.join("loras/my-favourite.safetensors");
+    assert!(w.is_link(&alias) && w.read(&alias) == weights("same"), "and the second name is a link again");
+    for l in w.store.links_for_hash(&sha).unwrap() {
+        assert_eq!(w.read(&l.abs_path), weights("same"));
+    }
+    // Nothing on record stands in the way of undoing the consolidation.
+    Applier::new(&w.store, &w.platform).revert("ap-1", &CancelToken::new(), &NullSink).unwrap();
+}
+
+#[test]
+fn a_link_windows_will_not_repoint_keeps_loading_the_model_through_the_old_name() {
+    let w = TestWorld::new();
+    let (a, _b) = two_names(&w);
+    let sha = weights_hash("same");
+    let a_link = a.root.join("models/loras/lora1.safetensors");
+    w.platform.fail_remove_symlink_at(a_link.clone(), std::io::ErrorKind::PermissionDenied);
+
+    vault(&w).set_canonical_name(&sha, "my-favourite.safetensors").unwrap();
+    assert_eq!(w.read(&a_link), weights("same"));
+    let rec = w.store.link_at_path(&a_link).unwrap().unwrap();
+    assert_eq!(rec.vault_rel_path, PathBuf::from("loras").join("lora1.safetensors"), "the record says where it points");
+}
+
+#[test]
+fn a_vault_rename_can_be_put_back_and_the_second_time_does_nothing() {
+    let w = TestWorld::new();
+    let (a, b) = two_names(&w);
+    let sha = weights_hash("same");
+    let before: Vec<LinkRecord> = w.store.links_for_hash(&sha).unwrap();
+    let (_, id) = vault(&w).rename_file(&sha, "my-favourite.safetensors").unwrap();
+    let id = id.expect("a rename writes a journal");
+
+    vault(&w).undo_rename(&id).unwrap();
+    let f = vault(&w).file(&sha).unwrap().unwrap();
+    assert_eq!(f.canonical_name, "lora1.safetensors");
+    assert_eq!(f.aliases, vec!["my-favourite.safetensors"]);
+    let mut after = w.store.links_for_hash(&sha).unwrap();
+    let mut before = before;
+    after.sort_by(|x, y| x.id.cmp(&y.id));
+    before.sort_by(|x, y| x.id.cmp(&y.id));
+    assert_eq!(after, before, "every link record is as it was");
+    for (i, name) in [(&a, "lora1.safetensors"), (&b, "my-favourite.safetensors")] {
+        assert_eq!(w.read(&i.root.join("models/loras").join(name)), weights("same"));
+    }
+    assert!(w
+        .store
+        .journal(&id)
+        .unwrap()
+        .iter()
+        .all(|e| e.state == crate::store::JournalState::Undone));
+
+    vault(&w).undo_rename(&id).unwrap();
+    assert_eq!(vault(&w).file(&sha).unwrap().unwrap().canonical_name, "lora1.safetensors");
+}
+
+#[test]
+fn a_vault_rename_is_not_put_back_over_a_file_that_took_the_old_name() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let sha = weights_hash("same");
+    let (_, id) = vault(&w).rename_file(&sha, "my-favourite.safetensors").unwrap();
+    let old = w.vault_root.join("loras/lora1.safetensors");
+    w.platform.remove_symlink(&old).unwrap();
+    std::fs::write(&old, b"someone's file").unwrap();
+
+    let err = vault(&w).undo_rename(&id.unwrap()).unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(std::fs::read(&old).unwrap(), b"someone's file");
+    assert_eq!(vault(&w).file(&sha).unwrap().unwrap().canonical_name, "my-favourite.safetensors");
+}

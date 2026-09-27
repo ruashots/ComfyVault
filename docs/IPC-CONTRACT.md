@@ -1480,10 +1480,22 @@ the model, and it is never deleted to make way. `detail` names both places.
 Moving the other file away and undoing again finishes the undo. Where the same
 bytes sit there, the undo goes ahead, and the vault file is the one dropped.
 
-`revert_apply` rejects with `conflict` when anything done later still uses the
-files this run created. Renaming a model in the vault with
-`set_canonical_name` is the common case. `detail` lists the paths in the way.
-Undo the later change first.
+**Name changes made after the run are put back first.** A rename of one of
+the run's models in the vault (`set_canonical_name`, 8.5) and a
+`unify_name` job (8.12) would otherwise stand in the way, and the interface
+offers no undo for them. So `revert_apply` undoes them itself, newest first,
+before it touches the run's files. Everything else that would refuse the undo, room on the drives
+included, is checked before any name moves. When a name change cannot be put
+back, for example because a file of the person's own now has the old name in
+the vault, `revert_apply` rejects with `conflict` and the message "This run was
+not undone. A model's name changed after it, and that change could not be put
+back first." `detail` carries the reason, and nothing changed. `preview_revert`
+reads the vault as it will be once those names are back, so it does not refuse
+because of them.
+
+`revert_apply` rejects with `conflict` when anything else done later still uses
+the files this run created, such as a link made by hand in the Library.
+`detail` lists the paths in the way. Undo the later change first.
 
 A resumed run is undone as one run. Resuming continues the same journal rather
 than starting a new one, so the whole of it comes back.
@@ -1824,9 +1836,13 @@ Returns the updated `VaultFile`.
 
 The engine makes the chosen name the real file and turns the previous real name
 into an in-vault link. It then repoints every install link to the new real
-path, so no link resolves through a second link. Every step is journaled, but
-no command undoes it. The consolidation that brought the file into the vault
-can no longer be undone afterwards: `revert_apply` refuses with `conflict`.
+path, so no link resolves through a second link. Every step is journaled.
+
+If Windows refuses to make the old name a link beside the file, the rename is
+put back and the command rejects with that refusal: nothing changed. An install
+link Windows will not repoint is left as it was. It still loads the model
+through the old name, and its record still names that. `revert_apply` of the
+consolidation that brought the file in puts the old name back first (6.8).
 
 ### 8.6 `remove_alias`
 
@@ -2190,10 +2206,12 @@ type UnifyUndone = {
 
 - It works on a finished job and on a stopped one, also after a restart. A
   second undo of the same job does nothing and answers `{ undone: true }`.
+- **The vault is put back too.** When the job renamed the vault file, the file
+  takes its old name again, and every link that names it is repointed. The
+  second names the job removed from the vault come back, unless something now
+  has their place. A name the job added to the vault is taken away again.
 - Each old link comes back with its own record, as it was before the job, and
-  points at the file under the name the vault keeps now. **The vault keeps its
-  new name**, and the second names removed from the vault stay removed. Every
-  old link loads the model, so nothing needs them.
+  points straight at the file.
 - A link the job made is removed only while it is still the job's own link to
   the model. A file or a link someone put in its place stays.
 - Everything is checked before anything changes. It rejects with `conflict`,
@@ -2203,13 +2221,8 @@ type UnifyUndone = {
 - It rejects with `notFound` for an id the vault has no record of, and with
   `vaultBusy` while a long operation runs.
 
-Undoing the consolidation that made the links waits for the name change:
-`revert_apply` refuses with `conflict` until the name change is undone.
-
-**Known gap.** When the job gave the vault file a new name (`vaultName` differs
-from the `canonicalName` before the job), that rename cannot be undone. The
-consolidation that brought the file into the vault then stays refused, also
-after `undo_unify_name`. `set_canonical_name` (8.5) has the same effect.
+The interface does not need to call this before undoing a consolidation.
+`revert_apply` puts back every name change made after the run itself (6.8).
 
 ## 9. Is a model used
 

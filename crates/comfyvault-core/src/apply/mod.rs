@@ -1078,6 +1078,16 @@ impl<'a> Applier<'a> {
         cancel: &CancelToken,
         sink: &dyn ProgressSink<RevertProgress>,
     ) -> Result<ApplyRecord> {
+        // Names changed since this run are put back first, so its steps meet
+        // the vault as the run left it. Everything else that would refuse the
+        // undo is checked before any name moves, room on the drives included.
+        let later = self.name_changes_after(apply_id)?;
+        if !later.is_empty() {
+            let (_, steps) = self.revertible_steps_with(apply_id, &later)?;
+            self.check_revert_space(&steps.iter().map(|e| self.undo_action(e)).collect::<Vec<_>>())?;
+            self.undo_name_changes(&later)?;
+        }
+
         let (mut record, mut to_undo) = self.revertible_steps(apply_id)?;
         let refilled = paths_filled_later(&to_undo);
         self.remove_leftovers(&to_undo);
@@ -1158,7 +1168,8 @@ impl<'a> Applier<'a> {
     /// Refuses exactly when [`Applier::revert`] would refuse before starting,
     /// so the question can be answered before the person commits to it.
     pub fn preview_revert(&self, apply_id: &str) -> Result<RevertPreview> {
-        let (_, to_undo) = self.revertible_steps(apply_id)?;
+        let later = self.name_changes_after(apply_id)?;
+        let (_, to_undo) = self.revertible_steps_with(apply_id, &later)?;
         let actions: Vec<UndoAction> = to_undo.iter().map(|e| self.undo_action(e)).collect();
 
         let mut drives: Vec<RevertDrive> = Vec::new();
@@ -1201,6 +1212,13 @@ impl<'a> Applier<'a> {
     /// The steps a revert undoes, after the refusals that apply before any
     /// file is touched.
     fn revertible_steps(&self, apply_id: &str) -> Result<(ApplyRecord, Vec<JournalEntry>)> {
+        self.revertible_steps_with(apply_id, &[])
+    }
+
+    /// The same, reading the vault as it will be once the name changes in
+    /// `later` are put back: their journals and links are not later changes,
+    /// and a file they renamed is still in the vault.
+    fn revertible_steps_with(&self, apply_id: &str, later: &[NameChange]) -> Result<(ApplyRecord, Vec<JournalEntry>)> {
         let record = self
             .store
             .apply(apply_id)?
@@ -1243,15 +1261,26 @@ impl<'a> Applier<'a> {
         // this run's steps describing a world that no longer exists. Undoing
         // them anyway reported success while leaving the tree consolidated,
         // and left a live link the database knew nothing about.
-        self.check_nothing_later_depends_on(apply_id, &to_undo)?;
+        let ignored: std::collections::HashSet<String> = later.iter().flat_map(NameChange::journal_ids).collect();
+        self.check_nothing_later_depends_on(apply_id, &to_undo, &ignored)?;
 
         // Every model this run put in the vault must still be there, or the
         // undo would stop part way on the first one that is not. The check
         // above reads the time of each later change, and a clock that was
         // behind can hide a delete from it. This reads the disk.
         for e in &to_undo {
-            let JournalStep::MoveToVault { to, .. } = &e.step else { continue };
+            let JournalStep::MoveToVault { to, sha256, .. } = &e.step else { continue };
             if e.state != JournalState::Done || std::fs::symlink_metadata(to).is_ok() {
+                continue;
+            }
+            // Renamed since, by a change that is put back first: the file is
+            // in the vault under its other name.
+            let renamed_in_vault = later.iter().any(|c| c.sha256 == *sha256)
+                && self.store.vault_file(sha256)?.is_some_and(|f| {
+                    let now = self.store.vault_root().join(f.vault_rel_path());
+                    std::fs::symlink_metadata(&now).map(|m| m.file_type().is_file()).unwrap_or(false)
+                });
+            if renamed_in_vault {
                 continue;
             }
             let deleted_in_cleanup = self.store.journal_ids()?.into_iter().filter(|id| id.starts_with(crate::vault::DELETE_JOURNAL_PREFIX)).any(|id| {
@@ -1346,6 +1375,7 @@ impl<'a> Applier<'a> {
         &self,
         apply_id: &str,
         to_undo: &[JournalEntry],
+        ignored: &std::collections::HashSet<String>,
     ) -> Result<()> {
         // What this run made: the vault files it moved in, and its links. A
         // vault file an earlier run moved in is not this run's, even when
@@ -1370,7 +1400,7 @@ impl<'a> Applier<'a> {
         let mut deleted: Vec<String> = Vec::new();
         let mut stopped: Vec<String> = Vec::new();
         for other in self.store.journal_ids()? {
-            if other == apply_id {
+            if other == apply_id || ignored.contains(&other) {
                 continue;
             }
             // A later apply. An in-vault rename or a delete has no apply
@@ -1423,7 +1453,9 @@ impl<'a> Applier<'a> {
         // model writes straight through the dead link.
         let vault_root = self.store.vault_root();
         for link in self.store.links()? {
-            if link.apply_id.as_deref() == Some(apply_id) {
+            if link.apply_id.as_deref() == Some(apply_id)
+                || link.apply_id.as_ref().is_some_and(|id| ignored.contains(id))
+            {
                 continue;
             }
             let target = vault_root.join(&link.vault_rel_path);
@@ -1463,6 +1495,89 @@ impl<'a> Applier<'a> {
             "Something done after this run still uses these files, so it was not undone. Undo the later change first.",
         )
         .with_detail(conflicts.join(", ")))
+    }
+
+    /// The name changes made to files this run brought into the vault that
+    /// are not undone yet, newest first: each "use one name everywhere" job
+    /// and each rename of the vault file on its own.
+    ///
+    /// An undo of the run puts these back first. Without that, a name change
+    /// that has no undo of its own took away the undo of the consolidation.
+    fn name_changes_after(&self, apply_id: &str) -> Result<Vec<NameChange>> {
+        let moved: std::collections::HashSet<String> = self
+            .store
+            .journal(apply_id)?
+            .into_iter()
+            .filter(|e| e.state == JournalState::Done)
+            .filter_map(|e| match e.step {
+                JournalStep::MoveToVault { sha256, .. } => Some(sha256),
+                _ => None,
+            })
+            .collect();
+        if moved.is_empty() {
+            return Ok(Vec::new());
+        }
+        let live = |id: &str| -> Result<bool> {
+            Ok(self.store.journal(id)?.iter().any(|e| e.state == JournalState::Done))
+        };
+
+        let mut out: Vec<NameChange> = Vec::new();
+        let mut in_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let ids = self.store.journal_ids()?;
+        for id in ids.iter().filter(|id| id.starts_with(crate::unify::UNIFY_JOURNAL_PREFIX)) {
+            let Some(job) = self.store.unify_job(id)? else { continue };
+            in_jobs.extend(job.vault_rename.clone());
+            if !moved.contains(&job.sha256) {
+                continue;
+            }
+            let renamed = match &job.vault_rename {
+                Some(r) => live(r)?,
+                None => false,
+            };
+            if live(id)? || renamed {
+                out.push(NameChange { kind: NameChangeKind::Unify(job.clone()), sha256: job.sha256, at: job.started_at });
+            }
+        }
+        for id in ids.iter().filter(|id| id.starts_with(crate::vault::RENAME_JOURNAL_PREFIX)) {
+            if in_jobs.contains(id) {
+                continue;
+            }
+            let entries = self.store.journal(id)?;
+            let Some(first) = entries.first() else { continue };
+            if moved.contains(&first.group_id) && entries.iter().any(|e| e.state == JournalState::Done) {
+                out.push(NameChange {
+                    kind: NameChangeKind::Rename(id.clone()),
+                    sha256: first.group_id.clone(),
+                    at: first.started_at,
+                });
+            }
+        }
+        out.sort_by(|a, b| b.at.cmp(&a.at));
+        Ok(out)
+    }
+
+    /// Puts back each name change, newest first.
+    fn undo_name_changes(&self, later: &[NameChange]) -> Result<()> {
+        for change in later {
+            let done = match &change.kind {
+                NameChangeKind::Unify(job) => {
+                    crate::unify::Unify::new(self.store, self.platform).undo(&job.unify_id).map(|_| ())
+                }
+                NameChangeKind::Rename(id) => crate::vault::Vault::new(self.store, self.platform).undo_rename(id),
+            };
+            if let Err(e) = done {
+                let detail = match &e.detail {
+                    Some(d) => format!("{} {d}", e.message),
+                    None => e.message.clone(),
+                };
+                return Err(VaultError::new(
+                    e.code,
+                    "This run was not undone. A model's name changed after it, and that change could not be put back first.",
+                )
+                .with_detail(detail));
+            }
+        }
+        Ok(())
     }
 
     /// A revert copies removed duplicates back out of the vault, so it needs
@@ -1958,6 +2073,28 @@ fn block_reason_for(e: &VaultError) -> BlockReason {
         ErrorCode::PathOutsideBoundary => BlockReason::UnsafeVaultPath,
         ErrorCode::Conflict => BlockReason::TargetExistsNotLink,
         _ => BlockReason::ReadError,
+    }
+}
+
+/// A name change made after a run, which an undo of the run puts back first.
+struct NameChange {
+    kind: NameChangeKind,
+    sha256: String,
+    at: Timestamp,
+}
+
+enum NameChangeKind {
+    Unify(crate::unify::UnifyJob),
+    Rename(String),
+}
+
+impl NameChange {
+    /// The journals that belong to this change.
+    fn journal_ids(&self) -> Vec<String> {
+        match &self.kind {
+            NameChangeKind::Unify(job) => std::iter::once(job.unify_id.clone()).chain(job.vault_rename.clone()).collect(),
+            NameChangeKind::Rename(id) => vec![id.clone()],
+        }
     }
 }
 

@@ -427,9 +427,15 @@ like a run, so a crash is finished when the vault next opens, and the change
 can be undone. The undo puts back every old name and removes the new ones.
 
 When every link carries the name, the vault file takes it too, and each
-second name in the vault that no link uses any more is removed. The undo leaves
-the vault's name as it is. The old links it puts back all point at the file
-under its new name, so they load the model.
+second name in the vault that no link uses any more is removed. The undo puts
+the vault back as well: the file takes its old name, and the second names come
+back.
+
+Undoing a consolidation puts back every name change made after it first,
+newest first, whether it came from this card or from renaming the model in the
+Library. So a name change never takes away the undo of a consolidation. If a
+name cannot be put back, because a file of yours now has it, nothing changes
+and the undo says why.
 
 You can also hide a card. It stays hidden until a new name for the model
 appears. Doing either frees no disk space. What it gives you is one entry per

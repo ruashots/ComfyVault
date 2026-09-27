@@ -145,7 +145,7 @@ pub struct UnifyUndone {
 }
 
 /// A job's own record, kept beside its journal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnifyJob {
     pub unify_id: String,
@@ -155,6 +155,15 @@ pub struct UnifyJob {
     /// The records of the links the job removed, written before each one is
     /// removed. The undo puts them back as they were.
     pub replaced: Vec<LinkRecord>,
+    /// The journal of the vault file's rename, when the job renamed it.
+    #[serde(default)]
+    pub vault_rename: Option<String>,
+    /// A name the job added to the vault's names so the file could take it.
+    #[serde(default)]
+    pub added_alias: Option<String>,
+    /// The vault's second names the job removed because no link used them.
+    #[serde(default)]
+    pub removed_aliases: Vec<String>,
 }
 
 /// The model, its file in the vault, and its links that can be renamed.
@@ -225,6 +234,9 @@ impl<'a> Unify<'a> {
             name: t.name.clone(),
             started_at: Timestamp::now(),
             replaced: Vec::new(),
+            vault_rename: None,
+            added_alias: None,
+            removed_aliases: Vec::new(),
         };
         self.store.put_unify_job(&job)?;
         let mut journal = Journal { store: self.store, id: job.unify_id.clone(), next: 0 };
@@ -332,7 +344,7 @@ impl<'a> Unify<'a> {
         }
 
         if out.stopped.is_none() {
-            match self.name_the_vault_file(&t) {
+            match self.name_the_vault_file(&t, &mut job) {
                 Ok(name) => out.vault_name = name,
                 Err(e) => {
                     out.stopped = Some(UnifyStop {
@@ -399,6 +411,17 @@ impl<'a> Unify<'a> {
             .with_detail(taken.join(", ")));
         }
 
+        // The vault's name first, so every old link put back points straight
+        // at the file under the name it had before the job.
+        let vault = Vault::new(self.store, self.platform);
+        if let Some(rename) = &job.vault_rename {
+            vault.undo_rename(rename)?;
+        }
+        let record = self.store.vault_file(&job.sha256)?.ok_or_else(|| {
+            VaultError::conflict("That model is no longer in the vault, so its old names cannot come back.")
+        })?;
+        let vault_path = self.vault_path(&record)?;
+
         for mut e in done.into_iter().rev() {
             match &e.step {
                 JournalStep::RemoveLink { link, .. } => {
@@ -433,6 +456,31 @@ impl<'a> Unify<'a> {
             e.state = JournalState::Undone;
             e.finished_at = Some(Timestamp::now());
             self.store.update_journal(&e)?;
+        }
+
+        // The vault's second names as they were. A name whose place holds
+        // anything now stays away, as nothing is ever overwritten.
+        let mut record = record;
+        for alias in &job.removed_aliases {
+            if record.aliases.contains(alias) {
+                continue;
+            }
+            let Ok(place) =
+                crate::paths::resolve_new_path_within(self.store.vault_root(), &PathBuf::from(&record.category).join(alias))
+            else {
+                continue;
+            };
+            if std::fs::symlink_metadata(&place).is_ok() || self.platform.create_file_symlink(&place, &vault_path).is_err() {
+                continue;
+            }
+            record.aliases.push(alias.clone());
+            record.aliases.sort();
+            self.store.put_vault_file(&record)?;
+        }
+        if let Some(added) = &job.added_alias {
+            // Taken away again only when nothing uses it, which is the case
+            // once the old links are back.
+            let _ = vault.remove_alias(&job.sha256, added);
         }
         Ok(UnifyUndone { undone: true })
     }
@@ -712,7 +760,7 @@ impl<'a> Unify<'a> {
     /// has the chosen one there. That is not a failure: every install already
     /// uses the chosen name, and the vault's name is only what the Library
     /// shows.
-    fn name_the_vault_file(&self, t: &Target) -> Result<String> {
+    fn name_the_vault_file(&self, t: &Target, job: &mut UnifyJob) -> Result<String> {
         let vault = Vault::new(self.store, self.platform);
         let sha = &t.record.sha256;
         let mut record = self
@@ -721,10 +769,8 @@ impl<'a> Unify<'a> {
             .ok_or_else(|| VaultError::not_found("That model is not in the vault."))?;
 
         if name_key(&record.canonical_name) != name_key(&t.name) {
-            match record.aliases.iter().find(|a| name_key(a) == name_key(&t.name)).cloned() {
-                Some(alias) => {
-                    vault.set_canonical_name(sha, &alias)?;
-                }
+            let alias = match record.aliases.iter().find(|a| name_key(a) == name_key(&t.name)).cloned() {
+                Some(alias) => Some(alias),
                 None => {
                     let place = PathBuf::from(&record.category).join(&t.name);
                     let free = crate::paths::resolve_new_path_within(self.store.vault_root(), &place)
@@ -732,12 +778,23 @@ impl<'a> Unify<'a> {
                         .unwrap_or(false);
                     let other = self.store.vault_name_taken(&record.category, &t.name)?.is_some_and(|s| &s != sha);
                     if free && !other {
+                        // Written first, so the undo knows to take the name
+                        // away again whatever happens next.
+                        job.added_alias = Some(t.name.clone());
+                        self.store.put_unify_job(job)?;
                         record.aliases.push(t.name.clone());
                         record.aliases.sort();
                         self.store.put_vault_file(&record)?;
-                        vault.set_canonical_name(sha, &t.name)?;
+                        Some(t.name.clone())
+                    } else {
+                        None
                     }
                 }
+            };
+            if let Some(alias) = alias {
+                let (_, rename) = vault.rename_file(sha, &alias)?;
+                job.vault_rename = rename;
+                self.store.put_unify_job(job)?;
             }
         }
 
@@ -757,10 +814,15 @@ impl<'a> Unify<'a> {
             if used.contains(&PathBuf::from(&record.category).join(alias)) {
                 continue;
             }
+            job.removed_aliases.push(alias.clone());
+            self.store.put_unify_job(job)?;
             // A name that cannot be removed, such as one a real file dropped
             // in by hand now holds, stays as it was. Nothing is lost by that,
             // and the install links already carry the chosen name.
-            let _ = vault.remove_alias(sha, alias);
+            if vault.remove_alias(sha, alias).is_err() {
+                job.removed_aliases.pop();
+                self.store.put_unify_job(job)?;
+            }
         }
         Ok(self.store.vault_file(sha)?.map(|r| r.canonical_name).unwrap_or_default())
     }
