@@ -117,3 +117,25 @@ describe("linking a vault model into an install from the Library", () => {
     expect(app.toast()!.message).toBe(`Linked ${orphan.canonicalName} in ComfyUI-Studio.`);
   });
 });
+
+describe("the Library's chooser, for a kind the person chose a folder for before", () => {
+  it("opens on the folder remembered for that install and kind", async () => {
+    const engine = new FixtureEngine();
+    const orphan = (await engine.listOrphans())[0]!;
+    const remembered = `C:\\ComfyUI-Studio\\models\\${orphan.category}\\mine`;
+    engine.downloads.remember("studio", orphan.category, remembered);
+    const { app } = await openLibrary(engine);
+    await waitFor(() => app.library().some((r) => r.sha256 === orphan.sha256));
+    app.setLib({ selected: orphan.sha256, drawerOpen: true });
+    await userEvent.click(await screen.findByRole("button", { name: /^Link into an install/ }));
+    const modal = () => document.querySelector('[aria-label="Where the link goes"]')!;
+    await waitFor(() => modal() !== null);
+    await userEvent.click(
+      [...modal().querySelectorAll(".tnode")].find((b) => b.textContent?.startsWith("ComfyUI-Studio"))!,
+    );
+    await waitFor(() => modal().querySelector(".res")?.textContent?.includes("mine") === true);
+    expect(modal().querySelector(".res")!.textContent).toBe(
+      `The link will be ${remembered}\\${orphan.canonicalName}`,
+    );
+  });
+});

@@ -9,6 +9,7 @@
 
 import type {
   LinkFolder,
+  LinkFolderList,
   LinkRoot,
   AddressPlan,
   AddressReading,
@@ -652,7 +653,7 @@ export class DownloadDesk {
     installId: string;
     category: string;
     dir?: string;
-  }): Promise<LinkFolder[]> {
+  }): Promise<LinkFolderList> {
     const world = this.world();
     const install = world.installs.find((i) => i.id === args.installId);
     if (!install) throw error("notFound", "That install is not registered any more.");
@@ -681,12 +682,14 @@ export class DownloadDesk {
       exists: folders.has(path.toLowerCase()),
       hasSubfolders: below(path).length > 0,
     });
-    if (args.dir === undefined) return roots.map((r) => entry(r.path));
+    const defaultDir = this.defaultDir(install, args.category);
+    if (args.dir === undefined) return { folders: roots.map((r) => entry(r.path)), defaultDir };
     this.checkInside(install, args.category, args.dir);
-    return below(args.dir)
+    const inside = below(args.dir)
       .map((f) => `${args.dir}${f.slice(args.dir!.length)}`)
       .map((p) => entry(p))
       .sort((a, b) => a.name.localeCompare(b.name));
+    return { folders: inside, defaultDir };
   }
 
   private stateIn(

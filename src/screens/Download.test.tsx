@@ -604,7 +604,7 @@ describe("choosing the folder a new link goes in", () => {
     expect(nodeNamed("portraits")!.classList.contains("on")).toBe(true);
     // Nothing is made on disk by the chooser.
     const before = await engine.listLinkFolders({ installId: "studio", category: "loras", dir: "C:\\ComfyUI-Studio\\models\\loras" });
-    expect(before.some((f) => f.name === "portraits")).toBe(false);
+    expect(before.folders.some((f) => f.name === "portraits")).toBe(false);
     await userEvent.click(button("Use this folder"));
     await userEvent.click(button("Download 37 MB"));
     await waitFor(() => app.dl.downloads().length === 1);

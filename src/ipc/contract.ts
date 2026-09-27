@@ -951,6 +951,13 @@ export interface LinkRoot {
   origin: LinkRootOrigin;
 }
 
+/** The chooser's folders, and the folder remembered for that install and kind. */
+export interface LinkFolderList {
+  folders: LinkFolder[];
+  /** The remembered folder, or else the usual one. The same with or without `dir`. */
+  defaultDir: string | null;
+}
+
 /** One folder a new link can go in, for the chooser's tree. */
 export interface LinkFolder {
   path: string;
@@ -1168,7 +1175,7 @@ export interface Engine {
     createDir?: boolean;
   }): Promise<LinkRecord>;
   /** The folders ComfyUI reads for a category in an install, or one folder's subfolders. */
-  listLinkFolders(args: { installId: string; category: string; dir?: string }): Promise<LinkFolder[]>;
+  listLinkFolders(args: { installId: string; category: string; dir?: string }): Promise<LinkFolderList>;
   removeLink(linkId: string): Promise<{ removed: true }>;
   createModelFolder(
     installId: string,

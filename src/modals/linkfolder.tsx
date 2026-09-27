@@ -96,8 +96,10 @@ async function load(app: AppStore, dir: string): Promise<void> {
       ...(dir === "" ? {} : { dir }),
     });
     patch(app, (x) => {
-      x.folders[dir] = list;
+      x.folders[dir] = list.folders;
       x.loading = x.loading.filter((d) => d !== dir);
+      // The folder remembered for this install and kind, where the chooser opens.
+      if (dir === "" && !x.selected) x.selected = list.defaultDir;
     });
   } catch (error) {
     patch(app, (x) => {
@@ -113,10 +115,7 @@ async function loadRoots(app: AppStore, selected: string | null): Promise<void> 
   const m = current(app);
   if (!m) return;
   const roots = m.folders[""] ?? [];
-  if (!m.selected) {
-    const usual = roots.find((r) => r.path.toLowerCase().endsWith(`\\${m.category.toLowerCase()}`));
-    patch(app, (x) => (x.selected = (usual ?? roots[0])?.path ?? null));
-  }
+  if (!m.selected) patch(app, (x) => (x.selected = roots[0]?.path ?? null));
   const target = selected ?? current(app)?.selected ?? null;
   for (const root of roots) {
     if (!root.exists || !root.hasSubfolders) continue;

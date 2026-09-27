@@ -29,7 +29,7 @@ import type {
   Install,
   InstallCandidate,
   InterruptedApply,
-  LinkFolder,
+  LinkFolderList,
   LinkRecord,
   LinkWithState,
   LockState,
@@ -143,7 +143,7 @@ export function createTauriEngine(): Engine {
     onRevertError: (fn) => subscribe<VaultError>("revert:error", fn),
 
     createLink: (args) => call<LinkRecord>("create_link", { createDir: false, ...args }),
-    listLinkFolders: (args) => call<LinkFolder[]>("list_link_folders", { ...args }),
+    listLinkFolders: (args) => call<LinkFolderList>("list_link_folders", { ...args }),
     removeLink: (linkId) => call<{ removed: true }>("remove_link", { linkId }),
     createModelFolder: (installId, relativeDir) =>
       call<{ absPath: string; created: boolean }>("create_model_folder", {

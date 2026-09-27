@@ -379,7 +379,9 @@ describe("a vault drive that cannot say what it has free", () => {
 describe("the folder a new link goes in", () => {
   it("lists the folders ComfyUI reads for a kind, older names included, and nothing above them", async () => {
     const { e } = engine();
-    const roots = await e.listLinkFolders({ installId: "sandbox", category: "diffusion_models" });
+    const list = await e.listLinkFolders({ installId: "sandbox", category: "diffusion_models" });
+    expect(list.defaultDir).toBe("C:\\ComfyUI-Sandbox\\models\\diffusion_models");
+    const roots = list.folders;
     expect(roots.map((r) => [r.path, r.origin])).toEqual([
       ["C:\\ComfyUI-Sandbox\\models\\unet", "modelsDir"],
       ["C:\\ComfyUI-Sandbox\\models\\diffusion_models", "modelsDir"],
