@@ -82,24 +82,27 @@ export function LibraryScreen() {
           title="Library"
           head="The vault is empty"
           body={
-            app.setupDone()
-              ? "Run a scan. Every model found is listed here once, whatever folder it sits in and however many copies exist."
-              : `${app.missingStep() ?? ""} After a scan, every model found is listed here once, whatever folder it sits in and however many copies exist.`
+            !app.setupDone()
+              ? `${app.missingStep() ?? ""} The Library lists the models in the vault, and nothing is in it yet.`
+              : "The Library lists the models in the vault, and nothing is in it yet. Consolidate puts the models your installs share into the vault, and Download adds one from Hugging Face or Civitai."
           }
         >
           <Show
             when={app.setupDone()}
-            fallback={<button class="btn pri" onClick={() => app.actions.go("home")}>
-            <Icon name="arrow" size={13} />
-            Finish setting up
-          </button>}
+            fallback={
+              <button class="btn pri" onClick={() => app.actions.go("home")}>
+                <Icon name="arrow" size={13} />
+                Finish setting up
+              </button>
+            }
           >
-            <button
-              class="btn pri"
-              onClick={() => void app.actions.run(() => app.engine.startScan())}
-            >
-              <Icon name="scan" size={13} />
-              Scan now
+            <button class="btn pri" onClick={() => app.actions.go("consolidate")}>
+              <Icon name="arrow" size={13} />
+              Go to Consolidate
+            </button>
+            <button class="btn" onClick={() => app.actions.go("download")}>
+              <Icon name="download" size={13} />
+              Download a model
             </button>
           </Show>
         </EmptyScreen>
@@ -177,7 +180,7 @@ function LibraryList() {
     <>
       <Header
         title="Library"
-        sub={`${app.library().length} models · counted once each`}
+        sub={`${app.libraryTotal()} ${app.libraryTotal() === 1 ? "model" : "models"} in the vault`}
       />
       <div class="screen">
         <div class="toolbar">

@@ -250,8 +250,9 @@ export interface AppStore {
   readonly failure: Accessor<string | null>;
 
   readonly planView: Accessor<PlanView | null>;
+  /** The models in the vault. The Library manages the vault, not the installs. */
   readonly library: Accessor<readonly ContentRow[]>;
-  /** How many contents the engine holds in total, beyond the page loaded. */
+  /** How many models the vault holds in total, beyond the page loaded. */
   readonly libraryTotal: Accessor<number>;
   /** True when there was no saved workflow file to search at all. */
   readonly nothingSearched: Accessor<boolean>;
@@ -467,6 +468,8 @@ export function createAppStore(engine: Engine): AppStore {
   const scanPredatesSetAside = createMemo(() => predatesSetAside(lastApply(), scan()));
   const [usage, setUsage] = createSignal<ReadonlyMap<string, UsageResult>>(new Map());
   const [library, setLibrary] = createSignal<readonly ContentRow[]>([]);
+  /** Every model the engine knows, in the vault or still out in the installs. */
+  const [contents, setContents] = createSignal<readonly ContentRow[]>([]);
   const [libraryTotal, setLibraryTotal] = createSignal(0);
   const [nothingSearched, setNothingSearched] = createSignal(false);
 
@@ -571,7 +574,7 @@ export function createAppStore(engine: Engine): AppStore {
     if (nothingSearched()) return 0;
     const answers = usage();
     if (answers.size === 0) return 0;
-    return library().filter((row) => answers.get(row.name)?.used === false).length;
+    return contents().filter((row) => answers.get(row.name)?.used === false).length;
   });
 
   const usageMethod = createMemo(() => {
@@ -644,6 +647,7 @@ export function createAppStore(engine: Engine): AppStore {
           setOrphans([]);
           setHealth(null);
           setLibrary([]);
+          setContents([]);
           setLibraryTotal(0);
           setRunning([]);
           setInterrupted([]);
@@ -684,7 +688,7 @@ export function createAppStore(engine: Engine): AppStore {
           ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
           : null;
 
-      const [files, groups, orphanList, vaultHealth, contents, downloadList] = await Promise.all([
+      const [files, groups, orphanList, vaultHealth, contents, inVault, downloadList] = await Promise.all([
         orNotYet(engine.listVaultFiles({ offset: 0, limit: 1000 }), {
           total: 0,
           offset: 0,
@@ -699,6 +703,11 @@ export function createAppStore(engine: Engine): AppStore {
           rows: [] as ContentRow[],
           scanId: null,
         }),
+        // The Library manages the vault, not the installs: only what is in it.
+        orNotYet(
+          engine.listContents({ offset: 0, limit: 1000, sort: "size", filter: { inVault: true } }),
+          { total: 0, offset: 0, rows: [] as ContentRow[], scanId: null },
+        ),
         orNotYet(engine.listDownloads(), [] as Download[]),
       ]);
 
@@ -712,8 +721,9 @@ export function createAppStore(engine: Engine): AppStore {
         setNameGroups(groups);
         setOrphans(orphanList);
         setHealth(vaultHealth);
-        setLibrary(contents.rows);
-        setLibraryTotal(contents.total);
+        setContents(contents.rows);
+        setLibrary(inVault.rows);
+        setLibraryTotal(inVault.total);
         dl.replace(downloadList);
         setRunning(runningList);
         setInterrupted(interruptedList);
