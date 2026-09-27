@@ -1000,9 +1000,35 @@ fn the_folder_picker_leaves_out_hidden_and_system_folders() {
     assert_eq!(names, vec!["Shown"]);
 }
 
+/// Turns off a privilege in this process's token, as it is for an ordinary
+/// user. GitHub's Windows runner turns on the backup privilege, and with it a
+/// process reads a folder whatever its permissions say.
+#[cfg(windows)]
+fn turn_off_privilege(name: &str) {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LUID};
+    use windows_sys::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, TOKEN_ADJUST_PRIVILEGES,
+        TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: every pointer is to a local that outlives the call, and the
+    // token handle is closed once.
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        assert!(OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) != 0);
+        let mut luid = LUID { LowPart: 0, HighPart: 0 };
+        assert!(LookupPrivilegeValueW(std::ptr::null(), wide.as_ptr(), &mut luid) != 0);
+        let off = TOKEN_PRIVILEGES { PrivilegeCount: 1, Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: 0 }] };
+        assert!(AdjustTokenPrivileges(token, 0, &off, 0, std::ptr::null_mut(), std::ptr::null_mut()) != 0);
+        CloseHandle(token);
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
+    turn_off_privilege("SeBackupPrivilege");
     let f = Fixture::new();
     let locked = f.dir.path().join("Refused");
     std::fs::create_dir_all(&locked).unwrap();
@@ -1016,9 +1042,9 @@ fn a_folder_windows_refuses_is_reported_as_a_refused_permission() {
         .output()
         .unwrap();
     assert!(deny.status.success(), "icacls could not deny: {deny:?}");
-    // On GitHub's Windows runner the denial once took a moment to hold: the
-    // folder listed as empty right after icacls returned. Waited for, never
-    // skipped: if Windows never enforces it, the test fails and says so.
+    // The denial must hold before the engine is asked, or the test proves
+    // nothing. It is waited for, never skipped: if Windows never enforces it,
+    // the test fails and names the account and its privileges.
     let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::fs::read_dir(&locked).is_ok() {
         if std::time::Instant::now() >= until {
