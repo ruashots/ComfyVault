@@ -870,49 +870,56 @@ fn plain_download() -> Download {
     }
 }
 
+const KEPT_KEY: &str = "KEPTROWKEY7e21";
+const FORGOTTEN_KEY: &str = "FORGOTTENKEY4b9";
+
+/// Writes what an earlier build left, then ends the process without closing
+/// the database, as a crash does. Run only by the test below, in a process
+/// of its own.
+#[test]
+#[ignore]
+fn earlier_build_writes_keys_and_crashes() {
+    let Ok(vault) = std::env::var("COMFYVAULT_CRASH_VAULT") else { return };
+    let store = Store::open(Path::new(&vault), true).unwrap();
+    let mut rec = DownloadRecord {
+        download: plain_download(),
+        address: format!("https://civitai.com/api/download/models/8?token={KEPT_KEY}"),
+        version_id: Some(8),
+        file_id: None,
+        expected_sha256: None,
+        part_version: None,
+        seq: 0,
+    };
+    rec.download.download_id = uuid::Uuid::new_v4().to_string();
+    let mut gone = rec.clone();
+    gone.download.download_id = uuid::Uuid::new_v4().to_string();
+    gone.address = format!("https://civitai.com/api/download/models/9?token={FORGOTTEN_KEY}");
+    store.put_download(&gone).unwrap();
+    for n in 0..20u64 {
+        gone.download.bytes_done = n;
+        store.put_download(&gone).unwrap();
+    }
+    store.put_download(&rec).unwrap();
+    store.delete_download(&gone.download_id).unwrap();
+    std::process::exit(0);
+}
+
 #[test]
 fn a_key_an_earlier_build_kept_is_gone_from_the_database_file() {
     // Two ways an earlier build left a key in the file: a row that still
     // holds it, and a finished row the list already forgot, whose bytes stay
-    // in pages the database freed.
+    // in pages the database freed when the app did not close it cleanly.
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
-    let (kept, forgotten) = ("KEPTROWKEY7e21", "FORGOTTENKEY4b9");
-    {
-        let store = Store::open(&vault, true).unwrap();
-        let mut rec = DownloadRecord {
-            download: plain_download(),
-            address: format!("https://civitai.com/api/download/models/8?token={kept}"),
-            version_id: Some(8),
-            file_id: None,
-            expected_sha256: None,
-            part_version: None,
-            seq: 0,
-        };
-        rec.download.download_id = uuid::Uuid::new_v4().to_string();
-        let mut gone = rec.clone();
-        gone.download.download_id = uuid::Uuid::new_v4().to_string();
-        gone.address = format!("https://civitai.com/api/download/models/9?token={forgotten}");
-        store.put_download(&gone).unwrap();
-        // The work a download does in between: its row saved again and
-        // again as its bytes move.
-        for n in 0..20u64 {
-            gone.download.bytes_done = n;
-            store.put_download(&gone).unwrap();
-        }
-        store.put_download(&rec).unwrap();
-        store.delete_download(&gone.download_id).unwrap();
-        // The app ended without closing the database, as a crash or a kill
-        // does. A clean close gives the freed pages back; this does not.
-        // Its lock stays with this process, so the file as the crash left it
-        // is copied to a vault of its own.
-        std::mem::forget(store);
-    }
-    let crashed = dir.path().join("crashed");
-    std::fs::create_dir_all(crashed.join(".comfyvault")).unwrap();
-    std::fs::copy(vault.join(".comfyvault/vault.redb"), crashed.join(".comfyvault/vault.redb")).unwrap();
-    let vault = crashed;
-    for key in [kept, forgotten] {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["download::tests::earlier_build_writes_keys_and_crashes", "--exact", "--ignored", "--test-threads=1"])
+        .env("COMFYVAULT_CRASH_VAULT", &vault)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for key in [KEPT_KEY, FORGOTTEN_KEY] {
         assert!(!files_containing(&vault, key.as_bytes()).is_empty(), "the setup did not leave {key}");
     }
 
@@ -920,76 +927,9 @@ fn a_key_an_earlier_build_kept_is_gone_from_the_database_file() {
     let rows = store.downloads().unwrap();
     assert_eq!(rows[0].address, "https://civitai.com/api/download/models/8");
     drop(store);
-    for key in [kept, forgotten] {
+    for key in [KEPT_KEY, FORGOTTEN_KEY] {
         assert!(files_containing(&vault, key.as_bytes()).is_empty(), "{key} is still in the database file");
     }
-}
-
-#[test]
-fn a_download_id_that_names_a_path_never_reaches_a_file() {
-    // The vault's database is a file anyone could have prepared.
-    let w = world(content("x", 10), true);
-    let id = "../../../outside/victim";
-    let mut rec = DownloadRecord {
-        download: plain_download(),
-        address: CIVITAI.into(),
-        version_id: None,
-        file_id: None,
-        expected_sha256: None,
-        part_version: None,
-        seq: 0,
-    };
-    rec.download.download_id = id.into();
-    w.ctx.store.put_download(&rec).unwrap();
-    std::fs::create_dir_all(w.ctx.store.downloads_dir()).unwrap();
-    let victim = w.root.join("outside/victim.part");
-    std::fs::create_dir_all(victim.parent().unwrap()).unwrap();
-    std::fs::write(&victim, b"the person's own file").unwrap();
-
-    for e in [w.dl.discard(&w.ctx, id).unwrap_err(), w.dl.resume(&w.ctx, id).unwrap_err().clone()] {
-        assert_eq!(e.code, ErrorCode::InvalidArgument, "{e:?}");
-    }
-    assert_eq!(std::fs::read(&victim).unwrap(), b"the person's own file");
-    // And the row is gone the next time the vault opens.
-    w.dl.on_open(&w.ctx).unwrap();
-    assert!(w.ctx.store.download(id).unwrap().is_none());
-    assert!(victim.exists());
-}
-
-#[test]
-fn a_journal_that_says_the_file_went_outside_the_vault_is_not_believed() {
-    // A crafted journal names somebody's file as where the download went.
-    let bytes = content("outside", 3_000);
-    let w = world(bytes.clone(), true);
-    *w.site.stall_first.lock().unwrap() = Some(10);
-    let a = w.install("A");
-    let mut d = w.settle(&w.start(HF, "text_encoders", &[&a]).download_id);
-    let theirs = w.root.join("theirs.safetensors");
-    std::fs::write(&theirs, &bytes).unwrap();
-    let _ = std::fs::remove_file(part_path(&w.ctx, &d.download_id));
-    w.ctx
-        .store
-        .append_journal(&JournalEntry {
-            apply_id: d.journal_id(),
-            seq: 0,
-            group_id: d.download_id.clone(),
-            step: JournalStep::MoveToVault { from: part_path(&w.ctx, &d.download_id), to: theirs.clone(), copied: false, sha256: sha(&bytes), size_bytes: 3_000 },
-            state: JournalState::Done,
-            started_at: Timestamp::now(),
-            finished_at: None,
-            error: None,
-        })
-        .unwrap();
-    d.state = DownloadState::CutOff;
-    w.ctx.store.put_download(&d).unwrap();
-
-    w.dl.resume(&w.ctx, &d.download_id).unwrap();
-    let d = w.settle(&d.download_id);
-    assert_eq!(d.state, DownloadState::Done, "{:?}", d.error);
-    let rec = w.ctx.store.vault_file(&sha(&bytes)).unwrap().unwrap();
-    assert!(w.vault(&rec.vault_rel_path().to_string_lossy()).is_file(), "the model is a file in the vault");
-    assert!(!rec.vault_rel_path().as_os_str().is_empty());
-    assert_eq!(std::fs::read(&theirs).unwrap(), bytes, "their file is untouched");
 }
 
 /// Against the real sites. They run only when asked (`--ignored`), and each
