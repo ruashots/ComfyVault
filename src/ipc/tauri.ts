@@ -35,6 +35,7 @@ import type {
   LockState,
   ModelDirNode,
   ModelMetadata,
+  HiddenNameCard,
   NameGroup,
   PlatformReport,
   RevertPreview,
@@ -48,6 +49,8 @@ import type {
   Unsubscribe,
   UsageResult,
   VaultError,
+  UnifyPlan,
+  UnifyResult,
   VaultFile,
   VaultFilePage,
   VaultHealth,
@@ -155,10 +158,10 @@ export function createTauriEngine(): Engine {
     listVaultFiles: (args) => call<VaultFilePage>("list_vault_files", { ...args }),
     listContents: (args) => call<ContentPage>("list_contents", { ...args }),
     listNameGroups: () => callNoArgs<NameGroup[]>("list_name_groups"),
-    setCanonicalName: (sha256, name) =>
-      call<VaultFile>("set_canonical_name", { sha256, name }),
-    removeAlias: (sha256, name) =>
-      call<{ removed: true }>("remove_alias", { sha256, name }),
+    planUnifyName: (sha256, name) => call<UnifyPlan>("plan_unify_name", { sha256, name }),
+    unifyName: (sha256, name) => call<UnifyResult>("unify_name", { sha256, name }),
+    listHiddenNameCards: () => callNoArgs<HiddenNameCard[]>("list_hidden_name_cards"),
+    setHiddenNameCards: (cards) => call<void>("set_hidden_name_cards", { cards }),
     listOrphans: () => callNoArgs<VaultFile[]>("list_orphans"),
     deleteVaultFile: (sha256, confirm, removeLinks) =>
       call<Deleted>(

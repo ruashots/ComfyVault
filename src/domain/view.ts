@@ -14,7 +14,6 @@ import type {
   ContentRow,
   Install,
   LinkRecord,
-  NameGroup,
   PlanGroup,
   ScanTotals,
   UsageMatch,
@@ -481,74 +480,6 @@ export function isAtLeast(
 }
 
 // ── cleanup ─────────────────────────────────────────────────────────────────
-
-export interface NameChoice {
-  name: string;
-  /** The vault file has this name now. The others are links beside it. */
-  isCanonical: boolean;
-  /** The installs whose links carry this name, each once. */
-  installIds: readonly string[];
-  /** How many links in the installs carry this name. */
-  linksNamed: number;
-  /** Nothing reaches the file through this vault name, so it can go. */
-  removable: boolean;
-}
-
-export interface NameGroupView {
-  group: NameGroup;
-  choices: readonly NameChoice[];
-  /** The name the vault file should carry, and why, in a sentence. */
-  suggestion: { name: string; reason: string };
-}
-
-/**
- * What each name of one model is, from the links themselves: a link keeps the
- * name its install uses, whatever the vault file is called. The suggestion is
- * the name the most links carry, then the one the most installs use, then the
- * longer one, and the reason is printed, so the rule is never a secret.
- */
-export function buildNameGroupView(
-  group: NameGroup,
-  links: readonly Pick<LinkRecord, "installId" | "linkName">[],
-): NameGroupView {
-  const choices: NameChoice[] = group.names.map((n) => {
-    const named = links.filter((l) => l.linkName === n.name);
-    return {
-      name: n.name,
-      isCanonical: n.isCanonical,
-      installIds: [...new Set(named.map((l) => l.installId))],
-      linksNamed: named.length,
-      // The engine refuses to remove a name a link reaches the file through.
-      removable: !n.isCanonical && n.usedByLinks === 0,
-    };
-  });
-
-  const ranked = [...choices].sort(
-    (a, b) =>
-      b.linksNamed - a.linksNamed ||
-      b.installIds.length - a.installIds.length ||
-      b.name.length - a.name.length,
-  );
-  const best = ranked[0]!;
-  const next = ranked[1];
-  const longer = choices.length === 2 ? "longer" : "longest";
-
-  let reason: string;
-  if (best.linksNamed === 0) {
-    reason = `No install uses ${choices.length === 2 ? "either name" : "any of these names"}. The ${longer} one is suggested.`;
-  } else if (next && next.linksNamed === best.linksNamed) {
-    reason =
-      best.installIds.length > next.installIds.length
-        ? "Your installs use these names as often as each other, and more of them use this one."
-        : `Your installs use these names as often as each other, so the ${longer} one is suggested.`;
-  } else if (next && next.linksNamed > 0) {
-    reason = `Suggested because your installs use it more often: in ${best.linksNamed} places, against ${next.linksNamed}.`;
-  } else {
-    reason = "Suggested because it is the only name your installs use.";
-  }
-
-  return { group, choices, suggestion: { name: best.name, reason } };
-}
 
 /** What the saved workflows say about one vault model, over all its names. */
 export interface ModelUsage {

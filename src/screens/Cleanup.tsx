@@ -3,14 +3,10 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import { Icon } from "~/components/Icon";
 import { DanglingLinks, ReplacedLinks } from "~/components/DanglingLinks";
 import { EmptyScreen, Header } from "~/components/Shell";
-import { Wrap } from "~/components/Wrap";
 import { dayMonth, fmt, joinPath } from "~/domain/format";
-import {
-  buildNameGroupView,
-  usageOfModel,
-  type ModelUsage,
-  type NameGroupView,
-} from "~/domain/view";
+import { nameCardsSummary } from "~/domain/names";
+import { usageOfModel, type ModelUsage } from "~/domain/view";
+import { NameCard } from "~/screens/NameCard";
 import { installNameOf } from "~/domain/installname";
 import { openConfirm } from "~/modals/confirm";
 import { messageOf, useApp, type AppStore } from "~/state/store";
@@ -41,14 +37,6 @@ export function CleanupScreen() {
 
 function CleanupBody() {
   const app = useApp();
-  // A name is used by the installs whose links carry it, whatever the vault file is called.
-  const groups = createMemo(() =>
-    app
-      .nameGroups()
-      .map((g) =>
-        buildNameGroupView(g, app.vaultFiles().find((f) => f.sha256 === g.sha256)?.links ?? []),
-      ),
-  );
   const orphanBytes = createMemo(() =>
     app.orphans().reduce((sum, f) => sum + f.sizeBytes, 0),
   );
@@ -59,41 +47,31 @@ function CleanupBody() {
         title="Cleanup"
         sub={cleanupSummary(
           app.danglingLinks().length,
-          groups().length,
+          nameCardsSummary(app.nameCards()),
           app.orphans().length,
           app.health()?.stoppedDeletes.length ?? 0,
         )}
       />
       <div class="screen">
         <div class="scroll">
+          <Show when={app.nameResult()}>
+            {(line) => (
+              <div class="nres">
+                <p>{line()}</p>
+                <button class="btn" onClick={() => app.actions.go("library")}>
+                  View models
+                </button>
+              </div>
+            )}
+          </Show>
           <DanglingLinks />
           <StoppedDeletes />
-          <div class="sec">
-            <span class="t">One model with more than one name</span>
-            <span class="n">
-              {groups().length} {groups().length === 1 ? "model" : "models"}
-            </span>
-          </div>
-          <Show
-            when={groups().length > 0}
-            fallback={
-              <div class="note">
-                Every file in the vault answers to one name. There is nothing to
-                settle. Names appear here after a run brings the same file in under
-                two different names.
-              </div>
-            }
-          >
-            <div class="note" style={{ margin: "-4px 0 10px", "max-width": "700px" }}>
-              Each model below is one file that your installs know under more than
-              one name. The vault file carries one of the names. Each install keeps
-              the name it uses now, as its link, so its workflows still open.{" "}
-              <span class="emph">Choosing a name here frees no disk space.</span>
-            </div>
-            <For each={groups()}>{(group) => <NameGroupCard view={group} />}</For>
-          </Show>
+          <For each={app.nameCards()}>{(card) => <NameCard card={card} />}</For>
 
-          <div class="sec secgap">
+          <div
+            class="sec"
+            classList={{ secgap: app.nameCards().length > 0 || app.nameResult() !== null }}
+          >
             <span class="t">Vault files that nothing links to</span>
             <span class="n">
               <Show when={app.orphans().length > 0} fallback="none">
@@ -127,7 +105,7 @@ function CleanupBody() {
 /** The top bar's line: what Cleanup found, as sentences. */
 export function cleanupSummary(
   broken: number,
-  named: number,
+  names: string | null,
   unlinked: number,
   stopped = 0,
 ): string {
@@ -140,13 +118,7 @@ export function cleanupSummary(
   if (broken > 0) {
     parts.push(broken === 1 ? "1 link leads to nothing." : `${broken} links lead to nothing.`);
   }
-  parts.push(
-    named === 0
-      ? "Every model has one name."
-      : named === 1
-        ? "1 model has more than one name."
-        : `${named} models have more than one name.`,
-  );
+  if (names) parts.push(names);
   parts.push(
     unlinked === 0
       ? "Every vault file is linked."
@@ -155,100 +127,6 @@ export function cleanupSummary(
         : `${unlinked} vault files are not linked from any install.`,
   );
   return parts.join(" ");
-}
-
-function NameGroupCard(props: { view: NameGroupView }) {
-  const app = useApp();
-  const group = () => props.view.group;
-
-  const choose = (name: string) => {
-    if (name === group().canonicalName) return;
-    void app.actions.run(
-      () => app.engine.setCanonicalName(group().sha256, name),
-      `The vault file is now named ${name}.`,
-    );
-  };
-
-  const removeName = (name: string) => {
-    openConfirm(app, {
-      title: "Remove a name",
-      cta: "Remove the name",
-      body: [
-        [
-          { text: name, emph: true },
-          {
-            text: " is removed from the vault, where it is only a link beside the file. Every install keeps its links and their names, so nothing in ComfyUI changes. The model is not deleted and no disk space is freed.",
-          },
-        ],
-      ],
-      action: async () => {
-        await app.engine.removeAlias(group().sha256, name);
-      },
-    });
-  };
-
-  /** "ComfyUI-Studio and ComfyUI-Sandbox use this name." */
-  const usedBy = (ids: readonly string[]) =>
-    ids.length === 0
-      ? "No install uses this name."
-      : `${ids.map((id) => installNameOf(id, app.installs())).join(" and ")} ${ids.length === 1 ? "uses" : "use"} this name.`;
-
-  return (
-    <div class="cgrp">
-      <div class="ch">
-        <span>{group().category}:</span>
-        <span class="faint">the same file under {group().names.length} names</span>
-        <span class="sz">{fmt(group().sizeBytes)}</span>
-      </div>
-      <div class="holds">
-        The vault holds one file for this model, under the selected name. Your
-        installs use these names for it:
-      </div>
-
-      <For each={props.view.choices}>
-        {(choice) => (
-          <div class="optrow" classList={{ on: choice.isCanonical }}>
-            <button
-              class="opt"
-              role="radio"
-              aria-checked={choice.isCanonical}
-              onClick={() => choose(choice.name)}
-            >
-              <span class="radio" />
-              <span class="on-n">
-                <span class="nm" title={choice.name}>
-                  <Wrap text={choice.name} />
-                </span>
-                <span class="rs">{usedBy(choice.installIds)}</span>
-              </span>
-              <Show when={choice.isCanonical}>
-                <span class="tag cur">the file's name</span>
-              </Show>
-              <Show when={choice.name === props.view.suggestion.name}>
-                <span class="tag">suggested</span>
-              </Show>
-            </button>
-            <Show when={choice.removable} fallback={<span class="drop-sp" />}>
-              <button
-                class="drop"
-                title="Remove this name"
-                aria-label={`Remove the name ${choice.name}`}
-                onClick={() => removeName(choice.name)}
-              >
-                <Icon name="trash" size={12} />
-              </button>
-            </Show>
-          </div>
-        )}
-      </For>
-
-      <div class="why">{props.view.suggestion.reason}</div>
-      <div class="why">
-        Picking a name only changes what the file is called in the vault and the
-        Library. Your installs are not affected.
-      </div>
-    </div>
-  );
 }
 
 function OrphanRow(props: { file: VaultFile }) {

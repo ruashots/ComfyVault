@@ -32,6 +32,7 @@ import {
   type Selection,
 } from "~/domain/selection";
 import { volumeLabel } from "~/domain/drives";
+import { nameCardsOf, type NameCard } from "~/domain/names";
 import { runLookups } from "~/domain/lookup";
 import { createDownloadState, type DownloadState } from "~/state/download";
 import type {
@@ -44,6 +45,7 @@ import type {
   Download,
   DriveInfo,
   Engine,
+  HiddenNameCard,
   Install,
   InstallCandidate,
   InterruptedApply,
@@ -54,6 +56,7 @@ import type {
   RunningComfy,
   ScanProgress,
   ScanRecord,
+  UnifyPlan,
   UsageResult,
   VaultFile,
   VaultHealth,
@@ -83,6 +86,8 @@ export interface LibraryView {
 export interface Toast {
   message: string;
   tone: "ok" | "bad";
+  /** A button in the toast, such as Undo. */
+  action?: { label: string; run: () => void };
 }
 
 export interface TreeNode extends DirectoryEntry {
@@ -180,7 +185,18 @@ export interface LinkFolderModal {
   onUse: ((dir: string) => void) | null;
 }
 
-export type Modal = PickerModal | ConfirmModal | LinkFolderModal;
+/** Giving one model one name in every install. */
+export interface UnifyModal {
+  kind: "unify";
+  sha256: string;
+  name: string;
+  /** Null while the engine works out the plan. */
+  plan: UnifyPlan | null;
+  working: boolean;
+  error: string | null;
+}
+
+export type Modal = PickerModal | ConfirmModal | LinkFolderModal | UnifyModal;
 
 export interface AppStore {
   readonly engine: Engine;
@@ -192,6 +208,12 @@ export interface AppStore {
   readonly plan: Accessor<ConsolidationPlan | null>;
   readonly vaultFiles: Accessor<readonly VaultFile[]>;
   readonly nameGroups: Accessor<readonly NameGroup[]>;
+  /** The cards for models the installs use more than one name for, less the hidden ones. */
+  readonly nameCards: Accessor<readonly NameCard[]>;
+  readonly hiddenNameCards: Accessor<readonly HiddenNameCard[]>;
+  /** Cleanup's line once a name was changed, until the person leaves Cleanup. */
+  readonly nameResult: Accessor<string | null>;
+  readonly setNameResult: (line: string | null) => void;
   readonly orphans: Accessor<readonly VaultFile[]>;
   readonly health: Accessor<VaultHealth | null>;
   /**
@@ -350,7 +372,7 @@ export interface AppStore {
 
 export interface Actions {
   go(screen: Screen): void;
-  showToast(message: string, tone?: "ok" | "bad"): void;
+  showToast(message: string, tone?: "ok" | "bad", action?: Toast["action"]): void;
   refresh(): Promise<void>;
   /** Run an engine call and turn any refusal into a message the person can read. */
   run(what: () => Promise<unknown>, onOk?: string): Promise<boolean>;
@@ -453,6 +475,9 @@ export function createAppStore(engine: Engine): AppStore {
   const [plan, setPlan] = createSignal<ConsolidationPlan | null>(null);
   const [vaultFiles, setVaultFiles] = createSignal<readonly VaultFile[]>([]);
   const [nameGroups, setNameGroups] = createSignal<readonly NameGroup[]>([]);
+  const [hiddenNameCards, setHiddenNameCards] = createSignal<readonly HiddenNameCard[]>([]);
+  const nameCards = createMemo(() => nameCardsOf(nameGroups(), hiddenNameCards()));
+  const [nameResult, setNameResult] = createSignal<string | null>(null);
   const [orphans, setOrphans] = createSignal<readonly VaultFile[]>([]);
   const [health, setHealth] = createSignal<VaultHealth | null>(null);
   const [running, setRunning] = createSignal<readonly RunningComfy[]>([]);
@@ -522,9 +547,9 @@ export function createAppStore(engine: Engine): AppStore {
   const dl = createDownloadState(engine, (error) => messageOf(error));
 
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
-  const showToast = (message: string, tone: "ok" | "bad" = "ok") => {
+  const showToast = (message: string, tone: "ok" | "bad" = "ok", action?: Toast["action"]) => {
     if (toastTimer) clearTimeout(toastTimer);
-    setToast({ message, tone });
+    setToast({ message, tone, ...(action ? { action } : {}) });
     toastTimer = setTimeout(() => setToast(null), 3600);
   };
 
@@ -661,6 +686,7 @@ export function createAppStore(engine: Engine): AppStore {
           setPlan(null);
           setVaultFiles([]);
           setNameGroups([]);
+          setHiddenNameCards([]);
           setOrphans([]);
           setHealth(null);
           setLibrary([]);
@@ -705,7 +731,7 @@ export function createAppStore(engine: Engine): AppStore {
           ? await orNotYet(engine.buildPlan(lastScan.scanId), null)
           : null;
 
-      const [files, groups, orphanList, vaultHealth, contents, inVault, downloadList] = await Promise.all([
+      const [files, groups, orphanList, vaultHealth, contents, inVault, downloadList, hidden] = await Promise.all([
         orNotYet(engine.listVaultFiles({ offset: 0, limit: 1000 }), {
           total: 0,
           offset: 0,
@@ -726,6 +752,7 @@ export function createAppStore(engine: Engine): AppStore {
           { total: 0, offset: 0, rows: [] as ContentRow[], scanId: null },
         ),
         orNotYet(engine.listDownloads(), [] as Download[]),
+        orNotYet(engine.listHiddenNameCards(), [] as HiddenNameCard[]),
       ]);
 
       batch(() => {
@@ -736,6 +763,7 @@ export function createAppStore(engine: Engine): AppStore {
         setPlan(nextPlan);
         setVaultFiles(files.files);
         setNameGroups(groups);
+        setHiddenNameCards(hidden);
         setOrphans(orphanList);
         setHealth(vaultHealth);
         setContents(contents.rows);
@@ -948,6 +976,7 @@ export function createAppStore(engine: Engine): AppStore {
   const actions: Actions = {
     go(next) {
       batch(() => {
+        if (next !== screen()) setNameResult(null);
         setScreen(next);
         setCategoryMenuOpen(false);
       });
@@ -977,6 +1006,10 @@ export function createAppStore(engine: Engine): AppStore {
     plan,
     vaultFiles,
     nameGroups,
+    nameCards,
+    hiddenNameCards,
+    nameResult,
+    setNameResult,
     orphans,
     health,
     danglingLinks,

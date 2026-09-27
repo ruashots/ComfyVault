@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
-import { installNameOf } from "~/domain/installname";
 import { ConfirmModalView } from "~/modals/confirm";
 import { openUndoBox } from "~/modals/undo";
 import { CleanupScreen, cleanupSummary } from "~/screens/Cleanup";
@@ -49,17 +48,17 @@ const counts = () => [...document.querySelectorAll(".sec .n")].map((t) => t.text
 
 describe("the top line of Cleanup", () => {
   it("is made of sentences, not labels strung together", () => {
-    expect(cleanupSummary(0, 1, 0)).toBe(
-      "1 model has more than one name. Every vault file is linked.",
+    expect(cleanupSummary(0, "1 model has two names in your installs.", 0)).toBe(
+      "1 model has two names in your installs. Every vault file is linked.",
     );
-    expect(cleanupSummary(2, 3, 1)).toBe(
-      "2 links lead to nothing. 3 models have more than one name. 1 vault file is not linked from any install.",
+    expect(cleanupSummary(2, null, 1)).toBe(
+      "2 links lead to nothing. 1 vault file is not linked from any install.",
     );
-    expect(cleanupSummary(0, 0, 0, 1)).toBe(
-      "1 delete stopped part way. Every model has one name. Every vault file is linked.",
+    expect(cleanupSummary(0, null, 0, 1)).toBe(
+      "1 delete stopped part way. Every vault file is linked.",
     );
-    expect(cleanupSummary(1, 0, 4)).toBe(
-      "1 link leads to nothing. Every model has one name. 4 vault files are not linked from any install.",
+    expect(cleanupSummary(1, null, 4)).toBe(
+      "1 link leads to nothing. 4 vault files are not linked from any install.",
     );
   });
 });
@@ -68,132 +67,14 @@ describe("the Cleanup sections, after a run", () => {
   it("title each section with a phrase", async () => {
     const { app } = await afterARun();
     await waitFor(() => app.nameGroups().length > 0);
-    expect(titles().slice(0, 2)).toEqual([
-      "One model with more than one name",
-      "Vault files that nothing links to",
-    ]);
-    expect(counts()[0]).toBe(
-      `${app.nameGroups().length} ${app.nameGroups().length === 1 ? "model" : "models"}`,
-    );
+    expect(titles()[0]).toBe("Vault files that nothing links to");
     const orphans = app.orphans();
-    expect(counts()[1]).toBe(
+    expect(counts()[0]).toBe(
       orphans.length === 0
         ? "none"
         : `${orphans.length} ${orphans.length === 1 ? "file" : "files"}, ${fmt(orphans.reduce((s, f) => s + f.sizeBytes, 0))}`,
     );
     for (const count of counts()) expect(count).not.toContain("·");
-  });
-
-  it("says once that the vault holds one file, and of each name only who uses it", async () => {
-    const { app, engine } = await afterARun();
-    await waitFor(() => app.nameGroups().length > 0);
-    const group = app.nameGroups()[0]!;
-    const card = document.querySelector(".cgrp")!;
-    expect(card.querySelector(".ch")!.textContent).toContain(
-      `${group.category}:the same file under ${group.names.length} names`,
-    );
-    const links = await engine.listLinks({ sha256: group.sha256 });
-    const rows = [...card.querySelectorAll(".optrow")];
-    group.names.forEach((n, i) => {
-      const ids = [...new Set(links.filter((l) => l.linkName === n.name).map((l) => l.installId))];
-      const who = ids.map((id) => (id === "studio" ? "ComfyUI-Studio" : "ComfyUI-Sandbox"));
-      const usedBy =
-        who.length === 0
-          ? "No install uses this name."
-          : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
-      // Each name says only who uses it. Only the file's own name is marked.
-      expect(rows[i]!.querySelector(".rs")!.textContent).toBe(usedBy);
-      expect(rows[i]!.querySelector(".tag.cur")?.textContent ?? null).toBe(
-        n.isCanonical ? "the file's name" : null,
-      );
-    });
-    // Said once, above the names: the vault holds one file.
-    expect(card.querySelector(".holds")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
-      "The vault holds one file for this model, under the selected name. Your installs use these names for it:",
-    );
-    for (const row of rows) expect(row.textContent).not.toMatch(/vault|link/i);
-    // Each name in the sample is used by the install whose link carries it.
-    expect(card.textContent).not.toContain("a name you typed");
-    expect(card.textContent).not.toContain("links point at it");
-    expect(screen.queryByRole("button", { name: /Type a different name/ })).toBeNull();
-    expect(card.textContent!.replace(/\s+/g, " ")).toContain(
-      "Picking a name only changes what the file is called in the vault and the Library. Your installs are not affected.",
-    );
-    expect(card.textContent).not.toContain("·");
-  });
-
-  it("renames the vault file when another of its names is chosen", async () => {
-    const { app, engine } = await afterARun();
-    await waitFor(() => app.nameGroups().length > 0);
-    const group = app.nameGroups()[0]!;
-    const other = group.names.find((n) => !n.isCanonical)!;
-    const radio = [...document.querySelectorAll('.cgrp')][0]!.querySelectorAll('[role="radio"]');
-    const target = [...radio].find((r) => r.textContent?.includes(other.name)) as HTMLButtonElement;
-    await userEvent.click(target);
-    await waitFor(() => app.toast() !== null);
-    expect(app.toast()!.message).toBe(`The vault file is now named ${other.name}.`);
-    const file = (await engine.listVaultFiles({ offset: 0, limit: 1000 })).files.find((f) => f.sha256 === group.sha256)!;
-    expect(file.canonicalName).toBe(other.name);
-  });
-
-  it("keeps each name's words true after another name is chosen, and after a refresh", async () => {
-    const { app, engine } = await afterARun();
-    await waitFor(() => app.nameGroups().length > 0);
-    const group = app.nameGroups()[0]!;
-    const before = group.canonicalName;
-    const other = group.names.find((n) => !n.isCanonical)!.name;
-    const card = () =>
-      [...document.querySelectorAll(".cgrp")].find((c) => c.textContent!.includes(before))!;
-    const rowOf = (name: string) =>
-      [...card().querySelectorAll(".optrow")].find(
-        (r) => r.querySelector(".nm")!.getAttribute("title") === name,
-      )!;
-    const words = (name: string) => rowOf(name).querySelector(".rs")!.textContent!;
-    const suggested = () =>
-      [...card().querySelectorAll(".optrow")]
-        .filter((r) => r.querySelector(".tag:not(.cur)") !== null)
-        .map((r) => r.querySelector(".nm")!.getAttribute("title"));
-    const reasons = () => [...card().querySelectorAll(".why")].map((w) => w.textContent);
-
-    // Which installs use a name is read from the installs' own links, and
-    // each install is called by the name it has everywhere else in the app.
-    const links = await engine.listLinks({ sha256: group.sha256 });
-    const usedBy = (name: string) => {
-      const who = [...new Set(links.filter((l) => l.linkName === name).map((l) => l.installId))].map(
-        (id) => installNameOf(id, app.installs()),
-      );
-      return who.length === 0
-        ? "No install uses this name."
-        : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
-    };
-    const fileName = () =>
-      [...card().querySelectorAll(".optrow")]
-        .filter((r) => r.querySelector(".tag.cur") !== null)
-        .map((r) => r.querySelector(".nm")!.getAttribute("title"));
-    expect(words(before)).toBe(usedBy(before));
-    expect(words(other)).toBe(usedBy(other));
-    expect(fileName()).toEqual([before]);
-    const suggestedBefore = suggested();
-    const reasonsBefore = reasons();
-
-    await userEvent.click(rowOf(other).querySelector('[role="radio"]')!);
-    await waitFor(
-      () => app.nameGroups().find((g) => g.sha256 === group.sha256)!.canonicalName === other,
-    );
-
-    const holdsTrue = () => {
-      expect(words(other)).toBe(usedBy(other));
-      expect(words(before)).toBe(usedBy(before));
-      expect(fileName()).toEqual([other]);
-      // Choosing moves the vault's name, not the installs' links, so the
-      // suggestion and the reason for it stay as they were.
-      expect(suggested()).toEqual(suggestedBefore);
-      expect(reasons()).toEqual(reasonsBefore);
-      expect(card().textContent).not.toContain("a name you typed");
-    };
-    holdsTrue();
-    await app.actions.refresh();
-    holdsTrue();
   });
 
   it("says a vault file nothing links to will be freed, not that it comes back", async () => {

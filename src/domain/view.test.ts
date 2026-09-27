@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   addedCode,
   buildInstallViews,
-  buildNameGroupView,
   buildPlanView,
   duplicateAfter,
   duplicateWhy,
@@ -18,7 +17,6 @@ import { FixtureEngine } from "~/ipc/fixture/engine";
 import type {
   ConsolidationPlan,
   Install,
-  NameGroup,
   PlanGroup,
   PlanLink,
   ScanTotals,
@@ -505,107 +503,6 @@ describe("which ComfyUI versions lose model thumbnails", () => {
 });
 
 // ── cleanup ─────────────────────────────────────────────────────────────────
-
-function nameGroup(names: NameGroup["names"]): NameGroup {
-  return {
-    sha256: "C".repeat(64),
-    sizeBytes: 100,
-    category: "vae",
-    canonicalName: names.find((n) => n.isCanonical)?.name ?? names[0]!.name,
-    names,
-  };
-}
-
-describe("what each name of one model is", () => {
-  // The person's case: every link reaches the file under the vault's name, and
-  // the installs still call it what they called it before the run.
-  const owner = () =>
-    nameGroup([
-      { name: "upscaler_conv_v1.safetensors", isCanonical: true, vaultRelPath: "u/c", usedByLinks: 3, seenInInstalls: ["prod", "normal"] },
-      { name: "upscaler_3d.safetensors", isCanonical: false, vaultRelPath: "u/3", usedByLinks: 0, seenInInstalls: [] },
-    ]);
-  const links = [
-    { installId: "prod", linkName: "upscaler_conv_v1.safetensors" },
-    { installId: "normal", linkName: "upscaler_3d.safetensors" },
-    { installId: "normal", linkName: "upscaler_3d.safetensors" },
-  ];
-
-  it("says which installs use a name from the links' own names", () => {
-    const view = buildNameGroupView(owner(), links);
-    expect(view.choices.map((c) => [c.name, c.installIds, c.linksNamed])).toEqual([
-      ["upscaler_conv_v1.safetensors", ["prod"], 1],
-      ["upscaler_3d.safetensors", ["normal"], 2],
-    ]);
-  });
-
-  it("lists an install under each name its links carry, and once per name", () => {
-    // Normal holds the model twice, once under each name, and Production
-    // holds it twice under one of them, as on the person's machine.
-    const view = buildNameGroupView(owner(), [
-      { installId: "normal", linkName: "upscaler_3d.safetensors" },
-      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
-      { installId: "prod", linkName: "upscaler_3d.safetensors" },
-      { installId: "prod", linkName: "upscaler_3d.safetensors" },
-    ]);
-    expect(view.choices.map((c) => [c.name, [...c.installIds].sort(), c.linksNamed])).toEqual([
-      ["upscaler_conv_v1.safetensors", ["normal"], 1],
-      ["upscaler_3d.safetensors", ["normal", "prod"], 3],
-    ]);
-  });
-
-  it("suggests the name more of the installs' links carry, and says so", () => {
-    const view = buildNameGroupView(owner(), links);
-    expect(view.suggestion.name).toBe("upscaler_3d.safetensors");
-    expect(view.suggestion.reason).toBe(
-      "Suggested because your installs use it more often: in 2 places, against 1.",
-    );
-  });
-
-  it("says when only one name is used, and when both are used as often", () => {
-    expect(buildNameGroupView(owner(), links.slice(1)).suggestion.reason).toBe(
-      "Suggested because it is the only name your installs use.",
-    );
-    const level = buildNameGroupView(owner(), links.slice(0, 2));
-    expect(level.suggestion.name).toBe("upscaler_conv_v1.safetensors");
-    expect(level.suggestion.reason).toBe(
-      "Your installs use these names as often as each other, so the longer one is suggested.",
-    );
-  });
-
-  it("says so when the names are used as often, but by more installs for one", () => {
-    const view = buildNameGroupView(owner(), [
-      { installId: "prod", linkName: "upscaler_3d.safetensors" },
-      { installId: "normal", linkName: "upscaler_3d.safetensors" },
-      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
-      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
-    ]);
-    // The shorter name, because two installs use it and one uses the other.
-    expect(view.suggestion.name).toBe("upscaler_3d.safetensors");
-    expect(view.suggestion.reason).toBe(
-      "Your installs use these names as often as each other, and more of them use this one.",
-    );
-  });
-
-  it("falls back to the longer name when no link has any of them", () => {
-    const view = buildNameGroupView(owner(), []);
-    expect(view.suggestion.name).toBe("upscaler_conv_v1.safetensors");
-    expect(view.suggestion.reason).toBe(
-      "No install uses either name. The longer one is suggested.",
-    );
-  });
-
-  it("offers to remove only a second name no link reaches the file through", () => {
-    const view = buildNameGroupView(
-      nameGroup([
-        { name: "keep.safetensors", isCanonical: true, vaultRelPath: "vae/k", usedByLinks: 2, seenInInstalls: ["studio"] },
-        { name: "used.safetensors", isCanonical: false, vaultRelPath: "vae/u", usedByLinks: 1, seenInInstalls: ["sandbox"] },
-        { name: "spare.safetensors", isCanonical: false, vaultRelPath: "vae/s", usedByLinks: 0, seenInInstalls: [] },
-      ]),
-      [],
-    );
-    expect(view.choices.map((c) => c.removable)).toEqual([false, false, true]);
-  });
-});
 
 describe("what the saved workflows say about one vault model", () => {
   const match = (path: string) => ({

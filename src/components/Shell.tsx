@@ -71,7 +71,7 @@ export function Rail() {
       return (
         app.danglingLinks().length +
           (app.health()?.stoppedDeletes.length ?? 0) +
-          app.nameGroups().length +
+          app.nameCards().length +
           app.orphans().length || null
       );
     }
@@ -364,6 +364,13 @@ export function Toaster() {
         >
           <Icon name={toast().tone === "bad" ? "warn" : "check"} size={12} />
           <span>{toast().message}</span>
+          <Show when={toast().action}>
+            {(action) => (
+              <button class="lnk" onClick={() => action().run()}>
+                {action().label}
+              </button>
+            )}
+          </Show>
         </div>
       )}
     </Show>

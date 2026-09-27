@@ -6,6 +6,7 @@ import { NAV, Rail, Titlebar, Toaster } from "~/components/Shell";
 import { ConfirmModalView } from "~/modals/confirm";
 import { LinkFolderView } from "~/modals/linkfolder";
 import { PickerModalView } from "~/modals/picker";
+import { UnifyModalView } from "~/screens/NameCard";
 import { CleanupScreen } from "~/screens/Cleanup";
 import { ConsolidateScreen } from "~/screens/Consolidate";
 import { DownloadScreen } from "~/screens/Download";
@@ -80,6 +81,7 @@ export function App() {
       <PickerModalView />
       <ConfirmModalView />
       <LinkFolderView />
+      <UnifyModalView />
       <Toaster />
     </div>
   );

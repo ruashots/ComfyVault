@@ -753,29 +753,27 @@ export function contentRowsOf(
 export function nameGroupsOf(world: World): NameGroup[] {
   const out: NameGroup[] = [];
   for (const entry of world.vault.values()) {
-    if (entry.aliases.length === 0) continue;
     const content = world.contents.find((c) => c.sha256 === entry.sha256);
     if (!content) continue;
-    const names = [entry.canonicalName, ...entry.aliases];
-    // As in the engine: every install link points at the vault file's own
-    // name, whatever the link itself is called, and a rename repoints them
-    // all. So only that name is ever counted as used, and only by path.
+    // As in the engine: a model's names are the names its install links carry.
     const links = world.links.filter((l) => l.sha256 === entry.sha256);
+    const names = [...new Set(links.map((l) => l.linkName))];
+    if (names.length < 2) continue;
     out.push({
       sha256: entry.sha256,
       sizeBytes: content.bytes,
       category: content.category,
       canonicalName: entry.canonicalName,
-      names: names.map((name) => ({
-        name,
-        isCanonical: name === entry.canonicalName,
-        vaultRelPath: `${content.category}\\${name}`,
-        usedByLinks: name === entry.canonicalName ? links.length : 0,
-        seenInInstalls:
-          name === entry.canonicalName
-            ? [...new Set(links.map((l) => l.installId))].sort()
-            : [],
-      })),
+      names: names.map((name) => {
+        const carrying = links.filter((l) => l.linkName === name);
+        return {
+          name,
+          isCanonical: name === entry.canonicalName,
+          vaultRelPath: `${content.category}\\${name}`,
+          usedByLinks: carrying.length,
+          seenInInstalls: [...new Set(carrying.map((l) => l.installId))].sort(),
+        };
+      }),
     });
   }
   return out;

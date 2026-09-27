@@ -47,6 +47,23 @@ export async function createEngine(): Promise<Engine> {
     processFacts: (facts: Parameters<typeof engine.devSetProcessFacts>[0]) =>
       engine.devSetProcessFacts(facts),
     taskManagerStarts: (starts: boolean) => engine.devSetTaskManagerStarts(starts),
+    // The first two-names card: its other name is taken in the install that
+    // uses the picked one, and a second folder there links the other name.
+    nameTaken: async () => {
+      const [group] = await engine.listNameGroups();
+      if (!group) return;
+      const [picked, other] = group.names;
+      const plan = await engine.planUnifyName(group.sha256, picked!.name);
+      const moving = plan.steps.find((s) => s.action === "rename");
+      if (!moving) return;
+      await engine.createLink({
+        installId: plan.steps.find((s) => s.action === "keep")!.installId,
+        sha256: group.sha256,
+        relativeDir: "models\\clip",
+        linkName: other!.name,
+      });
+      engine.devTakePath(moving.newAbsPath!);
+    },
     // The downloader. Each switch makes one state of the Download screen.
     download: {
       hold: (on = true) => engine.downloads.devHold(on),

@@ -32,6 +32,7 @@ import type {
   LockState,
   ModelDirNode,
   ModelMetadata,
+  HiddenNameCard,
   NameGroup,
   PlanGroup,
   PlatformReport,
@@ -46,6 +47,9 @@ import type {
   Unsubscribe,
   UsageResult,
   VaultError,
+  UnifyPlan,
+  UnifyResult,
+  UnifyStep,
   VaultFile,
   VaultFilePage,
   VaultHealth,
@@ -266,6 +270,10 @@ export class FixtureEngine implements Engine {
   private appliedGroups = new Map<string, PlanGroup[]>();
   /** Vault files this run created that were renamed after it finished. */
   private renamedSinceApply = new Set<string>();
+  /** Places in the installs that hold some other file, lower-cased. */
+  private takenPaths = new Set<string>();
+  /** The name cards the person kept as they are. Kept in the app config. */
+  private hiddenNameCards: HiddenNameCard[] = [];
   /** Paths of models this run put in the vault that Cleanup deleted since. */
   private deletedSinceApply: string[] = [];
   /** Links a delete removed before it was cut off, by the model's SHA-256. */
@@ -1555,40 +1563,92 @@ export class FixtureEngine implements Engine {
     return nameGroupsOf(this.world);
   }
 
-  async setCanonicalName(sha256: string, name: string): Promise<VaultFile> {
-    const entry = this.world.vault.get(sha256);
-    if (!entry) throw error("notFound", "The vault does not hold that file.");
-    if (this.worldBeforeApply && !this.worldBeforeApply.vault.has(sha256)) {
-      // This run put the file in the vault and it has been renamed since.
-      this.renamedSinceApply.add(sha256);
-    }
-    const names = [entry.canonicalName, ...entry.aliases];
-    if (!names.includes(name)) {
-      throw error(
-        "invalidArgument",
-        "That name does not belong to this model. Choose one of the names it already has.",
-      );
-    }
-    entry.canonicalName = name;
-    entry.aliases = names.filter((n) => n !== name);
-    const file = vaultFilesOf(this.world, this.metadataCache).find((f) => f.sha256 === sha256);
-    if (!file) throw error("notFound", "The vault does not hold that file.");
-    return file;
+  async planUnifyName(sha256: string, name: string): Promise<UnifyPlan> {
+    this.requireVault();
+    const steps = this.unifySteps(sha256, name);
+    const affected = [...new Set(steps.map((s) => s.installId))];
+    const goingAway = [...new Set(steps.map((s) => s.linkName).filter((n) => !sameName(n, name)))];
+    return {
+      sha256,
+      name,
+      steps,
+      running: affected.filter((id) => this.world.running.includes(id)),
+      workflows: await this.checkModelUsage(goingAway),
+    };
   }
 
-  async removeAlias(sha256: string, name: string): Promise<{ removed: true }> {
-    const entry = this.world.vault.get(sha256);
-    if (!entry) throw error("notFound", "The vault does not hold that file.");
-    if (entry.canonicalName === name) {
-      throw error("conflict", "That is the name the vault keeps.");
+  async unifyName(sha256: string, name: string): Promise<UnifyResult> {
+    this.requireVault();
+    const steps = this.unifySteps(sha256, name);
+    const running = [...new Set(steps.map((s) => s.installId))].filter((id) =>
+      this.world.running.includes(id),
+    );
+    if (running.length > 0) {
+      throw error(
+        "conflict",
+        `Close ${running.map((id) => this.world.installs.find((i) => i.id === id)?.label ?? id).join(" and ")} first`,
+      );
     }
-    if (!entry.aliases.includes(name)) {
-      throw error("notFound", "That name is not one this model has.");
+    const result: UnifyResult = { renamed: [], removed: [], skipped: [], stopped: null };
+    for (const step of steps) {
+      const link = this.world.links.find((l) => l.absPath === step.absPath)!;
+      if (step.action === "rename") {
+        link.absPath = step.newAbsPath!;
+        link.relPath = `${link.relPath.slice(0, link.relPath.lastIndexOf("\\") + 1)}${name}`;
+        link.linkName = name;
+        result.renamed.push(step);
+      } else if (step.action === "remove") {
+        this.world.links = this.world.links.filter((l) => l !== link);
+        result.removed.push(step);
+      } else if (step.action === "blockedTaken") {
+        result.skipped.push({ step, reason: `${step.takenBy} already has that name.` });
+      }
     }
-    // Every install link points at the vault file's own name, never at
-    // another name, so no link resolves through the one removed here.
-    entry.aliases = entry.aliases.filter((n) => n !== name);
-    return { removed: true };
+    const entry = this.world.vault.get(sha256)!;
+    if (entry.canonicalName !== name) {
+      if (this.worldBeforeApply && !this.worldBeforeApply.vault.has(sha256)) {
+        // This run put the file in the vault and it has been renamed since.
+        this.renamedSinceApply.add(sha256);
+      }
+      entry.canonicalName = name;
+    }
+    // No install link reaches the file through any other name now.
+    entry.aliases = [];
+    return result;
+  }
+
+  /** What giving the model this name does to each of its links, as the engine plans it. */
+  private unifySteps(sha256: string, name: string): UnifyStep[] {
+    if (!this.world.vault.has(sha256)) {
+      throw error("notFound", "The vault does not hold that file.");
+    }
+    const links = this.world.links.filter((l) => l.sha256 === sha256);
+    if (!links.some((l) => sameName(l.linkName, name))) {
+      throw error("invalidArgument", "That name is not one the installs use for this model.");
+    }
+    return links.map((link) => {
+      const base = { installId: link.installId, absPath: link.absPath, linkName: link.linkName };
+      if (sameName(link.linkName, name)) {
+        return { ...base, action: "keep" as const, newAbsPath: null, takenBy: null };
+      }
+      const newAbsPath = `${link.absPath.slice(0, link.absPath.lastIndexOf("\\") + 1)}${name}`;
+      const there = this.world.links.find((l) => sameName(l.absPath, newAbsPath));
+      if (there && there.sha256 === sha256) {
+        return { ...base, action: "remove" as const, newAbsPath: null, takenBy: null };
+      }
+      if (there || this.takenPaths.has(newAbsPath.toLowerCase())) {
+        return { ...base, action: "blockedTaken" as const, newAbsPath: null, takenBy: newAbsPath };
+      }
+      return { ...base, action: "rename" as const, newAbsPath, takenBy: null };
+    });
+  }
+
+  async listHiddenNameCards(): Promise<HiddenNameCard[]> {
+    return this.hiddenNameCards.map((c) => ({ ...c, names: [...c.names] }));
+  }
+
+  async setHiddenNameCards(cards: HiddenNameCard[]): Promise<void> {
+    this.hiddenNameCards = cards.map((c) => ({ sha256: c.sha256, names: [...c.names].sort() }));
   }
 
   async listOrphans(): Promise<VaultFile[]> {
@@ -2071,6 +2131,11 @@ export class FixtureEngine implements Engine {
    * Take a file out of the vault from underneath its links, the way something
    * outside ComfyVault would. Every link to it then points at nothing.
    */
+  /** Put some other file at a place in an install, so a name is taken there. */
+  devTakePath(absPath: string): void {
+    this.takenPaths.add(absPath.toLowerCase());
+  }
+
   devBreakLinks(count = 1): number {
     const broken = new Set<string>();
     for (const link of this.world.links) {
@@ -2323,4 +2388,9 @@ function cloneWorld(world: World): World {
     links: world.links.map((l) => ({ ...l })),
     running: [...world.running],
   };
+}
+
+/** Windows compares file names without regard to case. */
+function sameName(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
 }

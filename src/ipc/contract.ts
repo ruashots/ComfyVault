@@ -740,12 +740,15 @@ export interface ContentPage {
   scanId: string | null;
 }
 
+/** A name the installs' links give one model. */
 export interface NameGroupName {
   name: string;
+  /** The vault file has this name. */
   isCanonical: boolean;
   vaultRelPath: string;
-  /** Install links that resolve through this name. */
+  /** Live install links that carry this name. */
   usedByLinks: number;
+  /** The installs whose links carry it. */
   seenInInstalls: string[];
 }
 
@@ -755,6 +758,53 @@ export interface NameGroup {
   category: string;
   canonicalName: string;
   names: NameGroupName[];
+}
+
+/** What giving one model one name does to one install link. */
+export type UnifyAction =
+  /** The link already has the name. */
+  | "keep"
+  /** The link gets the name. */
+  | "rename"
+  /** The same folder already has a link to this model under the name. */
+  | "remove"
+  /** Something else already has the name at that place, so the link stays. */
+  | "blockedTaken";
+
+export interface UnifyStep {
+  installId: string;
+  absPath: string;
+  linkName: string;
+  action: UnifyAction;
+  /** Where the link goes, for `rename`. */
+  newAbsPath: string | null;
+  /** What has the name there, for `blockedTaken`, as a display path. */
+  takenBy: string | null;
+}
+
+export interface UnifyPlan {
+  sha256: string;
+  name: string;
+  steps: UnifyStep[];
+  /** Installs on the list whose ComfyUI is running. */
+  running: string[];
+  /** The usage search for each name that goes away. */
+  workflows: UsageResult[];
+}
+
+export interface UnifyResult {
+  renamed: UnifyStep[];
+  removed: UnifyStep[];
+  skipped: { step: UnifyStep; reason: string }[];
+  /** Windows would not let a link go, so the job stopped there. */
+  stopped: { installId: string; path: string; message: string } | null;
+}
+
+/** A card the person chose to keep as it is, with the names it had then. */
+export interface HiddenNameCard {
+  sha256: string;
+  /** Sorted. */
+  names: string[];
 }
 
 export interface VaultHealth {
@@ -1205,8 +1255,13 @@ export interface Engine {
     descending?: boolean;
   }): Promise<ContentPage>;
   listNameGroups(): Promise<NameGroup[]>;
-  setCanonicalName(sha256: string, name: string): Promise<VaultFile>;
-  removeAlias(sha256: string, name: string): Promise<{ removed: true }>;
+  /** Only reads: what giving the model this name everywhere would do. */
+  planUnifyName(sha256: string, name: string): Promise<UnifyPlan>;
+  /** Gives the model this name in every install and in the vault. */
+  unifyName(sha256: string, name: string): Promise<UnifyResult>;
+  listHiddenNameCards(): Promise<HiddenNameCard[]>;
+  /** Replaces the whole list. */
+  setHiddenNameCards(cards: HiddenNameCard[]): Promise<void>;
   listOrphans(): Promise<VaultFile[]>;
   /**
    * With `removeLinks`, every link to the file in every install goes too, all
