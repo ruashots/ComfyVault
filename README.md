@@ -102,7 +102,7 @@ The two hashes must be the same.
 
 Each program also carries a GitHub build attestation: a signed record that it
 was built by this repository's release workflow, from the tagged source. With
-the [GitHub CLI](https://cli.github.com/) installed:
+the [GitHub CLI](https://cli.github.com/), version 2.49 or newer, installed:
 
 ```
 gh attestation verify .\ComfyVault-v<version>-windows-x64.exe --repo ruashots/ComfyVault
