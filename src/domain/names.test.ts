@@ -12,7 +12,7 @@ import {
 } from "~/domain/names";
 import type { NameGroup, UnifyPlan, UnifyLink, UsageResult } from "~/ipc/contract";
 
-const CONV = "example_upscaler_v1_fp16.safetensors";
+const CONV = "example_upscaler_conv_v1_fp16.safetensors";
 const FP16 = "example_upscaler_fp16.safetensors";
 const SHA = "A".repeat(64);
 
