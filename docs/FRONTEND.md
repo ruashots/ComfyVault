@@ -43,6 +43,8 @@ comfyVaultDev.download.corruptNext()     // the next file does not match its SHA
 comfyVaultDev.download.cutOff()   // ComfyVault closes under the running download
 comfyVaultDev.download.freeGB(12) // the vault drive has this much free
 comfyVaultDev.download.readDelay(5000)  // the sites take this long to answer a read
+comfyVaultDev.download.slowStop() // a stopped download keeps letting go of its connection
+comfyVaultDev.download.letGo()    // until this, so Continue and Discard refuse
 comfyVaultDev.download.placeFile("sandbox", "diffusion_models", "flux1-dev-fp8.safetensors")
                                   // a different file already has that name in an install
 comfyVaultDev.download.revokeToken("huggingface")  // the site stops accepting a saved token

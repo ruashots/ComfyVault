@@ -395,6 +395,21 @@ describe("the list of downloads", () => {
     await waitFor(() => app.dl.downloads()[0]!.state === "running");
   });
 
+  it("says a stopping download cannot continue yet, and lets the person try again", async () => {
+    const { app, engine } = await started();
+    engine.downloads.devSlowStop();
+    for (let i = 0; i < 5; i++) engine.downloads.devStep();
+    await userEvent.click(button("Stop"));
+    await waitFor(() => app.dl.downloads()[0]!.state === "stopped");
+    await userEvent.click(button("Continue"));
+    await waitFor(() => app.toast() !== null);
+    expect(app.toast()!.message).toBe("That download is still stopping. Try again in a moment.");
+    expect(app.dl.downloads()[0]!.state).toBe("stopped");
+    engine.downloads.devLetGo();
+    await userEvent.click(button("Continue"));
+    await waitFor(() => app.dl.downloads()[0]!.state === "running");
+  });
+
   it("asks before discarding a kept part, and says what goes", async () => {
     const { app, engine } = await started();
     for (let i = 0; i < 20; i++) engine.downloads.devStep();

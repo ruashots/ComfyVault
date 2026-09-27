@@ -749,6 +749,8 @@ export class DownloadDesk {
     if (!["waiting", "running", "checking"].includes(job.state)) {
       throw error("conflict", "That download is not running, so there is nothing to stop.");
     }
+    // A running transfer may still be letting go of its connection.
+    if (job.state === "running" && this.slowStop) this.stopping.add(job.downloadId);
     job.state = "stopped";
     job.bytesPerSecond = null;
     this.emit(job);
@@ -756,10 +758,28 @@ export class DownloadDesk {
     return publicOf(job);
   }
 
+  /** Downloads stopped while their connection is still closing. */
+  private stopping = new Set<string>();
+  /** The next stop leaves its connection closing until devLetGo. */
+  private slowStop = false;
+
+  /** A stopped transfer takes a while to let go of its connection. */
+  devSlowStop(on = true): void {
+    this.slowStop = on;
+  }
+
+  /** The stopped transfers have let go of their connections. */
+  devLetGo(): void {
+    this.stopping.clear();
+  }
+
   async continueDownload(downloadId: string): Promise<Download> {
     const job = this.find(downloadId);
     if (!["stopped", "failed", "cutOff", "mismatch"].includes(job.state)) {
       throw error("conflict", "Only a stopped, failed or cut-off download can continue.");
+    }
+    if (this.stopping.has(downloadId)) {
+      throw error("conflict", "That download is still stopping. Try again in a moment.");
     }
     // A file that did not match starts again from nothing.
     if (job.state === "mismatch") job.bytesDone = 0;
@@ -772,7 +792,7 @@ export class DownloadDesk {
 
   async discardDownload(downloadId: string): Promise<{ removed: true }> {
     const job = this.find(downloadId);
-    if (["waiting", "running", "checking"].includes(job.state)) {
+    if (["waiting", "running", "checking"].includes(job.state) || this.stopping.has(downloadId)) {
       throw error("conflict", "Stop that download first, then discard it.");
     }
     this.jobs = this.jobs.filter((j) => j !== job);

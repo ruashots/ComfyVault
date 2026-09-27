@@ -60,6 +60,8 @@ export async function createEngine(): Promise<Engine> {
       cutOff: () => engine.downloads.devCutOff(),
       freeGB: (gb: number) => engine.downloads.devSetFreeBytes(gb * 1024 ** 3),
       readDelay: (ms: number) => engine.downloads.devSetReadDelay(ms),
+      slowStop: (on = true) => engine.downloads.devSlowStop(on),
+      letGo: () => engine.downloads.devLetGo(),
       placeFile: (installId: string, category: string, name: string) =>
         engine.downloads.devPlaceFile(installId, category, name),
       revokeToken: (service: "huggingface" | "civitai") => engine.downloads.devRevokeToken(service),
