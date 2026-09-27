@@ -1501,11 +1501,23 @@ Arguments:
 {
   installId: string
   sha256: string
-  relativeDir: string        // relative to the install root, for example 'models\\loras\\style'
+  relativeDir?: string       // relative to the install root, for example 'models\\loras\\style'
+  dir?: string               // or a full folder path: give exactly one of the two
   linkName?: string          // defaults to the vault file name
   createDir: boolean         // default false
 }
 ```
+
+`dir` is a folder the chooser offered: one of the folders ComfyUI reads for
+the model's kind in this install, or a folder inside one (section 7.5). It
+can be outside the install, for a folder the install's
+`extra_model_paths.yaml` adds on another drive. The engine resolves it
+through every link that exists, and refuses it with `pathOutsideBoundary`
+unless it lands inside one of those folders. A folder for another kind of
+model is refused too: a checkpoint linked into `loras` would not show in
+ComfyUI's checkpoint list. The folder is remembered for this install and
+kind, and a later download plan offers it first (section 16.2). Giving both
+`relativeDir` and `dir` is `invalidArgument`.
 
 Returns a `LinkRecord`.
 
@@ -1574,6 +1586,47 @@ Arguments:
 ```
 
 Returns `LinkWithState[]`.
+
+---
+
+### 7.5 `list_link_folders`
+
+The chooser's tree, for picking the folder a new link goes in.
+
+Arguments: `{ installId: string, category: string, dir?: string }`.
+
+Without `dir`, it returns the folders ComfyUI reads for `category` in this
+install, in ComfyUI's search order (section 16.2 says how that order is
+found). With `dir`, it returns the folders directly inside `dir`, which must
+be one of those folders or inside one. Anything else is refused with
+`pathOutsideBoundary`. Linked folders inside are not listed.
+
+```ts
+type LinkFolder = {
+  path: string
+  name: string
+  origin: 'modelsDir' | 'extraPath' | 'outputDir'
+  exists: boolean           // a root can be listed before it exists; it is made when a link goes in it
+  hasSubfolders: boolean
+}
+```
+
+Returns `LinkFolder[]`.
+
+### 7.6 `create_link_folder`
+
+Arguments: `{ installId: string, category: string, dir: string }`.
+
+Makes the one folder `dir`, whose parent must already exist. Both must be
+inside a folder `list_link_folders` returns for the same install and
+category. The name is held to the same rules as a file name. The folder is
+checked again where it really landed, and removed if that is outside.
+
+Returns `{ absPath: string, created: boolean }`. `created` is `false` when the
+folder was already there.
+
+The download plan does not need this call: a folder chosen for a download
+is made when its link is made (section 16.3).
 
 ---
 
@@ -2284,6 +2337,8 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `remove_link` | 7.2 |
 | `create_model_folder` | 7.3 |
 | `list_links` | 7.4 |
+| `list_link_folders` | 7.5 |
+| `create_link_folder` | 7.6 |
 | `list_vault_files` | 8.1 |
 | `list_name_groups` | 8.4 |
 | `set_canonical_name` | 8.5 |
@@ -2631,9 +2686,8 @@ Arguments:
 }
 ```
 
-Each `dir` in `links` is proved before anything is queued: it must be one of the folders ComfyUI
-reads for the category in that install, or a folder inside one, resolved
-through every link that exists; a folder outside the roots for the category is
+Each `dir` in `links` is proved as `create_link`'s `dir` is (section 7.1),
+before anything is queued: a folder outside the roots for the category is
 refused with `pathOutsideBoundary`, and nothing is downloaded. It is proved
 again when the link is made. A `dir` that does not exist yet is made then, as
 a journaled step before the link. Each chosen `dir` is remembered for that

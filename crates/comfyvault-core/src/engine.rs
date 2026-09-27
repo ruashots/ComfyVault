@@ -961,6 +961,24 @@ impl Engine {
         Links::new(&store, self.platform.as_ref()).remove(link_id)
     }
 
+    /// The folders the chooser offers for a new link of `category`.
+    pub fn link_folders(
+        &self,
+        install_id: &str,
+        category: &str,
+        dir: Option<&Path>,
+    ) -> Result<Vec<crate::links::LinkFolder>> {
+        let store = self.store()?;
+        Links::new(&store, self.platform.as_ref()).link_folders(install_id, category, dir)
+    }
+
+    /// Makes one folder the chooser named, inside a root for `category`.
+    pub fn make_link_folder(&self, install_id: &str, category: &str, dir: &Path) -> Result<(PathBuf, bool)> {
+        let store = self.store()?;
+        let _writes = self.write_lock()?;
+        Links::new(&store, self.platform.as_ref()).make_link_folder(install_id, category, dir)
+    }
+
     pub fn create_model_folder(&self, install_id: &str, relative_dir: &str) -> Result<(PathBuf, bool)> {
         let store = self.store()?;
         Links::new(&store, self.platform.as_ref()).create_folder(install_id, relative_dir)

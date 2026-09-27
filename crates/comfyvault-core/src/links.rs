@@ -51,12 +51,38 @@ pub struct CreateLinkRequest {
     pub install_id: String,
     pub sha256: String,
     /// Relative to the install root, for example `models/loras/style`.
+    /// Give this or `dir`, not both.
+    #[serde(default)]
     pub relative_dir: String,
+    /// A full folder path: one of the folders ComfyUI reads for the model's
+    /// kind in this install, or a folder inside one. It can be outside the
+    /// install, for a folder its `extra_model_paths.yaml` adds.
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
     /// Defaults to the vault file's own name.
     #[serde(default)]
     pub link_name: Option<String>,
     #[serde(default)]
     pub create_dir: bool,
+}
+
+/// One folder in the chooser for a new link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkFolder {
+    pub path: PathBuf,
+    pub name: String,
+    pub origin: crate::install::RootOrigin,
+    /// A root can be listed before it exists, such as `models\\loras` in a
+    /// fresh install. It is made when a link goes in it.
+    pub exists: bool,
+    pub has_subfolders: bool,
+}
+
+fn has_subfolders(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut it| it.any(|e| e.ok().and_then(|e| e.file_type().ok()).map(|t| t.is_dir()).unwrap_or(false)))
+        .unwrap_or(false)
 }
 
 /// A recorded link, with what it looks like on disk right now.
@@ -85,8 +111,111 @@ impl<'a> Links<'a> {
             .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
             // Its folders come from the disk, not from the database row.
             .proved()?;
-        let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
-        self.make(&install, &req.sha256, target_dir, req.link_name.clone(), LinkOrigin::Manual, None)
+        let Some(dir) = &req.dir else {
+            let target_dir = self.resolve_dir(&install, &req.relative_dir, req.create_dir)?;
+            return self.make(&install, &req.sha256, target_dir, req.link_name.clone(), LinkOrigin::Manual, None);
+        };
+        if !req.relative_dir.is_empty() {
+            return Err(VaultError::invalid("Give the folder one way, not both. Nothing was created."));
+        }
+        let sha = crate::scan::hash::normalize_sha256(&req.sha256)
+            .ok_or_else(|| VaultError::invalid("That is not a file hash."))?;
+        let category = self
+            .store
+            .vault_file(&sha)?
+            .ok_or_else(|| VaultError::not_found("That model is not in the vault."))?
+            .category;
+        crate::download::folders::inside_roots(&install, &category, dir)?;
+        if !dir.is_dir() && !req.create_dir {
+            return Err(VaultError::new(
+                ErrorCode::NotFound,
+                "That folder does not exist. Choose another one, or let the app create it.",
+            )
+            .with_path(dir));
+        }
+        let target_dir = self.prove_dir(&install, dir.clone(), req.create_dir)?;
+        let record = self.make(&install, &sha, target_dir, req.link_name.clone(), LinkOrigin::Manual, None)?;
+        self.store.put_link_dir(&install.id, &category, dir)?;
+        Ok(record)
+    }
+
+    /// The folders a new link for `category` can go in, for the chooser:
+    /// the roots when `dir` is `None`, or the folders directly inside `dir`,
+    /// which must be a root or inside one.
+    pub fn link_folders(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<Vec<LinkFolder>> {
+        crate::paths::validate_file_name(category)?;
+        let install = self
+            .store
+            .install(install_id)?
+            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
+            .proved()?;
+        let roots = crate::download::folders::roots(&install, category);
+        let Some(dir) = dir else {
+            return Ok(roots
+                .into_iter()
+                .map(|r| LinkFolder {
+                    name: r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                    exists: r.path.is_dir(),
+                    has_subfolders: has_subfolders(&r.path),
+                    path: r.path,
+                    origin: r.origin,
+                })
+                .collect());
+        };
+        crate::download::folders::inside_roots(&install, category, dir)?;
+        let origin = roots
+            .iter()
+            .find(|r| dir.starts_with(&r.path))
+            .map(|r| r.origin)
+            .unwrap_or(crate::install::RootOrigin::ModelsDir);
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                // Only real folders. A linked folder can lead anywhere, and
+                // the check below would refuse it when chosen anyway.
+                if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let path = e.path();
+                out.push(LinkFolder {
+                    name: e.file_name().to_string_lossy().to_string(),
+                    has_subfolders: has_subfolders(&path),
+                    path,
+                    origin,
+                    exists: true,
+                });
+            }
+        }
+        out.sort_by_key(|f| f.name.to_lowercase());
+        Ok(out)
+    }
+
+    /// Makes one folder inside a root for `category`, for the chooser. Its
+    /// parent must already be there.
+    pub fn make_link_folder(&self, install_id: &str, category: &str, dir: &Path) -> Result<(PathBuf, bool)> {
+        crate::paths::validate_file_name(category)?;
+        let install = self
+            .store
+            .install(install_id)?
+            .ok_or_else(|| VaultError::not_found("That install is not registered any more."))?
+            .proved()?;
+        let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        crate::paths::validate_file_name(&name)?;
+        crate::download::folders::inside_roots(&install, category, dir)?;
+        if dir.is_dir() {
+            return Ok((dir.to_path_buf(), false));
+        }
+        let parent = dir.parent().filter(|p| p.is_dir()).ok_or_else(|| {
+            VaultError::new(ErrorCode::NotFound, "The folder it goes in does not exist. Choose another place.").with_path(dir)
+        })?;
+        crate::download::folders::inside_roots(&install, category, parent)?;
+        std::fs::create_dir(dir).map_err(|e| VaultError::from_io(&e, dir, "making the folder"))?;
+        // Checked again where it really landed, and removed if that is out.
+        if let Err(e) = crate::download::folders::inside_roots(&install, category, dir) {
+            let _ = std::fs::remove_dir(dir);
+            return Err(e);
+        }
+        Ok((dir.to_path_buf(), true))
     }
 
     /// Creates one link in a folder given as a full path, which must be one
@@ -449,7 +578,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id.clone(),
                 sha256: sha.clone(),
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: false,
             })
@@ -474,7 +603,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: Some("my-own-name.safetensors".into()),
                 create_dir: false,
             })
@@ -493,7 +622,7 @@ mod tests {
         let req = CreateLinkRequest {
             install_id: i.id.clone(),
             sha256: sha.clone(),
-            relative_dir: "models/loras/brand-new".into(),
+            relative_dir: "models/loras/brand-new".into(), dir: None,
             link_name: None,
             create_dir: false,
         };
@@ -517,7 +646,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: false,
             })
@@ -540,7 +669,7 @@ mod tests {
                 .create(&CreateLinkRequest {
                     install_id: i.id.clone(),
                     sha256: sha.clone(),
-                    relative_dir: bad.into(),
+                    relative_dir: bad.into(), dir: None,
                     link_name: None,
                     create_dir: true,
                 })
@@ -563,7 +692,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/../../escape".into(),
+                relative_dir: "models/../../escape".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -593,7 +722,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/escape".into(),
+                relative_dir: "models/escape".into(), dir: None,
                 link_name: None,
                 create_dir: false,
             })
@@ -618,7 +747,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id.clone(),
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: false,
             })
@@ -635,7 +764,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: "A".repeat(64),
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -656,7 +785,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -676,7 +805,7 @@ mod tests {
                 .create(&CreateLinkRequest {
                     install_id: i.id.clone(),
                     sha256: sha.clone(),
-                    relative_dir: "models/loras".into(),
+                    relative_dir: "models/loras".into(), dir: None,
                     link_name: Some(bad.into()),
                     create_dir: true,
                 })
@@ -696,7 +825,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -719,7 +848,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -742,7 +871,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -762,7 +891,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
@@ -794,7 +923,7 @@ mod tests {
                 .create(&CreateLinkRequest {
                     install_id: install.id.clone(),
                     sha256: sha.clone(),
-                    relative_dir: "models/loras".into(),
+                    relative_dir: "models/loras".into(), dir: None,
                     link_name: None,
                     create_dir: true,
                 })
@@ -873,7 +1002,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id.clone(),
                 sha256: sha,
-                relative_dir: "custom_nodes/EvilPack".into(),
+                relative_dir: "custom_nodes/EvilPack".into(), dir: None,
                 link_name: Some("lora1.safetensors".into()),
                 create_dir: true,
             })
@@ -896,7 +1025,7 @@ mod tests {
                 .create(&CreateLinkRequest {
                     install_id: i.id.clone(),
                     sha256: sha.clone(),
-                    relative_dir: "models/loras".into(),
+                    relative_dir: "models/loras".into(), dir: None,
                     link_name: Some(bad.into()),
                     create_dir: true,
                 })
@@ -910,7 +1039,7 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: i.id,
                 sha256: sha,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: Some("renamed.safetensors".into()),
                 create_dir: true,
             })
@@ -958,11 +1087,105 @@ mod tests {
             .create(&CreateLinkRequest {
                 install_id: "never-registered".into(),
                 sha256: "A".repeat(64),
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             })
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
     }
+
+    // --- a folder chosen by its full path -----------------------------------
+
+    fn yaml_install(w: &TestWorld) -> (Install, PathBuf) {
+        let i = w.add_install("A");
+        let shared = w.path().join("other-drive");
+        let i = w.add_extra_model_path(&i, "loras", &shared);
+        (i, shared)
+    }
+
+    fn by_dir(i: &Install, sha: &str, dir: PathBuf, create: bool) -> CreateLinkRequest {
+        CreateLinkRequest {
+            install_id: i.id.clone(),
+            sha256: sha.to_string(),
+            relative_dir: String::new(),
+            dir: Some(dir),
+            link_name: None,
+            create_dir: create,
+        }
+    }
+
+    #[test]
+    fn a_link_can_go_in_a_yaml_folder_outside_the_install_and_the_choice_is_kept() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        let dir = shared.join("portraits");
+        let record = links(&w).create(&by_dir(&i, &sha, dir.clone(), true)).unwrap();
+        assert!(w.is_link(&dir.join("lora1.safetensors")));
+        assert_eq!(w.read(&record.abs_path), weights("lora1"));
+        assert_eq!(w.store.link_dir(&i.id, "loras").unwrap(), Some(dir));
+    }
+
+    #[test]
+    fn a_full_path_folder_for_another_kind_or_outside_is_refused_and_nothing_is_made() {
+        let w = TestWorld::new();
+        let (i, _) = yaml_install(&w);
+        let sha = vault_a_file(&w, "lora1", "loras", "lora1.safetensors");
+        for bad in [
+            i.root.join("models/checkpoints/x"),
+            i.root.join("custom_nodes/pack"),
+            i.root.join("models/loras/../../custom_nodes/pack"),
+            w.path().join("elsewhere"),
+        ] {
+            let err = links(&w).create(&by_dir(&i, &sha, bad.clone(), true)).unwrap_err();
+            assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{bad:?}: {err:?}");
+            assert!(!bad.exists(), "{bad:?} was made");
+        }
+        let both = CreateLinkRequest { relative_dir: "models/loras".into(), ..by_dir(&i, &sha, i.root.join("models/loras"), true) };
+        assert_eq!(links(&w).create(&both).unwrap_err().code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn the_chooser_lists_the_roots_and_their_folders_and_nothing_else() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        std::fs::create_dir_all(i.root.join("models/loras/portraits/deeper")).unwrap();
+        std::fs::write(i.root.join("models/loras/a.safetensors"), b"x").unwrap();
+
+        let roots = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        let paths: Vec<&PathBuf> = roots.iter().map(|r| &r.path).collect();
+        assert!(paths.contains(&&i.root.join("models/loras")));
+        assert!(paths.contains(&&shared));
+        let models = roots.iter().find(|r| r.path == i.root.join("models/loras")).unwrap();
+        assert!(models.has_subfolders);
+
+        let inside = links(&w).link_folders(&i.id, "loras", Some(&i.root.join("models/loras"))).unwrap();
+        assert_eq!(inside.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["portraits"], "folders only");
+        assert!(inside[0].has_subfolders);
+
+        for bad in [i.root.clone(), i.root.join("custom_nodes"), i.root.join("models/checkpoints"), w.path().to_path_buf()] {
+            let err = links(&w).link_folders(&i.id, "loras", Some(&bad)).unwrap_err();
+            assert_eq!(err.code, ErrorCode::PathOutsideBoundary, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_chooser_makes_one_folder_inside_a_root_and_nowhere_else() {
+        let w = TestWorld::new();
+        let (i, shared) = yaml_install(&w);
+        let (path, made) = links(&w).make_link_folder(&i.id, "loras", &shared.join("new")).unwrap();
+        assert!(made && path.is_dir());
+        assert!(!links(&w).make_link_folder(&i.id, "loras", &shared.join("new")).unwrap().1, "already there");
+        for bad in [
+            i.root.join("custom_nodes/evil"),
+            shared.join("a/b"),
+            w.path().join("elsewhere"),
+            shared.join("CON"),
+        ] {
+            assert!(links(&w).make_link_folder(&i.id, "loras", &bad).is_err(), "{bad:?}");
+            assert!(!bad.exists(), "{bad:?} was made");
+        }
+    }
 }
+

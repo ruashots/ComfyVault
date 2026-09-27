@@ -707,6 +707,16 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
             },
         ),
         s("RemovedLinks", RemovedLinks { removed: 3 }),
+        s(
+            "LinkFolder",
+            crate::links::LinkFolder {
+                path: PathBuf::from(r"C:\ComfyUI-Main\models\loras\portraits"),
+                name: "portraits".into(),
+                origin: crate::install::RootOrigin::ModelsDir,
+                exists: true,
+                has_subfolders: false,
+            },
+        ),
         s("AddressPlan", address_plan()),
         s("AddressReading", AddressReading { plan: Some(address_plan()), refusal: None }),
         s(

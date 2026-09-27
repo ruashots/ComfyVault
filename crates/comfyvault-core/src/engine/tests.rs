@@ -401,7 +401,7 @@ fn link_and_name_changes_wait_for_a_delete_in_progress() {
             e.create_link(&CreateLinkRequest {
                 install_id: "none".into(),
                 sha256: sha.into(),
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: false,
             })

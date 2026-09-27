@@ -264,7 +264,7 @@ fn a_name_an_install_still_uses_is_kept_and_the_links_are_named() {
         .create(&CreateLinkRequest {
             install_id: c.id.clone(),
             sha256: sha.clone(),
-            relative_dir: "models/loras".into(),
+            relative_dir: "models/loras".into(), dir: None,
             link_name: None,
             create_dir: true,
         })
@@ -959,7 +959,7 @@ fn a_link_made_while_a_model_is_deleted_is_never_left_pointing_at_nothing() {
             let _ = crate::links::Links::new(store, inner).create(&CreateLinkRequest {
                 install_id: c_id,
                 sha256: sha2,
-                relative_dir: "models/loras".into(),
+                relative_dir: "models/loras".into(), dir: None,
                 link_name: None,
                 create_dir: true,
             });
@@ -1154,7 +1154,7 @@ fn a_stopped_delete_whose_links_are_put_back_is_no_longer_reported() {
         .create(&CreateLinkRequest {
             install_id: install.id,
             sha256: sha.clone(),
-            relative_dir: "models/loras".into(),
+            relative_dir: "models/loras".into(), dir: None,
             link_name: None,
             create_dir: false,
         })

@@ -19,7 +19,7 @@ use comfyvault_core::apply::{
 };
 use comfyvault_core::engine::{AppState, Engine, ScanEntryFilter, ScanEntryPage, VaultInfo};
 use comfyvault_core::install::{Install, InstallCandidate};
-use comfyvault_core::links::{CreateLinkRequest, LinkWithState, ModelDirNode};
+use comfyvault_core::links::{CreateLinkRequest, LinkFolder, LinkWithState, ModelDirNode};
 use comfyvault_core::metadata::ModelMetadata;
 use comfyvault_core::plan::ConsolidationPlan;
 use comfyvault_core::platform::{DriveInfo, LockState, PlatformReport, RunningComfy};
@@ -483,6 +483,44 @@ pub async fn remove_link(state: State<'_, AppEngine>, args: LinkIdArgs) -> Reply
 pub struct CreateFolderArgs {
     pub install_id: String,
     pub relative_dir: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkFoldersArgs {
+    pub install_id: String,
+    pub category: String,
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+/// The chooser's tree: the folders ComfyUI reads for a kind of model in one
+/// install, and the folders inside them. Nothing outside them.
+#[tauri::command]
+pub async fn list_link_folders(
+    state: State<'_, AppEngine>,
+    args: LinkFoldersArgs,
+) -> Reply<Vec<LinkFolder>> {
+    let e = engine(&state);
+    blocking(move || e.link_folders(&args.install_id, &args.category, args.dir.as_deref().map(std::path::Path::new))).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkFolderArgs {
+    pub install_id: String,
+    pub category: String,
+    pub dir: String,
+}
+
+#[tauri::command]
+pub async fn create_link_folder(state: State<'_, AppEngine>, args: LinkFolderArgs) -> Reply<CreatedFolder> {
+    let e = engine(&state);
+    blocking(move || {
+        let (path, created) = e.make_link_folder(&args.install_id, &args.category, std::path::Path::new(&args.dir))?;
+        Ok(CreatedFolder { abs_path: comfyvault_core::paths::display_path(&path), created })
+    })
+    .await
 }
 
 #[tauri::command]

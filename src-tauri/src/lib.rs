@@ -124,6 +124,8 @@ pub fn run() {
             commands::create_link,
             commands::remove_link,
             commands::create_model_folder,
+            commands::list_link_folders,
+            commands::create_link_folder,
             commands::list_links,
             commands::list_vault_files,
             commands::list_contents,

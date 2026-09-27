@@ -1935,7 +1935,7 @@ fn undoing_a_run_a_hand_made_link_depends_on_is_refused() {
         .create(&crate::links::CreateLinkRequest {
             install_id: c.id.clone(),
             sha256: weights_hash("m"),
-            relative_dir: "models/loras".into(),
+            relative_dir: "models/loras".into(), dir: None,
             link_name: None,
             create_dir: true,
         })
@@ -1994,7 +1994,7 @@ fn a_hand_made_link_to_a_different_model_does_not_block_an_undo() {
         .create(&crate::links::CreateLinkRequest {
             install_id: c.id,
             sha256: weights_hash("other"),
-            relative_dir: "models/loras".into(),
+            relative_dir: "models/loras".into(), dir: None,
             link_name: None,
             create_dir: true,
         })
