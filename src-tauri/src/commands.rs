@@ -19,7 +19,7 @@ use comfyvault_core::apply::{
 };
 use comfyvault_core::engine::{AppState, Engine, ScanEntryFilter, ScanEntryPage, VaultInfo};
 use comfyvault_core::install::{Install, InstallCandidate};
-use comfyvault_core::links::{CreateLinkRequest, LinkFolder, LinkWithState, ModelDirNode};
+use comfyvault_core::links::{CreateLinkRequest, LinkFolderList, LinkWithState, ModelDirNode};
 use comfyvault_core::metadata::ModelMetadata;
 use comfyvault_core::plan::ConsolidationPlan;
 use comfyvault_core::platform::{DriveInfo, LockState, PlatformReport, RunningComfy};
@@ -500,7 +500,7 @@ pub struct LinkFoldersArgs {
 pub async fn list_link_folders(
     state: State<'_, AppEngine>,
     args: LinkFoldersArgs,
-) -> Reply<Vec<LinkFolder>> {
+) -> Reply<LinkFolderList> {
     let e = engine(&state);
     blocking(move || e.link_folders(&args.install_id, &args.category, args.dir.as_deref().map(std::path::Path::new))).await
 }

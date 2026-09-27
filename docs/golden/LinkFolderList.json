@@ -1,0 +1,12 @@
+{
+  "defaultDir": "C:\\ComfyUI-Main\\models\\loras\\portraits",
+  "folders": [
+    {
+      "exists": true,
+      "hasSubfolders": true,
+      "name": "loras",
+      "origin": "modelsDir",
+      "path": "C:\\ComfyUI-Main\\models\\loras"
+    }
+  ]
+}

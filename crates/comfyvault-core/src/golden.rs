@@ -717,6 +717,19 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
                 has_subfolders: false,
             },
         ),
+        s(
+            "LinkFolderList",
+            crate::links::LinkFolderList {
+                folders: vec![crate::links::LinkFolder {
+                    path: PathBuf::from(r"C:\ComfyUI-Main\models\loras"),
+                    name: "loras".into(),
+                    origin: crate::install::RootOrigin::ModelsDir,
+                    exists: true,
+                    has_subfolders: true,
+                }],
+                default_dir: Some(r"C:\ComfyUI-Main\models\loras\portraits".into()),
+            },
+        ),
         s("AddressPlan", address_plan()),
         s("AddressReading", AddressReading { plan: Some(address_plan()), refusal: None }),
         s(

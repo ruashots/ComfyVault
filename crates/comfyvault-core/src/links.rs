@@ -79,6 +79,17 @@ pub struct LinkFolder {
     pub has_subfolders: bool,
 }
 
+/// The chooser's answer: the folders, and where a new link of this kind
+/// goes in this install unless the person picks another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkFolderList {
+    pub folders: Vec<LinkFolder>,
+    /// The folder picked last time for this kind in this install, while
+    /// ComfyUI still reads it, or else where ComfyUI saves new files of it.
+    pub default_dir: Option<String>,
+}
+
 fn has_subfolders(path: &Path) -> bool {
     std::fs::read_dir(path)
         .map(|mut it| it.any(|e| e.ok().and_then(|e| e.file_type().ok()).map(|t| t.is_dir()).unwrap_or(false)))
@@ -142,7 +153,13 @@ impl<'a> Links<'a> {
     /// The folders a new link for `category` can go in, for the chooser:
     /// the roots when `dir` is `None`, or the folders directly inside `dir`,
     /// which must be a root or inside one.
-    pub fn link_folders(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<Vec<LinkFolder>> {
+    pub fn link_folders(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<LinkFolderList> {
+        let (folders, install) = self.link_folders_of(install_id, category, dir)?;
+        let default = crate::download::default_dir(self.store, &install, category)?;
+        Ok(LinkFolderList { folders, default_dir: Some(crate::paths::display_path(&default)) })
+    }
+
+    fn link_folders_of(&self, install_id: &str, category: &str, dir: Option<&Path>) -> Result<(Vec<LinkFolder>, Install)> {
         crate::paths::validate_file_name(category)?;
         let install = self
             .store
@@ -151,7 +168,7 @@ impl<'a> Links<'a> {
             .proved()?;
         let roots = crate::download::folders::roots(&install, category);
         let Some(dir) = dir else {
-            return Ok(roots
+            let folders = roots
                 .into_iter()
                 .map(|r| LinkFolder {
                     name: r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
@@ -160,7 +177,8 @@ impl<'a> Links<'a> {
                     path: r.path,
                     origin: r.origin,
                 })
-                .collect());
+                .collect();
+            return Ok((folders, install));
         };
         crate::download::folders::inside_roots(&install, category, dir)?;
         let origin = roots
@@ -187,7 +205,7 @@ impl<'a> Links<'a> {
             }
         }
         out.sort_by_key(|f| f.name.to_lowercase());
-        Ok(out)
+        Ok((out, install))
     }
 
     /// Makes one folder inside a root for `category`, for the chooser. Its
@@ -1124,7 +1142,10 @@ mod tests {
         let record = links(&w).create(&by_dir(&i, &sha, dir.clone(), true)).unwrap();
         assert!(w.is_link(&dir.join("lora1.safetensors")));
         assert_eq!(w.read(&record.abs_path), weights("lora1"));
-        assert_eq!(w.store.link_dir(&i.id, "loras").unwrap(), Some(dir));
+        assert_eq!(w.store.link_dir(&i.id, "loras").unwrap(), Some(dir.clone()));
+        // The chooser opened from the Library starts there next time.
+        let list = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        assert_eq!(list.default_dir, Some(crate::paths::display_path(&dir)));
     }
 
     #[test]
@@ -1153,14 +1174,19 @@ mod tests {
         std::fs::create_dir_all(i.root.join("models/loras/portraits/deeper")).unwrap();
         std::fs::write(i.root.join("models/loras/a.safetensors"), b"x").unwrap();
 
-        let roots = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        let list = links(&w).link_folders(&i.id, "loras", None).unwrap();
+        assert_eq!(
+            list.default_dir.map(|d| crate::paths::compare_key(Path::new(&d))),
+            Some(crate::paths::compare_key(&i.root.join("models").join("loras")))
+        );
+        let roots = list.folders;
         let paths: Vec<&PathBuf> = roots.iter().map(|r| &r.path).collect();
         assert!(paths.contains(&&i.root.join("models/loras")));
         assert!(paths.contains(&&shared));
         let models = roots.iter().find(|r| r.path == i.root.join("models/loras")).unwrap();
         assert!(models.has_subfolders);
 
-        let inside = links(&w).link_folders(&i.id, "loras", Some(&i.root.join("models/loras"))).unwrap();
+        let inside = links(&w).link_folders(&i.id, "loras", Some(&i.root.join("models/loras"))).unwrap().folders;
         assert_eq!(inside.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), vec!["portraits"], "folders only");
         assert!(inside[0].has_subfolders);
 

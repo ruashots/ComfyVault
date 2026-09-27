@@ -967,7 +967,7 @@ impl Engine {
         install_id: &str,
         category: &str,
         dir: Option<&Path>,
-    ) -> Result<Vec<crate::links::LinkFolder>> {
+    ) -> Result<crate::links::LinkFolderList> {
         let store = self.store()?;
         Links::new(&store, self.platform.as_ref()).link_folders(install_id, category, dir)
     }

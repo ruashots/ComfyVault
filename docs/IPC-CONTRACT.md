@@ -1611,7 +1611,17 @@ type LinkFolder = {
 }
 ```
 
-Returns `LinkFolder[]`.
+Returns:
+
+```ts
+type LinkFolderList = {
+  folders: LinkFolder[]
+  defaultDir: string | null   // the folder picked last time for this kind here, or where ComfyUI saves new files of it
+}
+```
+
+`defaultDir` is the same whether or not `dir` is given, so the chooser can
+open on it from the Library, where there is no download plan.
 
 ### 7.6 `create_link_folder`
 
