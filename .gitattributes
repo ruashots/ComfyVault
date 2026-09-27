@@ -1,0 +1,4 @@
+# Every text file is checked out with LF endings, on Windows too. The tests
+# compare the contract samples byte for byte and read the contract line by
+# line, and a checkout that turns LF into CRLF fails them for no real reason.
+* text=auto eol=lf
