@@ -452,15 +452,16 @@ function DrawerBody(props: { row: ContentRow }) {
   };
 
   // The list gives one row per content. The paths behind it are fetched for the
-  // one row the person opened, rather than for every row nobody looked at.
+  // one row the person opened, rather than for every row nobody looked at, and
+  // again whenever the list is read again, since a link may have come or gone.
   const [places] = createResource(
-    () => row().sha256,
-    async (sha256) => {
-      const links = row().inVault
-        ? await app.engine.listLinks({ sha256 })
+    () => row(),
+    async (current) => {
+      const links = current.inVault
+        ? await app.engine.listLinks({ sha256: current.sha256 })
         : [];
       return placesOf(
-        sha256,
+        current.sha256,
         app.plan(),
         links,
         new Map(app.installs().map((i) => [i.id, installName(i, app.installs())])),

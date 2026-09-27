@@ -139,3 +139,47 @@ describe("the Library's chooser, for a kind the person chose a folder for before
     );
   });
 });
+
+describe("the drawer's list of links", () => {
+  it("shows a link made from the drawer as soon as it is made", async () => {
+    const engine = new FixtureEngine({ manual: true });
+    engine.devSetSymlinksSupported(true);
+    engine.devSetComfyRunning(false);
+    const scan = (await engine.getLastScan())!;
+    const plan = await engine.buildPlan(scan.scanId);
+    await engine.startApply({ planId: plan.planId, groupIds: plan.groups.map((g) => g.groupId) });
+    engine.devFinish();
+    harness = await renderWithApp(() => <App />, { engine });
+    const { app } = harness;
+
+    // A model only one install links.
+    const one = app.library().find((r) => r.inVault && r.occurrenceCount === 1)!;
+    app.setLib({ selected: one.sha256, drawerOpen: true });
+    app.actions.go("library");
+    const reach = () => [...document.querySelectorAll(".reach .r")];
+    await waitFor(() => reach().length === 1);
+
+    await userEvent.click(screen.getByRole("button", { name: /Link into an install/ }));
+    const free = await waitForEnabled(() =>
+      [...document.querySelectorAll('[role="dialog"] button.tnode')].find(
+        (b) => !(b as HTMLButtonElement).disabled,
+      ),
+    );
+    await userEvent.click(free);
+    const use = await waitForEnabled(() =>
+      screen.queryAllByRole("button", { name: "Use this folder" })[0],
+    );
+    await userEvent.click(use);
+    await waitFor(() => document.querySelector('[role="dialog"]') === null);
+
+    await waitFor(() => reach().length === 2);
+  });
+});
+
+async function waitForEnabled(find: () => Element | undefined): Promise<HTMLElement> {
+  await waitFor(() => {
+    const el = find();
+    return el !== undefined && !(el as HTMLButtonElement).disabled;
+  });
+  return find() as HTMLElement;
+}
