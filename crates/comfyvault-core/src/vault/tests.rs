@@ -1844,3 +1844,65 @@ fn a_rename_is_not_put_back_while_a_later_rename_of_the_file_stands() {
     assert_eq!(err.code, ErrorCode::Conflict);
     assert_eq!(vault(&w).file(&sha).unwrap().unwrap().canonical_name, "third.safetensors", "nothing changed");
 }
+
+#[test]
+fn a_rename_leaves_a_link_the_person_pointed_somewhere_else() {
+    // Their choice stands: a rename repoints only links that lead to this
+    // model's old name.
+    let w = TestWorld::new();
+    let (a, _b) = two_names(&w);
+    let sha = weights_hash("same");
+    let a_link = a.root.join("models/loras/lora1.safetensors");
+    let theirs = w.write_file("elsewhere/other.safetensors", b"another model");
+    w.platform.remove_symlink(&a_link).unwrap();
+    w.platform.create_file_symlink(&a_link, &theirs).unwrap();
+
+    vault(&w).set_canonical_name(&sha, "my-favourite.safetensors").unwrap();
+    assert_eq!(std::fs::read(&a_link).unwrap(), b"another model", "still leads where the person pointed it");
+}
+
+#[test]
+fn every_second_name_goes_straight_to_the_file_after_two_renames() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let sha = weights_hash("same");
+    let mut f = w.store.vault_file(&sha).unwrap().unwrap();
+    f.aliases.push("third.safetensors".into());
+    w.store.put_vault_file(&f).unwrap();
+    w.platform
+        .create_file_symlink(&w.vault_root.join("loras/third.safetensors"), &w.vault_root.join("loras/lora1.safetensors"))
+        .unwrap();
+    vault(&w).set_canonical_name(&sha, "my-favourite.safetensors").unwrap();
+    vault(&w).set_canonical_name(&sha, "third.safetensors").unwrap();
+
+    let real = w.vault_root.join("loras/third.safetensors");
+    for name in ["lora1.safetensors", "my-favourite.safetensors"] {
+        let t = w.platform.read_symlink(&w.vault_root.join("loras").join(name)).unwrap();
+        assert_eq!(super::rename::place(&t), super::rename::place(&real), "{name} leads straight to the file");
+    }
+    // And a name no install uses can go without breaking another.
+    vault(&w).remove_alias(&sha, "my-favourite.safetensors").ok();
+    assert_eq!(w.read(&w.vault_root.join("loras/lora1.safetensors")), weights("same"));
+}
+
+#[test]
+fn a_name_another_vault_name_leads_through_is_not_removed() {
+    let w = TestWorld::new();
+    two_names(&w);
+    let sha = weights_hash("same");
+    // A vault from an older build: third leads through my-favourite.
+    let mut f = w.store.vault_file(&sha).unwrap().unwrap();
+    f.aliases.push("third.safetensors".into());
+    w.store.put_vault_file(&f).unwrap();
+    let fav = crate::paths::resolve_new_path_within(&w.vault_root, Path::new("loras/my-favourite.safetensors")).unwrap();
+    w.platform.create_file_symlink(&w.vault_root.join("loras/third.safetensors"), &fav).unwrap();
+    // Nothing in the installs names my-favourite.
+    let b_link = w.store.links_for_hash(&sha).unwrap().into_iter().find(|l| l.link_name == "my-favourite.safetensors").unwrap();
+    let mut moved = b_link.clone();
+    moved.vault_rel_path = PathBuf::from("loras").join("lora1.safetensors");
+    w.store.put_link(&moved).unwrap();
+
+    let err = vault(&w).remove_alias(&sha, "my-favourite.safetensors").unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(w.read(&w.vault_root.join("loras/third.safetensors")), weights("same"));
+}

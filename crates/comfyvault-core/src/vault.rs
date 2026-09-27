@@ -652,6 +652,22 @@ impl<'a> Vault<'a> {
             .into_iter()
             .filter(|l| l.vault_rel_path == rel)
             .collect();
+        // Nor while another of the vault's names is a link through this one.
+        let this = self.inside(&rel)?;
+        for other in record.aliases.iter().filter(|a| *a != name) {
+            let Ok(p) = self.inside(&PathBuf::from(&record.category).join(other)) else { continue };
+            let through_this = self
+                .platform
+                .read_symlink(&p)
+                .map(|t| rename::place(&t) == rename::place(&this))
+                .unwrap_or(false);
+            if through_this {
+                return Err(VaultError::conflict(
+                    "Another of the model's names in the vault leads through that name, so it was kept.",
+                )
+                .with_path(&p));
+            }
+        }
         if !through.is_empty() {
             let where_ = through
                 .iter()

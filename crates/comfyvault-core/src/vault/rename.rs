@@ -335,12 +335,20 @@ impl<'a> Vault<'a> {
         match std::fs::symlink_metadata(from) {
             Err(_) => self.platform.create_file_symlink(from, to)?,
             Ok(m) if m.file_type().is_symlink() => {
-                if !leads_to(from, to) {
+                if !self.points_straight_at(from, to) {
                     self.replace_link(from, to, id)?;
                 }
             }
             Ok(_) => {
                 return Err(VaultError::conflict("A real file sits where the vault's other name goes.").with_path(from))
+            }
+        }
+        // Every other second name, too, goes straight to the file. One left
+        // pointing at a name would load nothing once that name is removed.
+        for alias in record.aliases.iter().filter(|a| **a != from_name) {
+            let Ok(path) = self.inside(&PathBuf::from(&record.category).join(alias)) else { continue };
+            if self.platform.is_symlink(&path) && !self.points_straight_at(&path, to) {
+                self.replace_link(&path, to, id)?;
             }
         }
 
@@ -398,6 +406,11 @@ impl<'a> Vault<'a> {
         Ok(())
     }
 
+    /// The link at `link` names `target` itself, not a name that leads there.
+    fn points_straight_at(&self, link: &Path, target: &Path) -> bool {
+        self.platform.read_symlink(link).map(|t| place(&t) == place(target)).unwrap_or(false)
+    }
+
     /// Removes a hidden replacement link a crash left beside `link`. Only a
     /// link under the hidden name this rename uses.
     fn remove_temp(&self, link: &Path, id: &str) -> Result<()> {
@@ -411,7 +424,7 @@ impl<'a> Vault<'a> {
 
 /// Where a path is, with its folder followed through every link and its
 /// last part kept as written, in the form two such places compare by.
-fn place(p: &Path) -> String {
+pub(super) fn place(p: &Path) -> String {
     let parent = p.parent().map(|d| crate::paths::canonicalize_existing_prefix(d).unwrap_or_else(|_| d.to_path_buf()));
     let whole = match parent {
         Some(d) => d.join(p.file_name().unwrap_or_default()),
@@ -422,11 +435,4 @@ fn place(p: &Path) -> String {
 
 fn is_real_file(p: &Path) -> bool {
     std::fs::symlink_metadata(p).map(|m| m.file_type().is_file()).unwrap_or(false)
-}
-
-fn leads_to(link: &Path, target: &Path) -> bool {
-    matches!(
-        (std::fs::canonicalize(link), std::fs::canonicalize(target)),
-        (Ok(a), Ok(b)) if a == b
-    )
 }
