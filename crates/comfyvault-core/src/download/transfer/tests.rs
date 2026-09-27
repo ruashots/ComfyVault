@@ -294,3 +294,102 @@ fn a_hugging_face_file_shorter_than_its_stated_size_is_not_the_file() {
     assert!(!part.exists());
 }
 
+#[test]
+fn a_redirect_goes_only_to_the_sites_own_storage_over_https() {
+    use crate::download::transfer::may_follow;
+    let hf = "https://huggingface.co/o/r/resolve/main/m.safetensors";
+    let cv = "https://civitai.com/api/download/models/8";
+    for ok in [
+        "https://us.aws.cdn.hf.co/xet-bridge-us/abc?sig=1",
+        "https://cas-bridge.xethub.hf.co/x",
+        "https://cdn-lfs.huggingface.co/x",
+        "https://huggingface.co/api/resolve-cache/models/o/r/abc/m.safetensors",
+    ] {
+        assert!(may_follow(Host::HuggingFace, hf, ok), "{ok}");
+    }
+    for ok in [
+        "https://b2.civitai.com/file/civitai-modelfiles/x.safetensors?Authorization=1",
+        "https://civitai-delivery-worker-prod.5ac0637cfd0766c97916cefa3764fbdf.r2.cloudflarestorage.com/x",
+    ] {
+        assert!(may_follow(Host::Civitai, cv, ok), "{ok}");
+    }
+    for bad in [
+        "http://us.aws.cdn.hf.co/x",
+        "https://127.0.0.1:8188/api/prompt",
+        "https://192.168.1.1/admin",
+        "https://[::1]/x",
+        "https://localhost/x",
+        "https://router/x",
+        "https://evil.example/x",
+        "https://huggingface.co.evil.example/x",
+        "https://evilhf.co/x",
+        "https://huggingface.co@evil.example/x",
+        "https://someone-else.r2.cloudflarestorage.com/x",
+        "file:///C:/x",
+    ] {
+        assert!(!may_follow(Host::HuggingFace, hf, bad), "{bad}");
+        assert!(!may_follow(Host::Civitai, cv, bad), "{bad}");
+    }
+    assert!(!may_follow(Host::Civitai, cv, "https://us.aws.cdn.hf.co/x"), "one site's storage is not the other's");
+}
+
+#[test]
+fn a_redirect_to_an_untrusted_address_is_never_asked() {
+    // A site on the internet that sends the download to this computer.
+    let asked = Arc::new(AtomicUsize::new(0));
+    let a2 = asked.clone();
+    let local = Server::start(move |_| {
+        a2.fetch_add(1, Ordering::SeqCst);
+        Canned::new(200)
+    });
+    let web = Redirecting(format!("{}/admin/restart?now=1", local.base));
+    let mut f = RemoteFile { fetch_url: "https://civitai.com/api/download/models/8".into(), ..file_at("https://civitai.com") };
+    f.host = Host::Civitai;
+    let dir = tempfile::tempdir().unwrap();
+    let err = run(&web, &f, None, &dir.path().join("x.part"), None, &mut None, &CancelToken::new(), &mut |_, _| {})
+        .unwrap_err();
+    assert!(err.message.contains("does not trust"), "{}", err.message);
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the local address was asked");
+}
+
+/// A site that answers every request with one redirect, and asks the real
+/// connection for anything else.
+struct Redirecting(String);
+
+impl crate::download::http::Web for Redirecting {
+    fn send(&self, req: &crate::download::http::Request, form: Option<&str>) -> crate::Result<crate::download::http::Reply> {
+        if req.url.starts_with("https://civitai.com") {
+            return Ok(crate::download::http::Reply {
+                status: 307,
+                headers: vec![("location".into(), self.0.clone())],
+                body: Box::new(std::io::empty()),
+            });
+        }
+        UreqWeb::new().send(req, form)
+    }
+}
+
+fn file_at(base: &str) -> RemoteFile {
+    RemoteFile { fetch_url: format!("{base}/x"), size_bytes: 10, ..file_of(Host::HuggingFace) }
+}
+
+fn file_of(host: Host) -> RemoteFile {
+    RemoteFile {
+        host,
+        title: "m".into(),
+        subtitle: "o/r".into(),
+        versions: vec![],
+        version_id: None,
+        files: vec![],
+        file_id: None,
+        file_name: "m.safetensors".into(),
+        size_bytes: 10,
+        sha256: None,
+        suggested_category: None,
+        suggested_because: None,
+        page: None,
+        model_id: None,
+        fetch_url: String::new(),
+    }
+}
+

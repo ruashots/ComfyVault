@@ -121,6 +121,13 @@ pub fn run(
             .map(|l| absolute(&file.fetch_url, l))
             .filter(|l| l.starts_with("https://") || l.starts_with("http://"))
             .ok_or_else(|| Failure::new(FailureKind::Connection, format!("{host} sent the download somewhere ComfyVault cannot follow.")))?;
+        if !may_follow(file.host, &file.fetch_url, &to) {
+            return Err(Failure::new(
+                FailureKind::Connection,
+                format!("{host} sent the download to an address ComfyVault does not trust, so nothing was downloaded."),
+            )
+            .with_detail(origin(&to).map(|o| o.host).unwrap_or_default()));
+        }
         // The storage address carries its own signature. No token goes there.
         web.send(&ranged(Request::get(&to), have), None)
             .map_err(|e| dropped(host, e.detail.as_deref().unwrap_or(&e.message)))?
@@ -301,6 +308,77 @@ fn truncate(part: &Path) -> Result<(), Failure> {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(disk(&e, part)),
+    }
+}
+
+/// The scheme, host and port of an address. `None` for anything that is not
+/// a plain `http` or `https` address, including one with a user name in it,
+/// which a browser would read as a different host.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+}
+
+pub(crate) fn origin(url: &str) -> Option<Origin> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let default = match scheme.as_str() {
+        "https" => 443,
+        "http" => 80,
+        _ => return None,
+    };
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if authority.contains('@') || authority.is_empty() {
+        return None;
+    }
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        let port = authority[end + 1..].strip_prefix(':').map(|p| p.parse().ok()).unwrap_or(Some(default))?;
+        (authority[..=end].to_string(), port)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), p.parse().ok()?),
+            None => (authority.to_string(), default),
+        }
+    };
+    Some(Origin { scheme, host: host.to_ascii_lowercase(), port })
+}
+
+/// Whether a site's redirect may be followed.
+///
+/// Only over `https`, only to a named host, never to this computer or an
+/// address on the network, and only to the site's own hosts or the storage
+/// each site is known to use (checked on 2026-09-26: Hugging Face sends to
+/// `*.hf.co`, Civitai to `b2.civitai.com` and to its own buckets on
+/// `*.r2.cloudflarestorage.com`). Anything else is refused rather than asked.
+///
+/// A site on this computer, which only a test sets up, may send to this
+/// computer too.
+pub(crate) fn may_follow(host: Host, site: &str, to: &str) -> bool {
+    let (Some(site), Some(to)) = (origin(site), origin(to)) else { return false };
+    if site.host == "127.0.0.1" {
+        return to.host == "127.0.0.1";
+    }
+    if to.scheme != "https" {
+        return false;
+    }
+    let h = to.host.as_str();
+    let named = h.contains('.')
+        && h != "localhost"
+        && !h.ends_with(".localhost")
+        && !h.starts_with('[')
+        && !h.split('.').all(|p| p.bytes().all(|b| b.is_ascii_digit()));
+    if !named {
+        return false;
+    }
+    let under = |domain: &str| h == domain || h.ends_with(&format!(".{domain}"));
+    match host {
+        Host::HuggingFace => under("huggingface.co") || under("hf.co"),
+        Host::Civitai => {
+            under("civitai.com") || (h.starts_with("civitai-") && h.ends_with(".r2.cloudflarestorage.com"))
+        }
     }
 }
 
