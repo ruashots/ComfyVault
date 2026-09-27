@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { App } from "~/App";
 import { fmt } from "~/domain/format";
+import { installNameOf } from "~/domain/installname";
 import { ConfirmModalView } from "~/modals/confirm";
 import { openUndoBox } from "~/modals/undo";
 import { CleanupScreen, cleanupSummary } from "~/screens/Cleanup";
@@ -128,8 +129,8 @@ describe("the Cleanup sections, after a run", () => {
     expect(file.canonicalName).toBe(other.name);
   });
 
-  it("keeps each name's words true after another name is chosen", async () => {
-    const { app } = await afterARun();
+  it("keeps each name's words true after another name is chosen, and after a refresh", async () => {
+    const { app, engine } = await afterARun();
     await waitFor(() => app.nameGroups().length > 0);
     const group = app.nameGroups()[0]!;
     const before = group.canonicalName;
@@ -141,13 +142,27 @@ describe("the Cleanup sections, after a run", () => {
         (r) => r.querySelector(".nm")!.getAttribute("title") === name,
       )!;
     const words = (name: string) => rowOf(name).querySelector(".rs")!.textContent!;
-    const usedBy = (name: string) => words(name).replace(/^The vault [^.]+\. /, "");
     const suggested = () =>
       [...card().querySelectorAll(".optrow")]
         .filter((r) => r.querySelector(".tag") !== null)
         .map((r) => r.querySelector(".nm")!.getAttribute("title"));
     const reasons = () => [...card().querySelectorAll(".why")].map((w) => w.textContent);
-    const usersBefore = { [before]: usedBy(before), [other]: usedBy(other) };
+
+    // Which installs use a name is read from the installs' own links, and
+    // each install is called by the name it has everywhere else in the app.
+    const links = await engine.listLinks({ sha256: group.sha256 });
+    const usedBy = (name: string) => {
+      const who = [...new Set(links.filter((l) => l.linkName === name).map((l) => l.installId))].map(
+        (id) => installNameOf(id, app.installs()),
+      );
+      return who.length === 0
+        ? "No install uses this name."
+        : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
+    };
+    const has = "The vault file has this name now.";
+    const kept = "The vault keeps this name as a link beside the file.";
+    expect(words(before)).toBe(`${has} ${usedBy(before)}`);
+    expect(words(other)).toBe(`${kept} ${usedBy(other)}`);
     const suggestedBefore = suggested();
     const reasonsBefore = reasons();
 
@@ -156,15 +171,18 @@ describe("the Cleanup sections, after a run", () => {
       () => app.nameGroups().find((g) => g.sha256 === group.sha256)!.canonicalName === other,
     );
 
-    expect(words(other)).toBe(`The vault file has this name now. ${usersBefore[other]}`);
-    expect(words(before)).toBe(
-      `The vault keeps this name as a link beside the file. ${usersBefore[before]}`,
-    );
-    // Choosing moves the vault's name, not the installs' links, so the
-    // suggestion and the reason for it stay as they were.
-    expect(suggested()).toEqual(suggestedBefore);
-    expect(reasons()).toEqual(reasonsBefore);
-    expect(card().textContent).not.toContain("a name you typed");
+    const holdsTrue = () => {
+      expect(words(other)).toBe(`${has} ${usedBy(other)}`);
+      expect(words(before)).toBe(`${kept} ${usedBy(before)}`);
+      // Choosing moves the vault's name, not the installs' links, so the
+      // suggestion and the reason for it stay as they were.
+      expect(suggested()).toEqual(suggestedBefore);
+      expect(reasons()).toEqual(reasonsBefore);
+      expect(card().textContent).not.toContain("a name you typed");
+    };
+    holdsTrue();
+    await app.actions.refresh();
+    holdsTrue();
   });
 
   it("says a vault file nothing links to will be freed, not that it comes back", async () => {
