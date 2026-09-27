@@ -37,13 +37,32 @@ use crate::vault::{NameGroup, Vault, VaultFile, VaultFilter, VaultHealth, VaultP
 
 /// What the application remembers between runs.
 ///
-/// Only the vault folder. Everything else lives inside the vault, so the vault
-/// folder is self describing and moving the drive moves the whole record.
+/// The vault folder, and the name cards the person chose to hide. Everything
+/// else lives inside the vault, so the vault folder is self describing and
+/// moving the drive moves the whole record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub vault_root: Option<PathBuf>,
+    /// Missing in a file an older build wrote, which reads as none hidden.
+    #[serde(default)]
+    pub hidden_name_cards: Vec<HiddenNameCard>,
 }
+
+/// A "one model, two names" card the person chose to hide.
+///
+/// It stays hidden while the model's names in the installs are exactly these.
+/// A new name makes a different card, which shows again.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenNameCard {
+    pub sha256: String,
+    pub names: Vec<String>,
+}
+
+/// More cards than anyone hides by hand. A longer list is refused rather
+/// than written into the settings file.
+pub const MAX_HIDDEN_NAME_CARDS: usize = 10_000;
 
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
@@ -59,7 +78,13 @@ impl AppConfig {
                 .map_err(|e| VaultError::from_io(&e, parent, "creating the settings folder"))?;
         }
         let text = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, text)
+        // Written beside and then renamed over, so a crash part way leaves
+        // the old file whole. A cut-off file reads as empty, and the app
+        // would forget the vault and every hidden card with it.
+        let temp = path.with_extension("json.tmp");
+        std::fs::write(&temp, text)
+            .map_err(|e| VaultError::from_io(&e, &temp, "saving the settings"))?;
+        std::fs::rename(&temp, path)
             .map_err(|e| VaultError::from_io(&e, path, "saving the settings"))
     }
 }
@@ -145,6 +170,9 @@ pub struct Engine {
     /// Downloads run beside everything else and take no long-operation slot.
     downloads: Arc<crate::download::Downloader>,
     config_path: PathBuf,
+    /// Held while the settings file is read, changed and written back, so two
+    /// changes at once cannot each drop the other's.
+    config_writes: Mutex<()>,
 }
 
 impl Engine {
@@ -176,6 +204,7 @@ impl Engine {
             vault_writes: Arc::new(Mutex::new(())),
             downloads: Arc::new(downloads),
             config_path,
+            config_writes: Mutex::new(()),
         })
     }
 
@@ -411,8 +440,54 @@ impl Engine {
         Links::new(&store, self.platform.as_ref()).finish_interrupted()?;
         *self.store.write().map_err(|_| poisoned())? = Some(store);
 
-        AppConfig { vault_root: Some(PathBuf::from(&info.root)) }.save(&self.config_path)?;
+        self.change_config(|c| c.vault_root = Some(PathBuf::from(&info.root)))?;
         Ok(info)
+    }
+
+    /// Reads the settings file, changes it, and writes it back whole. Saving
+    /// a fresh one instead dropped every hidden card each time a vault opened.
+    fn change_config(&self, change: impl FnOnce(&mut AppConfig)) -> Result<AppConfig> {
+        let _g = self.config_writes.lock().map_err(|_| poisoned())?;
+        let mut config = AppConfig::load(&self.config_path);
+        change(&mut config);
+        config.save(&self.config_path)?;
+        Ok(config)
+    }
+
+    /// The name cards the person hid. Answers with no vault open: the list
+    /// lives in the app's settings, not in a vault.
+    pub fn hidden_name_cards(&self) -> Vec<HiddenNameCard> {
+        AppConfig::load(&self.config_path).hidden_name_cards
+    }
+
+    /// Replaces the list of hidden name cards, and returns it as stored.
+    ///
+    /// Each card's names are sorted, with repeats removed, and the cards are
+    /// sorted, so one card hidden twice is kept once.
+    pub fn set_hidden_name_cards(&self, cards: &[HiddenNameCard]) -> Result<Vec<HiddenNameCard>> {
+        if cards.len() > MAX_HIDDEN_NAME_CARDS {
+            return Err(VaultError::invalid(format!(
+                "That is more than {MAX_HIDDEN_NAME_CARDS} hidden cards. Nothing was saved."
+            )));
+        }
+        let mut clean: Vec<HiddenNameCard> = Vec::with_capacity(cards.len());
+        for card in cards {
+            let sha256 = crate::scan::hash::normalize_sha256(&card.sha256)
+                .ok_or_else(|| VaultError::invalid("A hidden card names something that is not a file hash. Nothing was saved."))?;
+            let mut names = card.names.clone();
+            for n in &names {
+                crate::paths::validate_file_name(n)?;
+            }
+            names.sort();
+            names.dedup();
+            if names.is_empty() {
+                return Err(VaultError::invalid("A hidden card has no names. Nothing was saved."));
+            }
+            clean.push(HiddenNameCard { sha256, names });
+        }
+        clean.sort();
+        clean.dedup();
+        Ok(self.change_config(|c| c.hidden_name_cards = clean)?.hidden_name_cards)
     }
 
     /// The folders inside one folder, for the folder picker. An empty path

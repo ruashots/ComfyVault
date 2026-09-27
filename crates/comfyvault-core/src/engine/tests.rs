@@ -1352,3 +1352,80 @@ fn opening_a_vault_finishes_a_link_a_crash_cut_off() {
     assert!(rec.is_some(), "the cut-off link has its record again");
 }
 
+
+// --- hidden name cards -----------------------------------------------------
+
+fn card(sha: &str, names: &[&str]) -> HiddenNameCard {
+    HiddenNameCard { sha256: sha.to_string(), names: names.iter().map(|n| n.to_string()).collect() }
+}
+
+#[test]
+fn hidden_name_cards_survive_opening_a_vault_and_a_restart() {
+    let f = Fixture::new();
+    f.open_vault();
+    let sha = weights_hash("m");
+    f.engine.set_hidden_name_cards(&[card(&sha, &["b.safetensors", "a.safetensors"])]).unwrap();
+
+    // Opening a vault writes the settings file. It used to write a fresh
+    // one, holding only the vault folder, and every hidden card came back.
+    f.engine.select_vault(&f.dir.path().join("Other"), true).unwrap();
+    f.engine.select_vault(&f.dir.path().join("ComfyVault"), false).unwrap();
+    let want = vec![card(&sha, &["a.safetensors", "b.safetensors"])];
+    assert_eq!(f.engine.hidden_name_cards(), want);
+
+    f.engine.close_vault().unwrap();
+    let restarted = Engine::with_platform(f.dir.path().join("config/config.json"), f.platform.clone());
+    assert_eq!(restarted.hidden_name_cards(), want, "the list is read back after a restart");
+    assert!(restarted.restore_last_vault().is_none(), "and the vault is still remembered");
+}
+
+#[test]
+fn hidden_name_cards_answer_before_a_vault_is_chosen() {
+    let f = Fixture::new();
+    assert!(f.engine.hidden_name_cards().is_empty());
+    let sha = weights_hash("m");
+    let stored = f.engine.set_hidden_name_cards(&[card(&sha, &["a.safetensors", "b.safetensors"])]).unwrap();
+    assert_eq!(stored.len(), 1);
+}
+
+#[test]
+fn hidden_name_cards_are_stored_sorted_with_repeats_removed() {
+    let f = Fixture::new();
+    let sha = weights_hash("m");
+    let upper = sha.to_uppercase();
+    let stored = f
+        .engine
+        .set_hidden_name_cards(&[
+            card(&upper, &["b.safetensors", "a.safetensors", "b.safetensors"]),
+            card(&sha, &["a.safetensors", "b.safetensors"]),
+        ])
+        .unwrap();
+    assert_eq!(stored, vec![card(&sha, &["a.safetensors", "b.safetensors"])]);
+}
+
+#[test]
+fn a_hidden_card_that_is_not_a_hash_or_a_file_name_is_refused_and_nothing_changes() {
+    let f = Fixture::new();
+    let sha = weights_hash("m");
+    f.engine.set_hidden_name_cards(&[card(&sha, &["a.safetensors", "b.safetensors"])]).unwrap();
+    let before = f.engine.hidden_name_cards();
+
+    for bad in [
+        card("not-a-hash", &["a.safetensors"]),
+        card(&sha, &["..\\x.safetensors"]),
+        card(&sha, &[]),
+    ] {
+        let err = f.engine.set_hidden_name_cards(&[bad.clone()]).expect_err("refused");
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{bad:?}");
+    }
+    assert_eq!(f.engine.hidden_name_cards(), before);
+}
+
+#[test]
+fn a_settings_file_from_an_older_build_reads_as_no_hidden_cards() {
+    let f = Fixture::new();
+    let path = f.dir.path().join("config/config.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"{"vaultRoot": null}"#).unwrap();
+    assert!(f.engine.hidden_name_cards().is_empty());
+}

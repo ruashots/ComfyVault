@@ -683,6 +683,13 @@ fn samples() -> Vec<(&'static str, serde_json::Value)> {
         ),
         s("VaultFile", vault_file()),
         s(
+            "HiddenNameCard",
+            crate::engine::HiddenNameCard {
+                sha256: hash_a(),
+                names: vec!["detail-tweaker.safetensors".into(), "detail_tweaker_xl.safetensors".into()],
+            },
+        ),
+        s(
             "Deleted",
             Deleted {
                 deleted: true,

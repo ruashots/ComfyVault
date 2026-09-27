@@ -132,6 +132,8 @@ pub fn run() {
             commands::get_vault_info,
             commands::list_name_groups,
             commands::set_canonical_name,
+            commands::get_hidden_name_cards,
+            commands::set_hidden_name_cards,
             commands::remove_alias,
             commands::list_orphans,
             commands::delete_vault_file,

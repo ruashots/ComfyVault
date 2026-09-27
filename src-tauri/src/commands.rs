@@ -17,7 +17,7 @@ use std::sync::Arc;
 use comfyvault_core::apply::{
     ApplyProgress, ApplyRequest, InterruptedApply, RevertPreview, RevertProgress,
 };
-use comfyvault_core::engine::{AppState, Engine, ScanEntryFilter, ScanEntryPage, VaultInfo};
+use comfyvault_core::engine::{AppState, Engine, HiddenNameCard, ScanEntryFilter, ScanEntryPage, VaultInfo};
 use comfyvault_core::install::{Install, InstallCandidate};
 use comfyvault_core::links::{CreateLinkRequest, LinkFolderList, LinkWithState, ModelDirNode};
 use comfyvault_core::metadata::ModelMetadata;
@@ -645,6 +645,30 @@ pub async fn set_canonical_name(
 ) -> Reply<VaultFile> {
     let e = engine(&state);
     blocking(move || e.set_canonical_name(&args.sha256, &args.name)).await
+}
+
+/// The "one model, two names" cards the person hid. Kept in the app's
+/// settings, so it answers with no vault open.
+#[tauri::command]
+pub async fn get_hidden_name_cards(state: State<'_, AppEngine>) -> Reply<Vec<HiddenNameCard>> {
+    let e = engine(&state);
+    blocking(move || Ok(e.hidden_name_cards())).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenNameCardsArgs {
+    pub cards: Vec<HiddenNameCard>,
+}
+
+/// Replaces the whole list of hidden name cards.
+#[tauri::command]
+pub async fn set_hidden_name_cards(
+    state: State<'_, AppEngine>,
+    args: HiddenNameCardsArgs,
+) -> Reply<Vec<HiddenNameCard>> {
+    let e = engine(&state);
+    blocking(move || e.set_hidden_name_cards(&args.cards)).await
 }
 
 #[tauri::command]

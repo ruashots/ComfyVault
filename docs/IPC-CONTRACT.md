@@ -147,6 +147,7 @@ These are the only calls that answer in that state:
 | `open_civitai_page` | it opens a web page, and reads nothing in the vault |
 | `open_huggingface_page` | the same |
 | `set_token`, `get_token_status`, `remove_token` | a token lives in Windows Credential Manager, not in the vault |
+| `get_hidden_name_cards`, `set_hidden_name_cards` | the list lives in the app's settings, not in the vault |
 
 `select_vault` is the way out of the state, and it works.
 
@@ -1987,6 +1988,38 @@ offer to remove them.
 
 ---
 
+### 8.10 `get_hidden_name_cards` and `set_hidden_name_cards`
+
+Cleanup shows a "one model, two names" card for each `NameGroup`. The person
+can hide a card. These two commands keep the list of hidden cards.
+
+```ts
+type HiddenNameCard = {
+  sha256: string
+  names: string[]        // sorted, with no name twice
+}
+```
+
+`get_hidden_name_cards` takes no arguments and returns `HiddenNameCard[]`.
+
+`set_hidden_name_cards` takes `{ cards: HiddenNameCard[] }`. It replaces the
+whole list and returns the list as stored.
+
+- The engine sorts each card's `names` and removes repeated names. It sorts the
+  cards and keeps a card that is given twice only once.
+- It rejects with `invalidArgument`, and changes nothing, when a `sha256` is not
+  a file hash, a name is not a valid file name, a card has no names, or there
+  are more than 10,000 cards.
+
+The list is kept in the app's settings file, beside the vault folder the app
+remembers. It is not kept in the vault, so both commands answer before a vault
+is open (section 1.5). The list survives a restart and opening another vault.
+
+**Which card a hidden card hides is the interface's decision.** Compare the
+`sha256`, and compare `names` with the group's names sorted the same way. When
+a scan or a new link adds a name, the names differ, the card no longer matches,
+and the card shows again. The engine never removes a card from the list.
+
 ## 9. Is a model used
 
 ### 9.1 `check_model_usage`
@@ -2364,6 +2397,8 @@ const { scanId } = await invoke<{ scanId: string }>('start_scan', { args: {} })
 | `list_orphans` | 8.7 |
 | `delete_vault_file` | 8.8 |
 | `check_vault_health` | 8.9 |
+| `get_hidden_name_cards` | 8.10 |
+| `set_hidden_name_cards` | 8.10 |
 | `check_model_usage` | 9.1 |
 | `get_metadata` | 10.1 |
 | `fetch_metadata_batch` | 10.2 |
