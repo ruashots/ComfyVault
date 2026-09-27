@@ -538,6 +538,21 @@ describe("what each name of one model is", () => {
     ]);
   });
 
+  it("lists an install under each name its links carry, and once per name", () => {
+    // Normal holds the model twice, once under each name, and Production
+    // holds it twice under one of them, as on the person's machine.
+    const view = buildNameGroupView(owner(), [
+      { installId: "normal", linkName: "upscaler_3d.safetensors" },
+      { installId: "normal", linkName: "upscaler_conv_v1.safetensors" },
+      { installId: "prod", linkName: "upscaler_3d.safetensors" },
+      { installId: "prod", linkName: "upscaler_3d.safetensors" },
+    ]);
+    expect(view.choices.map((c) => [c.name, [...c.installIds].sort(), c.linksNamed])).toEqual([
+      ["upscaler_conv_v1.safetensors", ["normal"], 1],
+      ["upscaler_3d.safetensors", ["normal", "prod"], 3],
+    ]);
+  });
+
   it("suggests the name more of the installs' links carry, and says so", () => {
     const view = buildNameGroupView(owner(), links);
     expect(view.suggestion.name).toBe("upscaler_3d.safetensors");

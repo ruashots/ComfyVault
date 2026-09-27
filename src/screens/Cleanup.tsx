@@ -200,6 +200,10 @@ function NameGroupCard(props: { view: NameGroupView }) {
         <span class="faint">the same file under {group().names.length} names</span>
         <span class="sz">{fmt(group().sizeBytes)}</span>
       </div>
+      <div class="holds">
+        The vault holds one file for this model, under the selected name. Your
+        installs use these names for it:
+      </div>
 
       <For each={props.view.choices}>
         {(choice) => (
@@ -215,13 +219,11 @@ function NameGroupCard(props: { view: NameGroupView }) {
                 <span class="nm" title={choice.name}>
                   <Wrap text={choice.name} />
                 </span>
-                <span class="rs">
-                  {choice.isCanonical
-                    ? "The vault file has this name now."
-                    : "The vault keeps this name as a link beside the file."}{" "}
-                  {usedBy(choice.installIds)}
-                </span>
+                <span class="rs">{usedBy(choice.installIds)}</span>
               </span>
+              <Show when={choice.isCanonical}>
+                <span class="tag cur">the file's name</span>
+              </Show>
               <Show when={choice.name === props.view.suggestion.name}>
                 <span class="tag">suggested</span>
               </Show>
@@ -242,9 +244,8 @@ function NameGroupCard(props: { view: NameGroupView }) {
 
       <div class="why">{props.view.suggestion.reason}</div>
       <div class="why">
-        Choosing a name renames the file in the vault and keeps{" "}
-        {group().names.length > 2 ? "the other names as links" : "the other name as a link"}{" "}
-        beside it. No install changes, and no disk space is freed.
+        Choosing another name renames that one file. Each install goes on using
+        the name it uses now, and no disk space is freed.
       </div>
     </div>
   );

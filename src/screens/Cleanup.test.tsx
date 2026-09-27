@@ -84,7 +84,7 @@ describe("the Cleanup sections, after a run", () => {
     for (const count of counts()) expect(count).not.toContain("·");
   });
 
-  it("says of each name whether the vault file has it, and which installs use it", async () => {
+  it("says once that the vault holds one file, and of each name only who uses it", async () => {
     const { app, engine } = await afterARun();
     await waitFor(() => app.nameGroups().length > 0);
     const group = app.nameGroups()[0]!;
@@ -101,16 +101,23 @@ describe("the Cleanup sections, after a run", () => {
         who.length === 0
           ? "No install uses this name."
           : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
-      expect(rows[i]!.querySelector(".rs")!.textContent).toBe(
-        `${n.isCanonical ? "The vault file has this name now." : "The vault keeps this name as a link beside the file."} ${usedBy}`,
+      // Each name says only who uses it. Only the file's own name is marked.
+      expect(rows[i]!.querySelector(".rs")!.textContent).toBe(usedBy);
+      expect(rows[i]!.querySelector(".tag.cur")?.textContent ?? null).toBe(
+        n.isCanonical ? "the file's name" : null,
       );
     });
+    // Said once, above the names: the vault holds one file.
+    expect(card.querySelector(".holds")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
+      "The vault holds one file for this model, under the selected name. Your installs use these names for it:",
+    );
+    for (const row of rows) expect(row.textContent).not.toMatch(/vault|link/i);
     // Each name in the sample is used by the install whose link carries it.
     expect(card.textContent).not.toContain("a name you typed");
     expect(card.textContent).not.toContain("links point at it");
     expect(screen.queryByRole("button", { name: /Type a different name/ })).toBeNull();
-    expect(card.textContent).toContain(
-      "Choosing a name renames the file in the vault and keeps the other name as a link beside it. No install changes, and no disk space is freed.",
+    expect(card.textContent!.replace(/\s+/g, " ")).toContain(
+      "Choosing another name renames that one file. Each install goes on using the name it uses now, and no disk space is freed.",
     );
     expect(card.textContent).not.toContain("·");
   });
@@ -144,7 +151,7 @@ describe("the Cleanup sections, after a run", () => {
     const words = (name: string) => rowOf(name).querySelector(".rs")!.textContent!;
     const suggested = () =>
       [...card().querySelectorAll(".optrow")]
-        .filter((r) => r.querySelector(".tag") !== null)
+        .filter((r) => r.querySelector(".tag:not(.cur)") !== null)
         .map((r) => r.querySelector(".nm")!.getAttribute("title"));
     const reasons = () => [...card().querySelectorAll(".why")].map((w) => w.textContent);
 
@@ -159,10 +166,13 @@ describe("the Cleanup sections, after a run", () => {
         ? "No install uses this name."
         : `${who.join(" and ")} ${who.length === 1 ? "uses" : "use"} this name.`;
     };
-    const has = "The vault file has this name now.";
-    const kept = "The vault keeps this name as a link beside the file.";
-    expect(words(before)).toBe(`${has} ${usedBy(before)}`);
-    expect(words(other)).toBe(`${kept} ${usedBy(other)}`);
+    const fileName = () =>
+      [...card().querySelectorAll(".optrow")]
+        .filter((r) => r.querySelector(".tag.cur") !== null)
+        .map((r) => r.querySelector(".nm")!.getAttribute("title"));
+    expect(words(before)).toBe(usedBy(before));
+    expect(words(other)).toBe(usedBy(other));
+    expect(fileName()).toEqual([before]);
     const suggestedBefore = suggested();
     const reasonsBefore = reasons();
 
@@ -172,8 +182,9 @@ describe("the Cleanup sections, after a run", () => {
     );
 
     const holdsTrue = () => {
-      expect(words(other)).toBe(`${has} ${usedBy(other)}`);
-      expect(words(before)).toBe(`${kept} ${usedBy(before)}`);
+      expect(words(other)).toBe(usedBy(other));
+      expect(words(before)).toBe(usedBy(before));
+      expect(fileName()).toEqual([other]);
       // Choosing moves the vault's name, not the installs' links, so the
       // suggestion and the reason for it stay as they were.
       expect(suggested()).toEqual(suggestedBefore);
