@@ -365,9 +365,9 @@ You need:
 
 - Windows 10 or 11
 - Microsoft Edge WebView2
-- **Developer Mode enabled**
+- **Developer Mode enabled**, or ComfyVault run as administrator
 
-Developer Mode allows ComfyVault to create symbolic links without running as administrator.
+Windows only lets a program create symbolic links when Developer Mode is on, or when the program runs as administrator. With Developer Mode on, ComfyVault works as a normal program. Without it, right-click ComfyVault and choose **Run as administrator** each time you consolidate, undo, or make or remove links.
 
 The app checks this before enabling Apply.
 
