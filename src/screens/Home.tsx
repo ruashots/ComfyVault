@@ -753,7 +753,10 @@ function recentLines(app: ReturnType<typeof useApp>): RecentLine[] {
     const t = scan.totals;
     lines.push({
       event: scan.cancelled ? "Scan stopped" : "Scan finished",
-      detail: `${countOf(installsTotalsOf(app.contents()).models, "model", "models")} found, ${countOf(t.duplicateFiles, "extra copy", "extra copies")}, ${fmt(t.reclaimableBytes)} to be freed.`,
+      // No space figure here. The scan adds up every extra copy it found; the
+      // plan card leaves out the ones that cannot move now and the ones that
+      // are a second name for the same bytes. Only the plan's figure can be freed.
+      detail: `${countOf(installsTotalsOf(app.contents()).models, "model", "models")} found, ${countOf(t.duplicateFiles, "extra copy", "extra copies")}.`,
       when: scan.finishedAt,
     });
   }

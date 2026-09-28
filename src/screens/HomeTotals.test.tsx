@@ -42,6 +42,17 @@ async function consolidateAndRescan(h: Harness): Promise<void> {
 }
 
 describe("Home's cards", () => {
+  it("says one amount to be freed, the plan's, and no other", async () => {
+    const h = await home();
+    const plan = h.app.plan()!;
+    // The scan's own sum counts copies the plan cannot free.
+    expect(h.app.scan()!.totals.reclaimableBytes).not.toBe(plan.totals.bytesFreed);
+    expect(hero()).toContain(fmt(plan.totals.bytesFreed).replace(" ", ""));
+    const recent = [...document.querySelectorAll(".act .d")].map((d) => d.textContent ?? "");
+    for (const line of recent) expect(line).not.toMatch(/\bGB\b|\bMB\b|\bTB\b/);
+  });
+
+
   it("before a run, count the models in the installs and nothing in the Library", async () => {
     const h = await home();
     const t = h.app.scan()!.totals;
@@ -128,7 +139,7 @@ describe("Home's cards", () => {
     for (const [event] of lines) expect(event).not.toMatch(/[a-z]\.[a-z]/i);
     expect(lines).toContainEqual([
       "Scan finished",
-      `${before.uniqueContents} models found, ${t.duplicateFiles} ${t.duplicateFiles === 1 ? "extra copy" : "extra copies"}, ${fmt(t.reclaimableBytes)} to be freed.`,
+      `${before.uniqueContents} models found, ${t.duplicateFiles} ${t.duplicateFiles === 1 ? "extra copy" : "extra copies"}.`,
     ]);
     // The sample run leaves out a few files it could not move.
     expect(run.state).toBe("completedWithErrors");
