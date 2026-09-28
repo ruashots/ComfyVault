@@ -51,19 +51,9 @@ Your installs still see the model where they expect it, so your existing workflo
 
 ---
 
-<!--
-Add your strongest screenshot here.
-
-Recommended:
-- Consolidate screen showing a big "space recovered" number, or
-- Library screen showing one model linked to several installs.
-
-Example:
-
 <p align="center">
-  <img src="docs/images/comfyvault-hero.png" alt="ComfyVault showing duplicate ComfyUI models ready to consolidate" width="100%">
+  <img src="docs/images/consolidate.png" alt="ComfyVault's dry-run plan: each model found in more than one install, the copies that will become links, and 706 GB to be freed" width="100%">
 </p>
--->
 
 ## Download
 
@@ -199,6 +189,11 @@ Once models are in the vault, ComfyVault can keep useful information about them:
 
 So it becomes one place to see what models you actually have.
 
+
+<p align="center">
+  <img src="docs/images/library.png" alt="The Library: one model in the vault, the installs that link to it, with Unlink and Link into an install" width="100%">
+</p>
+
 ---
 
 ## Download models once
@@ -216,6 +211,11 @@ Before anything starts, you can see:
 The model is downloaded once into the vault and linked into the installs you choose.
 
 Downloads can be stopped and resumed, including after restarting the app.
+
+
+<p align="center">
+  <img src="docs/images/download.png" alt="The Download screen: a Civitai address read into a plan, with the vault path and the installs it will be linked in" width="100%">
+</p>
 
 ---
 
@@ -322,6 +322,11 @@ If a vault file disappears outside ComfyVault, links pointing to it are shown as
 ### Orphaned models
 
 If a model is in the vault but no install points to it anymore, ComfyVault can show it as an orphan.
+
+
+<p align="center">
+  <img src="docs/images/cleanup.png" alt="Cleanup: one model under two names, with the choice of one name for every install" width="100%">
+</p>
 
 ---
 
