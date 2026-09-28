@@ -51,10 +51,6 @@ Your installs still see the model where they expect it, so your existing workflo
 
 ---
 
-<p align="center">
-  <img src="docs/images/consolidate.png" alt="ComfyVault's dry-run plan: each model found in more than one install, the copies that will become links, and 706 GB to be freed" width="100%">
-</p>
-
 ## Download
 
 ### [⬇ ComfyVault for Windows](https://github.com/ruashots/ComfyVault/releases)
@@ -124,11 +120,6 @@ One real copy stays in the vault, and the duplicates are replaced with links.
 
 Your ComfyUI installs keep using the same filenames and paths as before.
 
-
-<p align="center">
-  <img src="docs/images/home.png" alt="ComfyVault Home after a scan: two installs, the models still in them, the Library, and 706 GB that consolidating can free" width="100%">
-</p>
-
 ---
 
 ## It doesn't just compare filenames
@@ -194,11 +185,6 @@ Once models are in the vault, ComfyVault can keep useful information about them:
 
 So it becomes one place to see what models you actually have.
 
-
-<p align="center">
-  <img src="docs/images/library.png" alt="The Library: one model in the vault, the installs that link to it, with Unlink and Link into an install" width="100%">
-</p>
-
 ---
 
 ## Download models once
@@ -216,11 +202,6 @@ Before anything starts, you can see:
 The model is downloaded once into the vault and linked into the installs you choose.
 
 Downloads can be stopped and resumed, including after restarting the app.
-
-
-<p align="center">
-  <img src="docs/images/download.png" alt="The Download screen: a Civitai address read into a plan, with the vault path and the installs it will be linked in" width="100%">
-</p>
 
 ---
 
@@ -327,11 +308,6 @@ If a vault file disappears outside ComfyVault, links pointing to it are shown as
 ### Orphaned models
 
 If a model is in the vault but no install points to it anymore, ComfyVault can show it as an orphan.
-
-
-<p align="center">
-  <img src="docs/images/cleanup.png" alt="Cleanup: one model under two names, with the choice of one name for every install" width="100%">
-</p>
 
 ---
 
@@ -491,6 +467,16 @@ and is separate from the UI.
 | **[Build](docs/BUILD.md)** | Building and testing ComfyVault |
 | **[IPC contract](docs/IPC-CONTRACT.md)** | Engine ↔ UI protocol |
 | **[Frontend](docs/FRONTEND.md)** | Running the interface independently |
+
+---
+
+## A look around
+
+<p align="center">
+  <img src="docs/images/consolidate.png" width="32%" alt="ComfyVault Consolidate">
+  <img src="docs/images/library.png" width="32%" alt="ComfyVault Library">
+  <img src="docs/images/download.png" width="32%" alt="ComfyVault Download">
+</p>
 
 ---
 
