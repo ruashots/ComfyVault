@@ -124,6 +124,11 @@ One real copy stays in the vault, and the duplicates are replaced with links.
 
 Your ComfyUI installs keep using the same filenames and paths as before.
 
+
+<p align="center">
+  <img src="docs/images/home.png" alt="ComfyVault Home after a scan: two installs, the models still in them, the Library, and 706 GB that consolidating can free" width="100%">
+</p>
+
 ---
 
 ## It doesn't just compare filenames
